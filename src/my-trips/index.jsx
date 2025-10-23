@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs } from "firebase/firestore";
+import { collection, query, where, getDocs, deleteDoc, doc } from "firebase/firestore";
 import { db } from '../service/firebaseConfig';
 import { createApi } from 'unsplash-js';
+import { MoreVertical, Trash2, Pencil } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { toast } from 'sonner'
 
 const unsplash = createApi({
   accessKey: import.meta.env.VITE_UNSPLASH_ACCESS_KEY,
@@ -29,7 +32,7 @@ async function getPlaceImage(placeName) {
 }
 
 // Component for each trip card
-function TripCard({ trip }) {
+function TripCard({ trip, onDelete }) {
   const [imageUrl, setImageUrl] = useState('/placeholder.jpg');
   const navigate = useNavigate();
 
@@ -42,8 +45,46 @@ function TripCard({ trip }) {
   return (
     <div 
       onClick={() => navigate(`/view-trip/${trip.id}`)}
-      className='border rounded-xl overflow-hidden hover:scale-105 transition-all cursor-pointer hover:shadow-lg'
+      className='relative border rounded-xl overflow-hidden hover:scale-105 transition-all cursor-pointer hover:shadow-lg'
     >
+      {/* Actions menu */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className='absolute top-2 right-2 z-10 rounded-full p-2 bg-white/80 hover:bg-white shadow border'
+            aria-label='Trip actions'
+            onClick={(e) => e.stopPropagation()}
+          >
+            <MoreVertical className='h-4 w-4' />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          className='w-44 p-2'
+          align='end'
+          sideOffset={6}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className='flex flex-col gap-1'>
+            <button
+              type='button'
+              className='flex items-center gap-2 w-full px-3 py-2 rounded hover:bg-gray-100 text-left'
+              onClick={() => navigate(`/view-trip/${trip.id}`)}
+            >
+              <Pencil className='h-4 w-4' />
+              View / Edit Trip
+            </button>
+            <button
+              type='button'
+              className='flex items-center gap-2 w-full px-3 py-2 rounded hover:bg-red-50 text-left text-red-600'
+              onClick={() => onDelete?.(trip.id)}
+            >
+              <Trash2 className='h-4 w-4' />
+              Delete Trip
+            </button>
+          </div>
+        </PopoverContent>
+      </Popover>
       <img 
         src={imageUrl} 
         alt={trip.userSelection?.location}
@@ -103,6 +144,19 @@ function MyTrips() {
     }
   }
 
+  const handleDeleteTrip = async (tripId) => {
+    const confirm = window.confirm('Delete this trip permanently? This cannot be undone.');
+    if (!confirm) return;
+    try {
+      await deleteDoc(doc(db, 'AITrips', tripId));
+      setUserTrips((prev) => prev.filter((t) => t.id !== tripId));
+      toast.success('Trip deleted');
+    } catch (error) {
+      console.error('Error deleting trip:', error);
+      toast.error('Failed to delete trip, please try again.');
+    }
+  }
+
   if (loading) {
     return (
       <div className='sm:px-10 md:px-32 lg:px-56 xl:px-10 px-5 mt-10'>
@@ -129,7 +183,7 @@ function MyTrips() {
       ) : (
         <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mt-10'>
           {userTrips.map((trip) => (
-            <TripCard key={trip.id} trip={trip} />
+            <TripCard key={trip.id} trip={trip} onDelete={handleDeleteTrip} />
           ))}
         </div>
       )}

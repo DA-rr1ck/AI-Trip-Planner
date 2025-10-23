@@ -203,13 +203,13 @@ try {
           
         </Button>
       </div>
-      <Dialog open = {openDialog}>
+      <Dialog open={openDialog} onOpenChange={setOpenDialog}>
   
   <DialogContent>
     <DialogHeader>
       
       <DialogDescription>
-        <img src="/logo.svg"></img>
+        <img src="/webicon.jpg" height={40} width={63}></img>
         <h2 className='font-bold text-lg mt-7'>Sign in with Google</h2>
         <p>Sign in to the app with Google authentication</p>
         <Button 
