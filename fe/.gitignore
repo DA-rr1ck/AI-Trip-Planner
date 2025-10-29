@@ -1,5 +1,5 @@
 node_modules
 
-src/service/firbaseConfig.jsx
+src/service/firebaseConfig.jsx
 
 .env
