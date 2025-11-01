@@ -6,7 +6,6 @@ const helmet = require('helmet');
 
 const { PORT = 8000, CLIENT_ORIGIN } = process.env;
 const authRoutes = require('./routes/auth');
-const googleRoutes = require('./routes/auth-google-del');
 
 const app = express();
 
