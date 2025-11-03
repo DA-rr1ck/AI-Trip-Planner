@@ -8,10 +8,9 @@ import Button from '@/components/ui/Button'
 import { toast } from 'sonner'
 import { AI_PROMPT, SelectBudgetOptions, SelectTravelesList } from '@/constants/options'
 import { generateTrip } from '@/service/AIModel'
-import { useGoogleLogin } from '@react-oauth/google'
 import { db } from '@/service/firebaseConfig'
 import { doc, setDoc } from 'firebase/firestore'
-import axios from 'axios'
+import { useAuth } from '@/context/AuthContext'
 
 function CreateTrip() {
   const [place, setPlace] = useState(null)
@@ -21,33 +20,13 @@ function CreateTrip() {
   const [openDialog, setOpenDialog] = useState(false)
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
+  const { isAuthenticated, user } = useAuth()
 
   const handleInputChange = (name, value) => {
     setFormData(prev => ({ ...prev, [name]: value }))
   }
 
-  // FE Google OAuth -> localStorage user
-  const GetUserProfile = (tokenInfo) => {
-    axios.get(`https://www.googleapis.com/oauth2/v1/userinfo?access_token=${tokenInfo?.access_token}`, {
-      headers: { Authorization: `Bearer ${tokenInfo?.access_token}`, Accept: 'application/json' }
-    })
-      .then((res) => {
-        localStorage.setItem('user', JSON.stringify(res.data))
-        setOpenDialog(false)
-        onGenerateTrip() // continue flow after sign-in
-      })
-      .catch(() => {
-        toast.error('Google sign-in failed')
-      })
-  }
-
-  const login = useGoogleLogin({
-    onSuccess: (codeResp) => GetUserProfile(codeResp),
-    onError: () => toast.error('Google sign-in failed')
-  })
-
   const SaveAITrip = async (TripData) => {
-    const user = JSON.parse(localStorage.getItem('user') || '{}')
     const id = Date.now().toString()
     await setDoc(doc(db, 'AITrips', id), {
       userSelection: formData,
@@ -59,8 +38,7 @@ function CreateTrip() {
   }
 
   const onGenerateTrip = async () => {
-    const storedUser = localStorage.getItem('user')
-    if (!storedUser) {
+    if (!isAuthenticated) {
       setOpenDialog(true)
       toast.info('Please sign in to generate your trip.')
       return
@@ -113,7 +91,7 @@ function CreateTrip() {
   }, [inputValue])
 
   return (
-    <div className='sm:px-10 md:px-32 lg:px-56 xl:px-10 px-5 mt-10'>
+    <div className='sm:px-10 md:px-32 lg:px-56 px-5 mt-10'>
       <h2 className='font-bold text-3xl'>
         Tell us your travel preferences 🏕️🌴
       </h2>
@@ -196,11 +174,10 @@ function CreateTrip() {
         </Button>
       </div>
 
-      {/* Combined Auth Dialog: BE email/password + FE Google */}
+      {/* Shared Auth Dialog (BE email/password + FE Google via AuthContext) */}
       <AuthDialog
         open={openDialog}
         onOpenChange={setOpenDialog}
-        googleLogin={login}
         onSuccess={() => { setOpenDialog(false); onGenerateTrip(); }}
       />
     </div>
