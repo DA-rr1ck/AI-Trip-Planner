@@ -88,30 +88,11 @@ function CreateTrip() {
 
     try {
       const result = await generateTrip(FINAL_PROMPT)
-      console.log('Raw result:', result)
-      console.log('Result type:', typeof result)
-      
-      // Check if result is already an object or needs parsing
-      let tripData
-      if (typeof result === 'string') {
-        tripData = JSON.parse(result)
-      } else if (typeof result === 'object') {
-        tripData = result
-      } else {
-        throw new Error('Invalid trip data format')
-      }
-
-      setLoading(false)
-      navigate('/edit-trip', {
-        state: {
-          tripData: {
-            userSelection: formData,
-            tripData: tripData
-          }
-        }
-      })
+      const newId = await SaveAITrip(result)
+      toast.success('Trip saved successfully!', { duration: 1000 })
+      navigate(`/view-trip/${newId}`)
     } catch (error) {
-      console.error('Error generating trip:', error)
+      console.error(error)
       toast.error('Failed to generate trip. Please try again.', { duration: 2000 })
     } finally {
       setLoading(false)

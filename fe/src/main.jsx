@@ -10,7 +10,7 @@ import { GoogleOAuthProvider } from '@react-oauth/google'
 import CreateTrip from '@/pages/create-trip/index.jsx'
 import ViewTrip from '@/pages/view-trip/[tripId]/index.jsx'
 import MyTrips from '@/pages/my-trips/index.jsx'
-
+import EditTrip from './pages/edit-trip'
 const router = createBrowserRouter([
   { 
     path: '/', element: <App /> 
@@ -24,6 +24,10 @@ const router = createBrowserRouter([
   { 
     path: '/my-trips', element: <MyTrips /> 
   },
+  {
+    path: '/edit-trip',
+    element: <EditTrip />
+  }
 ])
 
 createRoot(document.getElementById('root')).render(
