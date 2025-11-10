@@ -1,6 +1,6 @@
 import * as React from "react"
 
-import { cn } from "@/pages/create-trip/lib/utils"
+import { cn } from "@/lib/utils"
 
 function Input({
   className,

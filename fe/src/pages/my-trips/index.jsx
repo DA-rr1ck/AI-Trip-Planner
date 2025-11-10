@@ -94,12 +94,6 @@ function MyTrips() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Wait for auth context to resolve
-    if (user === null) return; // still resolving
-    if (!user) {
-      navigate('/');
-      return;
-    }
     (async () => {
       setLoading(true);
       try {
@@ -139,7 +133,7 @@ function MyTrips() {
   }
 
   return (
-    <div className='sm:px-10 md:px-32 lg:px-56 xl:px-10 px-5 mt-10'>
+    <div className='sm:px-10 md:px-32 lg:px-56 px-5 mt-10'>
       <h2 className='font-bold text-3xl'>My Trips</h2>
 
       {userTrips.length === 0 ? (
