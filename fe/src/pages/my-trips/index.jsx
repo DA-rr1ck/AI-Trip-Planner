@@ -94,12 +94,6 @@ function MyTrips() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Wait for auth context to resolve
-    if (user === null) return; // still resolving
-    if (!user) {
-      navigate('/');
-      return;
-    }
     (async () => {
       setLoading(true);
       try {

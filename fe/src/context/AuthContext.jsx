@@ -1,6 +1,7 @@
 import React, {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useGoogleLogin, googleLogout } from "@react-oauth/google";
@@ -33,36 +34,36 @@ function clearSession() {
   window.localStorage.removeItem(LS_KEY);
 }
 
-// ---- Normalize Google user ----
-function normalizeGoogleUser(info) {
-  return {
-    id: info.sub,
-    name: info.name || info.given_name || info.email || "Google User",
-    email: info.email || null,
-    avatar: info.picture || null,
-    provider: "google",
-  };
-}
-
 const AuthCtx = createContext(null);
 
 export function AuthProvider({ children }) {
+  const navigate = useNavigate();
+
   const [initializing, setInitializing] = useState(true);
-  const [provider, setProvider] = useState(null);   // 'local' | 'google'
+  const [provider, setProvider] = useState(null);     // 'local' | 'google'
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(null);         // BE JWT (local)
-  const [googleAccessToken, setGoogleAccessToken] = useState(null);
+
+  const [localExpiresAt, setLocalExpiresAt] = useState(null);
+  const [googleExpiresAt, setGoogleExpiresAt] = useState(null);
+  const [timerArmed, setTimerArmed] = useState(false);
+  const expiryTimerRef = useRef(null);
 
   const abortRef = useRef(false);
 
-  // Attach/detach BE token to axios
-  useEffect(() => {
-    if (provider === "local" && token) {
-      api.defaults.headers.common.Authorization = `Bearer ${token}`;
-    } else {
-      delete api.defaults.headers.common.Authorization;
+  const handleHardLogout = useCallback(() => {
+    if (expiryTimerRef.current) {
+      clearTimeout(expiryTimerRef.current);
+      expiryTimerRef.current = null;
     }
-  }, [provider, token]);
+
+    clearSession();
+    setProvider(null);
+    setUser(null);
+
+    setLocalExpiresAt(null);
+    setGoogleExpiresAt(null);
+    setTimerArmed(false);
+  }, []);
 
   // Global 401 → clear session
   useEffect(() => {
@@ -70,8 +71,9 @@ export function AuthProvider({ children }) {
       (res) => res,
       (err) => {
         if (err?.response?.status === 401) {
-          // token invalid/expired
           handleHardLogout();
+          navigate("/");
+          toast.error("Session expired. Please sign in again!");
         }
         return Promise.reject(err);
       }
@@ -79,93 +81,98 @@ export function AuthProvider({ children }) {
     return () => api.interceptors.response.eject(id);
   }, []);
 
-  const handleHardLogout = useCallback(() => {
-    clearSession();
-    setProvider(null);
-    setUser(null);
-    setToken(null);
-    setGoogleAccessToken(null);
-  }, []);
-
   // Bootstrap session from localStorage
   useEffect(() => {
     (async () => {
       const saved = loadSession();
-      if (!saved) {
-        setInitializing(false);
-        return;
+
+      if (saved?.provider === "google" && saved?.user) {
+        setProvider("google");
+        setUser(saved.user);
+        setGoogleExpiresAt(saved.googleExpiresAt ?? null);
       }
-
-      setProvider(saved.provider || null);
-      setUser(saved.user || null);
-      setToken(saved.token || null);
-      setGoogleAccessToken(saved.googleAccessToken || null);
-
-      try {
-        if (saved.provider === "local" && saved.token) {
-          api.defaults.headers.common.Authorization = `Bearer ${saved.token}`;
-          const { data } = await api.get("/auth/me"); // { user }
-          const u = { ...data.user, provider: "local" };
-          setUser(u);
-          saveSession({ ...saved, user: u });
-        } 
-        else if (saved.provider === "google" && saved.googleAccessToken) {
-          const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-            headers: { Authorization: `Bearer ${saved.googleAccessToken}` },
-          });
-
-          if (r.ok) {
-            const info = await r.json();
-            const u = normalizeGoogleUser(info);
-            setUser(u);
-            saveSession({ ...saved, user: u });
-          } else {
-            handleHardLogout();
-          }
-        }
-      } catch {
+      else if (saved?.provider === "local" && saved?.user) {
+        setProvider("local");
+        setUser(saved.user);
+        setLocalExpiresAt(saved.localExpiresAt ?? null);
+        // saveSession({ provider: "local", user: saved.user, localExpiresAt: saved.localExpiresAt ?? null });
+      }
+      else {
         handleHardLogout();
-      } finally {
-        if (!abortRef.current) setInitializing(false);
       }
+
+      if (!abortRef.current) setInitializing(false);
     })();
 
     return () => { abortRef.current = true; };
   }, [handleHardLogout]);
 
+  // Expiry-timer effect
+  useEffect(() => {
+    // clear old timer
+    if (expiryTimerRef.current) {
+      clearTimeout(expiryTimerRef.current);
+      expiryTimerRef.current = null;
+    }
+    if (!timerArmed) return;
+
+    let expiresAt = null;
+    if (provider === "google" && googleExpiresAt) {
+      expiresAt = googleExpiresAt;
+    } else if (provider === "local" && localExpiresAt) {
+      expiresAt = localExpiresAt;
+    }
+    if (!expiresAt) return;
+
+    const EARLY_MS = 60_000; // sign out 60s early to absorb clock skew
+    const ms = Math.max(0, expiresAt - Date.now() - EARLY_MS);
+    expiryTimerRef.current = setTimeout(() => {
+      handleHardLogout();
+      navigate("/");
+      toast.error("Session expired. Please sign in again!");
+    }, ms);
+
+    return () => {
+      if (expiryTimerRef.current) clearTimeout(expiryTimerRef.current);
+    };
+  }, [timerArmed, provider, googleExpiresAt, localExpiresAt, handleHardLogout]);
+
   // ---------- CUSTOM (BE) AUTH ----------
   const loginWithPassword = useCallback(async (email, password) => {
-    const { data } = await api.post("/auth/login", { email, password }); // { token, user }
-    const u = { ...data.user, provider: "local" };
-    setProvider("local");
-    setToken(data.token);
+    const { data } = await api.post("/auth/login", { email, password });
+    const u = data.user;
+
     setUser(u);
-    setGoogleAccessToken(null);
+    setProvider("local");
+
+    const expiration = typeof data.session.expiresAt === "number" ? data.session.expiresAt : null;
+    setLocalExpiresAt(expiration);
+    setTimerArmed(true)
+
     saveSession({
       provider: "local",
-      token: data.token,
       user: u,
-      googleAccessToken: null,
+      localExpiresAt: expiration,
     });
+
     return u;
   }, []);
 
-  const register = useCallback(async ({ email, password, displayName }) => {
-    await api.post("/auth/register", { email, password, displayName });
-    return loginWithPassword(email, password);
-  }, [loginWithPassword]);
+  const register = useCallback(async ({ username, email, phone, password }) => {
+    try {
+      const res = await api.post("/auth/register", { username, email, phone, password });
 
-  const getProfile = useCallback(async () => {
-    if (provider !== "local" || !token) return null;
-    const { data } = await api.get("/auth/me"); // { user }
-    const u = { ...data.user, provider: "local" };
-    setUser(u);
-    saveSession((prev => {
-      const current = prev || loadSession() || {};
-      return { ...current, user: u };
-    })(null));
-    return u;
-  }, [provider, token]);
+      if (res.status === 201) return loginWithPassword(email, password);
+    } catch (err) {
+      const code = err?.response?.status;
+      const msg = err?.response?.data?.message;
+      if (code === 409) {
+        toast.error(msg || "Something went wrong, please check again!");
+        throw err;
+      }
+      throw err;
+    }
+  }, [loginWithPassword]);
 
   // ---------- GOOGLE (FE-ONLY) AUTH ----------
   const googleImplicitLogin = useGoogleLogin({
@@ -173,56 +180,45 @@ export function AuthProvider({ children }) {
       const accessToken = tokenResponse?.access_token;
       if (!accessToken) return;
 
-      const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (!res.ok) return;
+      // Send token to BE. BE will: verify/fetch Google profile, upsert user, set session cookie
+      const { data } = await api.post("/auth/google", { accessToken }, { withCredentials: true });
+      const u = data.user;
 
-      const info = await res.json();
-      const u = normalizeGoogleUser(info);
-
-      setProvider("google");
       setUser(u);
-      setToken(null);
-      setGoogleAccessToken(accessToken);
+      setProvider("google");
+
+      const expiration = typeof data.session.expiresAt === "number" ? data.session.expiresAt : null;
+      setGoogleExpiresAt(expiration);
+      setTimerArmed(true);
 
       saveSession({
         provider: "google",
-        token: null,
         user: u,
-        googleAccessToken: accessToken,
+        googleExpiresAt: expiration,
       });
 
-      toast.success('Signed in!')
+      toast.success("Signed in!");
     },
     onError: () => { },
     scope: "openid email profile",
   });
 
   const loginWithGoogle = useCallback(() => {
-    // FE-only Google auth
     googleImplicitLogin();
   }, [googleImplicitLogin]);
 
   // ---------- LOGOUT ----------
   const logout = useCallback(async () => {
     try {
-      if (provider === "local") {
-        await api.post("/auth/logout").catch(() => { });
-        toast.info('Signed out!')
-      } else if (provider === "google" && googleAccessToken) {
-        await fetch("https://oauth2.googleapis.com/revoke", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: `token=${encodeURIComponent(googleAccessToken)}`,
-        }).catch(() => { });
-        googleLogout?.();
-        toast.info('Signed out!')
-      }
+      // Always clear server session cookie
+      await api.post("/auth/logout").catch(() => { });
+
+      navigate('/');
+      toast.info('Signed out!');
     } finally {
       handleHardLogout();
     }
-  }, [provider, googleAccessToken, handleHardLogout]);
+  }, [handleHardLogout]);
 
   const value = useMemo(() => {
     const isLocal = provider === "local";
@@ -237,8 +233,6 @@ export function AuthProvider({ children }) {
       isLocal,
       isGoogle,
       user,
-      token,
-      googleAccessToken,
 
       // deps
       api,
@@ -246,13 +240,12 @@ export function AuthProvider({ children }) {
       // actions
       loginWithPassword,
       register,
-      getProfile,
       loginWithGoogle,
       logout,
     };
   }, [
-    initializing, provider, user, token, googleAccessToken,
-    loginWithPassword, register, getProfile, loginWithGoogle, logout,
+    initializing, provider, user,
+    loginWithPassword, register, loginWithGoogle, logout,
   ]);
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;

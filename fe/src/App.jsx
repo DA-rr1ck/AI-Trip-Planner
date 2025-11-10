@@ -15,6 +15,7 @@ import Hero from '@/components/custom/Hero.jsx'                 // Landing conte
 import CreateTrip from '@/pages/create-trip/index.jsx'
 import ViewTrip from '@/pages/view-trip/[tripId]/index.jsx'
 import MyTrips from '@/pages/my-trips/index.jsx'
+import ProfilePage from '@/pages/profile/index.jsx'
 
 // Root layout INSIDE the router so any component can use <Link/>
 function RootLayout() {
@@ -30,16 +31,16 @@ function RootLayout() {
 export default function App() {
   return (
     <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_AUTH_CLIENT_ID}>
-      <AuthProvider>
-        <BrowserRouter>
+      <BrowserRouter>
+        <AuthProvider>
           <Routes>
             <Route element={<RootLayout />}>
-              <Route index 
+              <Route index
                 element={<Hero />}
               />
 
-              <Route 
-                path="create-trip" 
+              <Route
+                path="create-trip"
                 element={<CreateTrip />}
               />
 
@@ -61,12 +62,21 @@ export default function App() {
                 }
               />
 
+              <Route
+                path="/profile"
+                element={
+                  <ProtectedRoute>
+                    <ProfilePage />
+                  </ProtectedRoute>
+                }
+              />
+
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>
-        </BrowserRouter>
-      </AuthProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </GoogleOAuthProvider>
   )
 }
