@@ -7,7 +7,6 @@ const helmet = require('helmet');
 const { PORT = 8000, CLIENT_ORIGIN } = process.env;
 const authRoutes = require('./routes/auth');
 
-
 const app = express();
 
 // Security & parsers
@@ -26,7 +25,6 @@ app.use(
 // Routes
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/auth', authRoutes);
-// app.use('/api/auth/google', googleRoutes);
 
 // Start
 app.listen(PORT, () => {
