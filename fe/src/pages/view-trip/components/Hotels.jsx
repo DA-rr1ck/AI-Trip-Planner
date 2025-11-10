@@ -22,7 +22,7 @@ function HotelCard({ hotel }) {
 
   useEffect(() => {
     if (hotel.HotelName) {
-      getHotelImage(hotel.HotelName+hotel.HotelAddress).then(setImageUrl);
+      getHotelImage(hotel.HotelName + hotel.HotelAddress).then(setImageUrl);
     }
   }, [hotel.HotelName]);
 
@@ -49,13 +49,16 @@ function HotelCard({ hotel }) {
 }
 
 function Hotels({ trip }) {
-  console.log('TravelPlan:', trip?.tripData?.[0]?.TravelPlan);
+  // FIXED: Handle both old and new data structure
+  const hotels = trip?.tripData?.Hotels || trip?.tripData?.[0]?.TravelPlan?.Hotels || [];
+  
+  console.log('Hotels data:', hotels);
 
   return (
     <div>
       <h2 className='font-bold text-xl mt-5'>Hotel Recommendations</h2>
       <div className='grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-5'>
-        {trip?.tripData?.[0]?.TravelPlan?.Hotels?.map((hotel, index) => (
+        {hotels.map((hotel, index) => (
           <HotelCard key={index} hotel={hotel} />
         ))}
       </div>

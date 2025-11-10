@@ -49,8 +49,12 @@ function ActivityCard({ activity, location }) {
 }
 
 function PlacesToVisit({ trip }) {
-  const itinerary = trip?.tripData?.[0]?.TravelPlan?.Itinerary;
-  const location = trip?.tripData?.[0]?.TravelPlan?.Location;
+  // FIXED: Handle both old and new data structure
+  const itinerary = trip?.tripData?.Itinerary || trip?.tripData?.[0]?.TravelPlan?.Itinerary;
+  const location = trip?.tripData?.Location || trip?.tripData?.[0]?.TravelPlan?.Location || trip?.userSelection?.location;
+
+  console.log('Itinerary data:', itinerary);
+  console.log('Location:', location);
 
   if (!itinerary) return <div>No itinerary found.</div>;
 
@@ -67,7 +71,12 @@ function PlacesToVisit({ trip }) {
       <div>
         {sortedDays.map(([day, dayPlan]) => (
           <div key={day} className="mt-5">
-            <h2 className='font-bold text-lg'>{day}</h2>
+            <h2 className='font-bold text-lg'>{day.replace('Day', 'Day ')}</h2>
+            {dayPlan.Theme && (
+              <p className='text-sm text-gray-600 mb-2'>
+                {dayPlan.Theme} • Best time: {dayPlan.BestTimeToVisit}
+              </p>
+            )}
             <div className='grid md:grid-cols-2 gap-5'>
               {dayPlan.Activities?.map((activity, idx) => (
                 <ActivityCard 
