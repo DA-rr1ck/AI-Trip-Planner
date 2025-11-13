@@ -1,24 +1,26 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import Select from 'react-select'
 import { AiOutlineLoading3Quarters } from 'react-icons/ai'
 import AuthDialog from '@/components/custom/AuthDialog'
 import Input from '@/components/ui/input'
 import Button from '@/components/ui/Button'
 import { toast } from 'sonner'
-import { AI_PROMPT, SelectBudgetOptions, SelectTravelesList } from '@/constants/options'
-import { generateTrip } from '@/service/AIModel'
-import { db } from '@/service/firebaseConfig'
-import { doc, setDoc } from 'firebase/firestore'
+import { SelectBudgetOptions, SelectTravelesList } from '@/constants/options'
 import { useAuth } from '@/context/AuthContext'
+import ModeSwitch from './components/ModeSwitch'
+import DestinationSelector from './components/DestinationSelector'
+import HotelSearch from './components/HotelSearch'
+import DayManager from './components/DayManager'
+import { saveManualTrip as saveManualTripUtil } from './utils/tripSaver'
+import { generateAiTripFromForm } from './utils/aiTripGenerator'
 
 function CreateTrip() {
-  const [place, setPlace] = useState(null)
   const [formData, setFormData] = useState({})
-  const [options, setOptions] = useState([])
-  const [inputValue, setInputValue] = useState('')
   const [openDialog, setOpenDialog] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [isManualMode, setIsManualMode] = useState(false)
+  const [confirmedHotel, setConfirmedHotel] = useState(null)
+  const [tripDays, setTripDays] = useState([])
   const navigate = useNavigate()
   const { isAuthenticated, user } = useAuth()
 
@@ -26,15 +28,49 @@ function CreateTrip() {
     setFormData(prev => ({ ...prev, [name]: value }))
   }
 
-  const SaveAITrip = async (TripData) => {
-    const id = Date.now().toString()
-    await setDoc(doc(db, 'AITrips', id), {
-      userSelection: formData,
-      tripData: TripData,
-      userEmail: user?.email || '',
-      id,
-    })
-    return id
+  // Auto-create/truncate days to match the user's desired number
+  useEffect(() => {
+    const n = parseInt(formData.noOfdays, 10)
+    if (!Number.isFinite(n) || n <= 0) return
+    if (tripDays.length === n) return
+
+    // Preserve existing first N days (and their places), renumber sequentially
+    const next = []
+    for (let i = 0; i < n; i++) {
+      const existing = tripDays[i]
+      if (existing) {
+        next.push({ ...existing, dayNumber: i + 1 })
+      } else {
+        next.push({ id: Date.now() + i, dayNumber: i + 1, places: [] })
+      }
+    }
+    setTripDays(next)
+  }, [formData.noOfdays])
+
+  const saveManualTrip = async () => {
+    if (!isAuthenticated) {
+      setOpenDialog(true)
+      toast.info('Please sign in to save your trip.')
+      return
+    }
+
+    // Basic validation for manual save
+    if (!formData.location || !confirmedHotel || tripDays.length === 0) {
+      toast.error('Please complete your trip: location, hotel, and at least one day required.')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const id = await saveManualTripUtil({ formData, confirmedHotel, tripDays, user })
+      toast.success('Trip saved successfully!')
+      navigate(`/view-trip/${id}`)
+    } catch (error) {
+      console.error('Error saving manual trip:', error)
+      toast.error('Failed to save trip. Please try again.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const onGenerateTrip = async () => {
@@ -43,43 +79,9 @@ function CreateTrip() {
       toast.info('Please sign in to generate your trip.')
       return
     }
-
-    const daysNum = Number(formData.noOfdays)
-    if (!Number.isFinite(daysNum) || daysNum < 1 || daysNum > 5) {
-      toast.error('Please enter a valid number of days (1-5).', { duration: 1200 })
-      return
-    }
-
-    if (!formData.location || !formData.noOfdays || !formData.budget || !formData.traveler) {
-      toast.error('Please fill all the fields.', { duration: 1200 })
-      return
-    }
-
     setLoading(true)
-
-    const FINAL_PROMPT = AI_PROMPT
-      .replace('{location}', formData?.location)
-      .replace('{totalDays}', formData?.noOfdays)
-      .replace('{traveler}', formData?.traveler)
-      .replace('{budget}', formData?.budget)
-      .replace('{totalDays}', formData?.noOfdays)
-
     try {
-      const result = await generateTrip(FINAL_PROMPT)
-      console.log('Raw result:', result)
-      console.log('Result type:', typeof result)
-      
-      // Check if result is already an object or needs parsing
-      let tripData
-      if (typeof result === 'string') {
-        tripData = JSON.parse(result)
-      } else if (typeof result === 'object') {
-        tripData = result
-      } else {
-        throw new Error('Invalid trip data format')
-      }
-
-      setLoading(false)
+      const tripData = await generateAiTripFromForm(formData)
       navigate('/edit-trip', {
         state: {
           tripData: {
@@ -90,106 +92,179 @@ function CreateTrip() {
       })
     } catch (error) {
       console.error('Error generating trip:', error)
-      toast.error('Failed to generate trip. Please try again.', { duration: 2000 })
+      toast.error(error.message || 'Failed to generate trip. Please try again.', { duration: 2000 })
     } finally {
       setLoading(false)
     }
   }
-
-  // Debounced place search (OpenStreetMap Nominatim)
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if ((inputValue || '').length > 2) {
-        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(inputValue)}`)
-          .then(r => r.json())
-          .then(data => setOptions(data.map(item => ({ label: item.display_name, value: item }))))
-          .catch(() => setOptions([]))
-      }
-    }, 500)
-    return () => clearTimeout(t)
-  }, [inputValue])
-
   return (
     <div className='sm:px-10 md:px-32 lg:px-56 px-5 mt-10'>
+      {/* Mode Switch */}
+      <ModeSwitch isManualMode={isManualMode} onChange={setIsManualMode} />
+
       <h2 className='font-bold text-3xl'>
-        Tell us your travel preferences 🏕️🌴
+        {isManualMode ? 'Create Your Trip Manually' : 'Tell us your travel preferences 🏕️🌴'}
       </h2>
       <p className='mt-3 text-gray-500 text-xl'>
-        Just provide some basic information, and our trip planner will generate a customized itinerary based on your preferences
+        {isManualMode 
+          ? 'Build your custom itinerary step by step with full control over every detail'
+          : 'Just provide some basic information, and our trip planner will generate a customized itinerary based on your preferences'
+        }
       </p>
 
-      <div className='mt-20 flex flex-col gap-10'>
-        <div>
-          <h2 className='text-xl my-3 font-medium'>
-            What is your desire destination?
-          </h2>
-          <Select
-            options={options}
-            value={place}
-            onChange={(v) => {
-              setPlace(v)
-              handleInputChange('location', v?.label)
-            }}
-            onInputChange={setInputValue}
-            placeholder='Search for a location...'
+      {isManualMode ? (
+        // Manual Mode UI
+        <div className='mt-20 flex flex-col gap-10'>
+          <DestinationSelector 
+            label='What is your destination?'
+            onLocationSelected={(label) => handleInputChange('location', label)}
           />
-        </div>
-      </div>
 
-      <div>
-        <h2 className='text-xl my-3 font-medium'>
-          How many days are you planning your trip?
-        </h2>
-        <Input
-          placeholder='Ex.3'
-          type='number'
-          onChange={(e) => handleInputChange('noOfdays', e.target.value)}
-        />
-      </div>
+          {/* How many days? */}
+          <div>
+            <h2 className='text-xl my-3 font-medium'>
+              How many days are you planning your trip?
+            </h2>
+            <Input
+              placeholder='Ex.3'
+              type='number'
+              value={formData.noOfdays || ''}
+              onChange={(e) => handleInputChange('noOfdays', e.target.value)}
+            />
+          </div>
 
-      <div>
-        <h2 className='text-xl my-3 font-medium'>
-          What is your budget?
-        </h2>
-        <div className='grid sm:grid-cols-3 mt-5 gap-5'>
-          {SelectBudgetOptions.map((item, index) => (
-            <div
-              key={index}
-              className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg ${formData.budget === item.title ? 'border-blue-500 bg-blue-50' : ''
-                }`}
-              onClick={() => handleInputChange('budget', item.title)}
-            >
-              <h2 className='text-4xl'>{item.icon}</h2>
-              <h2 className='font-bold text-lg'>{item.title}</h2>
-              <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+          {/* Budget */}
+          <div>
+            <h2 className='text-xl my-3 font-medium'>
+              What is your budget?
+            </h2>
+            <div className='grid sm:grid-cols-3 mt-5 gap-5'>
+              {SelectBudgetOptions.map((item, index) => (
+                <div
+                  key={index}
+                  className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg ${formData.budget === item.title ? 'border-blue-500 bg-blue-50' : ''}`}
+                  onClick={() => handleInputChange('budget', item.title)}
+                >
+                  <h2 className='text-4xl'>{item.icon}</h2>
+                  <h2 className='font-bold text-lg'>{item.title}</h2>
+                  <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      </div>
+          </div>
 
-      <div>
-        <h2 className='text-xl my-3 font-medium'>
-          Who do you plan to travel with?
-        </h2>
-        <div className='grid sm:grid-cols-3 mt-5 gap-5'>
-          {SelectTravelesList.map((item, index) => (
-            <div
-              key={index}
-              onClick={() => handleInputChange('traveler', item.title)}
-              className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg ${formData.traveler === item.title ? 'border-blue-500 bg-blue-50' : ''
-                }`}
-            >
-              <h2 className='text-4xl'>{item.icon}</h2>
-              <h2 className='font-bold text-lg'>{item.title}</h2>
-              <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+          {/* Traveler */}
+          <div>
+            <h2 className='text-xl my-3 font-medium'>
+              Who do you plan to travel with?
+            </h2>
+            <div className='grid sm:grid-cols-3 mt-5 gap-5'>
+              {SelectTravelesList.map((item, index) => (
+                <div
+                  key={index}
+                  onClick={() => handleInputChange('traveler', item.title)}
+                  className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg ${formData.traveler === item.title ? 'border-blue-500 bg-blue-50' : ''}`}
+                >
+                  <h2 className='text-4xl'>{item.icon}</h2>
+                  <h2 className='font-bold text-lg'>{item.title}</h2>
+                  <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
+
+          {/* Hotel Search */}
+          {formData.location && (
+            <HotelSearch 
+              location={formData.location}
+              confirmedHotel={confirmedHotel}
+              onHotelConfirm={(hotel) => setConfirmedHotel(hotel)}
+              onRemoveHotel={() => setConfirmedHotel(null)}
+            />
+          )}
+
+          {/* Day Management */}
+          {confirmedHotel && (
+            <DayManager 
+              location={formData.location}
+              tripDays={tripDays}
+              onDaysChange={setTripDays}
+            />
+          )}
         </div>
-      </div>
+      ) : (
+        // AI Mode UI (existing)
+        <>
+          <div className='mt-20 flex flex-col gap-10'>
+            <DestinationSelector 
+              label='What is your desire destination?'
+              onLocationSelected={(label) => handleInputChange('location', label)}
+            />
+          </div>
+
+          <div>
+            <h2 className='text-xl my-3 font-medium'>
+              How many days are you planning your trip?
+            </h2>
+            <Input
+              placeholder='Ex.3'
+              type='number'
+              onChange={(e) => handleInputChange('noOfdays', e.target.value)}
+            />
+          </div>
+
+          <div>
+            <h2 className='text-xl my-3 font-medium'>
+              What is your budget?
+            </h2>
+            <div className='grid sm:grid-cols-3 mt-5 gap-5'>
+              {SelectBudgetOptions.map((item, index) => (
+                <div
+                  key={index}
+                  className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg ${formData.budget === item.title ? 'border-blue-500 bg-blue-50' : ''
+                    }`}
+                  onClick={() => handleInputChange('budget', item.title)}
+                >
+                  <h2 className='text-4xl'>{item.icon}</h2>
+                  <h2 className='font-bold text-lg'>{item.title}</h2>
+                  <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h2 className='text-xl my-3 font-medium'>
+              Who do you plan to travel with?
+            </h2>
+            <div className='grid sm:grid-cols-3 mt-5 gap-5'>
+              {SelectTravelesList.map((item, index) => (
+                <div
+                  key={index}
+                  onClick={() => handleInputChange('traveler', item.title)}
+                  className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg ${formData.traveler === item.title ? 'border-blue-500 bg-blue-50' : ''
+                    }`}
+                >
+                  <h2 className='text-4xl'>{item.icon}</h2>
+                  <h2 className='font-bold text-lg'>{item.title}</h2>
+                  <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       <div className='my-10 justify-end flex'>
-        <Button disabled={loading} onClick={onGenerateTrip}>
-          {loading ? <AiOutlineLoading3Quarters className='h-7 w-7 animate-spin' /> : 'Generate Trip'}
+        <Button 
+          disabled={loading} 
+          onClick={isManualMode ? saveManualTrip : onGenerateTrip}
+        >
+          {loading ? (
+            <AiOutlineLoading3Quarters className='h-7 w-7 animate-spin' />
+          ) : (
+            isManualMode ? 'Save' : 'Generate Trip'
+          )}
         </Button>
       </div>
 
@@ -197,7 +272,14 @@ function CreateTrip() {
       <AuthDialog
         open={openDialog}
         onOpenChange={setOpenDialog}
-        onSuccess={() => { setOpenDialog(false); onGenerateTrip(); }}
+        onSuccess={() => { 
+          setOpenDialog(false)
+          if (isManualMode) {
+            saveManualTrip()
+          } else {
+            onGenerateTrip()
+          }
+        }}
       />
     </div>
   )
