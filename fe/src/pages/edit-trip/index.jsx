@@ -67,8 +67,8 @@ function HotelCard({ hotel }) {
 
   return (
     <div className='border rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow'>
-      <img 
-        src={imageUrl} 
+      <img
+        src={imageUrl}
         alt={hotel.HotelName}
         className='w-full h-[160px] object-cover'
       />
@@ -126,13 +126,13 @@ function SortableActivity({ activity, onRemove }) {
         >
           <GripVertical className='h-5 w-5 text-gray-400' />
         </button>
-        
-        <img 
-          src={imageUrl} 
+
+        <img
+          src={imageUrl}
           alt={activity.PlaceName}
           className='w-[100px] h-[100px] rounded-lg object-cover flex-shrink-0'
         />
-        
+
         <div className='flex-1 min-w-0'>
           <h4 className='font-semibold text-lg'>{activity.PlaceName}</h4>
           <p className='text-sm text-gray-600 mt-1 line-clamp-2'>{activity.PlaceDetails}</p>
@@ -239,18 +239,50 @@ function EditTrip() {
   const [regeneratingHotels, setRegeneratingHotels] = useState(false)
   const [hotelPreference, setHotelPreference] = useState('')
 
-  const rawTripData = location.state?.tripData
+  const rawTripData = location.state.tripData || null
+  // the Firestore doc id if editing an existing trip from my-trips page
+  const existingTripId = rawTripData.id || null
+
   const [tripData, setTripData] = useState(() => {
     if (!rawTripData) return null
 
-    const travelPlan = rawTripData.tripData?.[0]?.TravelPlan || rawTripData.tripData?.TravelPlan
-    
-    // Add unique IDs to activities for drag-and-drop
+    const userSelection = rawTripData.userSelection || null
+    const tripData = rawTripData.tripData || null
+
+    let travelPlan
+
+    // AI returns: [ { TravelPlan: {...} } ]
+    if (Array.isArray(tripData)) {
+      const first = tripData[0] || {}
+      travelPlan = first.TravelPlan
+    }
+    // Firestore format: tripData: { TravelPlan: {...} } (the TravelPlan itself)
+    else if (typeof tripData === 'object') {
+      travelPlan = tripData
+    }
+
+    if (!travelPlan || !travelPlan.Itinerary) {
+      console.error('Unsupported trip data format:', tripData)
+      return null
+    }
+
+    // Normalize & sort days numerically, then add unique IDs to activities
     const itineraryWithIds = {}
-    Object.entries(travelPlan.Itinerary).forEach(([dayKey, dayData]) => {
+
+    const sortedEntries = Object.entries(travelPlan.Itinerary).sort(
+      ([keyA], [keyB]) => {
+        const numA = parseInt(keyA.match(/\d+/)?.[0] || '0', 10)
+        const numB = parseInt(keyB.match(/\d+/)?.[0] || '0', 10)
+        return numA - numB
+      }
+    )
+
+    sortedEntries.forEach(([_, dayData], index) => {
+      const dayKey = `Day${index + 1}`
+
       itineraryWithIds[dayKey] = {
         ...dayData,
-        Activities: dayData.Activities.map((activity, idx) => ({
+        Activities: (dayData.Activities || []).map((activity, idx) => ({
           ...activity,
           id: `${dayKey}-activity-${idx}`,
         })),
@@ -258,7 +290,7 @@ function EditTrip() {
     })
 
     return {
-      userSelection: rawTripData.userSelection,
+      userSelection,
       tripData: {
         ...travelPlan,
         Itinerary: itineraryWithIds,
@@ -350,9 +382,9 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no extra 
       const dayKeys = Object.keys(tripData.tripData.Itinerary)
       const oldIndex = dayKeys.indexOf(active.id)
       const newIndex = dayKeys.indexOf(over.id)
-      
+
       const newOrder = arrayMove(dayKeys, oldIndex, newIndex)
-      
+
       const reorderedItinerary = {}
       newOrder.forEach((oldKey, index) => {
         const newKey = `Day${index + 1}`
@@ -426,17 +458,20 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no extra 
       toast.error('Please log in to save trip')
       return
     }
+    if (!tripData) {
+      toast.error('No trip data to save')
+      return
+    }
 
     setSaving(true)
     try {
-      const docId = Date.now().toString()
-      
-      // Remove IDs before saving
+      const docId = existingTripId || Date.now().toString()
+
       const itineraryWithoutIds = {}
-      Object.entries(tripData.tripData.Itinerary).forEach(([dayKey, dayData]) => {
+      Object.entries(tripData.tripData.Itinerary || {}).forEach(([dayKey, dayData]) => {
         itineraryWithoutIds[dayKey] = {
           ...dayData,
-          Activities: dayData.Activities.map(({ id, ...activity }) => activity),
+          Activities: (dayData.Activities || []).map(({ id, ...activity }) => activity),
         }
       })
 
@@ -449,8 +484,8 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no extra 
         userEmail: user.email,
         id: docId,
       })
-      
-      toast.success('Trip saved successfully!')
+
+      toast.success(existingTripId ? 'Trip updated successfully!' : 'Trip saved successfully!')
       navigate(`/view-trip/${docId}`)
     } catch (error) {
       console.error('Error saving trip:', error)
@@ -482,7 +517,7 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no extra 
           ) : (
             <>
               <Save className='mr-2 h-4 w-4' />
-              Save Trip
+              {existingTripId ? 'Update Trip' : 'Save Trip'}
             </>
           )}
         </Button>
@@ -503,7 +538,7 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no extra 
       {/* Hotels - With Regeneration */}
       <div className='mb-8'>
         <h2 className='font-bold text-2xl mb-4'>Recommended Hotels</h2>
-        
+
         {/* Hotel Preference Input */}
         <div className='mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200'>
           <p className='text-sm text-gray-700 mb-2'>
@@ -547,7 +582,7 @@ Return ONLY a valid JSON array with this exact structure (no markdown, no extra 
       {/* Itinerary - Drag and Drop */}
       <div className='mb-8'>
         <h2 className='font-bold text-2xl mb-4'>Daily Itinerary</h2>
-        
+
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
