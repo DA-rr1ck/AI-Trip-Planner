@@ -7,19 +7,13 @@ import avatarFallback from '@/assets/avatar.png'
 import AuthDialog from '@/components/custom/AuthDialog'
 import { useAuth } from '@/context/AuthContext'
 
-function resolveAvatarSrc(u) {
-  const raw = u?.avatar || u?.picture;
-  if (!raw) return avatarFallback;
-  return /^https?:\/\//i.test(raw) ? raw : `https://lh3.googleusercontent.com/a/${raw}`;
-}
-
 function Header() {
   const { isAuthenticated, user, logout } = useAuth();
   const [openPopover, setOpenPopover] = useState(false);
   const [openDialog, setOpenDialog] = useState(false);
   const navigate = useNavigate();
 
-  const avatarSrc = resolveAvatarSrc(user);
+  const avatarSrc = user?.avatar || avatarFallback;
   const displayName = user?.username || user?.email || 'User';
 
   return (

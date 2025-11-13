@@ -14,7 +14,7 @@ import ProtectedRoute from '@/components/ProtectedRoute/ProtectedRoute.jsx'
 import Hero from '@/components/custom/Hero.jsx'                 // Landing content
 import CreateTrip from '@/pages/create-trip/index.jsx'
 import ViewTrip from '@/pages/view-trip/[tripId]/index.jsx'
-import EditTrip from '@/pages/edit-trip'
+import EditTrip from '@/pages/edit-trip/index.jsx'
 import MyTrips from '@/pages/my-trips/index.jsx'
 import ProfilePage from '@/pages/profile/index.jsx'
 
@@ -71,7 +71,6 @@ export default function App() {
                   </ProtectedRoute>
                 }
               />
-              
 
               <Route
                 path="/profile"
