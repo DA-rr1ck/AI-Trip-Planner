@@ -6,7 +6,7 @@ node_modules
 .env.local
 .env*.local
 
-# Firebase config (sensitive)
+
 src/service/firebaseConfig.jsx
 
 # Build output
