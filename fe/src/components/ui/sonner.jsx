@@ -24,6 +24,10 @@ const Toaster = ({
         error: <OctagonXIcon className="size-4" />,
         loading: <Loader2Icon className="size-4 animate-spin" />,
       }}
+      closeButton
+      toastOptions={{
+        dismissible: true,
+      }}
       style={
         {
           "--normal-bg": "var(--popover)",
