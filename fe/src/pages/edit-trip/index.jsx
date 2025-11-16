@@ -219,6 +219,8 @@ function EditTrip() {
   const [editedSelection, setEditedSelection] = useState(null)
 
   const rawTripData = location.state?.tripData
+
+  const existingTripId = rawTripData.id || null
   
   // FIXED: Better state initialization
   const [tripData, setTripData] = useState(() => {

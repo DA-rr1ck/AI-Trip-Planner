@@ -83,11 +83,7 @@ function TripCard({ trip, onDelete }) {
               type='button'
               className='flex items-center gap-2 w-full px-3 py-2 rounded hover:bg-gray-100 text-left'
               onClick={() =>
-                navigate('/edit-trip', {
-                  state: {
-                    tripData: trip
-                  },
-                })
+                navigate(`/view-trip/${trip.id}`)
               }
             >
               <Pencil className='h-4 w-4' />
