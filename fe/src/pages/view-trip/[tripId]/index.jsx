@@ -34,11 +34,11 @@ function ViewTrip() {
     }
 
     const handleEditTrip = () => {
-        navigate('/edit-trip', {
-            state: {
-                tripData: trip
-            }
-        })
+        // navigate('/edit-trip', {
+        //     state: {
+        //         tripData: trip
+        //     }
+        // })
     }
 
     useEffect(() => {
