@@ -7,6 +7,7 @@ import { db } from '@/service/firebaseConfig';
 import { createApi } from 'unsplash-js';
 import { toast } from 'sonner'
 import { useAuth } from '@/context/AuthContext'
+import { format, parse, differenceInDays } from 'date-fns'
 
 const unsplash = createApi({
   accessKey: import.meta.env.VITE_UNSPLASH_ACCESS_KEY,
@@ -34,6 +35,31 @@ function TripCard({ trip, onDelete }) {
       getPlaceImage(trip.userSelection.location).then(setImageUrl);
     }
   }, [trip.userSelection?.location]);
+
+  // Calculate days from date range
+  const getTripDays = () => {
+    // First check for the new date-based format
+    if (trip.userSelection?.startDate && trip.userSelection?.endDate) {
+      const start = parse(trip.userSelection.startDate, 'yyyy-MM-dd', new Date());
+      const end = parse(trip.userSelection.endDate, 'yyyy-MM-dd', new Date());
+      return differenceInDays(end, start) + 1;
+    }
+    // Fallback to old format (if exists)
+    return trip.userSelection?.noOfdays || 0;
+  };
+
+  // Format date range for display
+  const getDateRange = () => {
+    if (trip.userSelection?.startDate && trip.userSelection?.endDate) {
+      const start = parse(trip.userSelection.startDate, 'yyyy-MM-dd', new Date());
+      const end = parse(trip.userSelection.endDate, 'yyyy-MM-dd', new Date());
+      return `${format(start, 'MMM d')} - ${format(end, 'MMM d, yyyy')}`;
+    }
+    return null;
+  };
+
+  const days = getTripDays();
+  const dateRange = getDateRange();
 
   return (
     <div
@@ -77,11 +103,32 @@ function TripCard({ trip, onDelete }) {
 
       <div className='p-3'>
         <h3 className='font-bold text-lg'>{trip.userSelection?.location}</h3>
+        
+        {/* Date range (if available) */}
+        {dateRange && (
+          <p className='text-sm text-gray-600 mt-1'>📅 {dateRange}</p>
+        )}
+        
         <div className='flex gap-2 mt-2'>
-          <p className='text-sm bg-gray-200 text-gray-600 px-2 py-1 rounded-full'>📅 {trip.userSelection?.noOfdays} Days</p>
-          <p className='text-sm bg-gray-200 text-gray-600 px-2 py-1 rounded-full'>💰 {trip.userSelection?.budget}</p>
+          {/* Number of days */}
+          {days > 0 && (
+            <p className='text-sm bg-gray-200 text-gray-600 px-2 py-1 rounded-full'>
+              🗓️ {days} {days === 1 ? 'Day' : 'Days'}
+            </p>
+          )}
+          
+          {/* Budget */}
+          {trip.userSelection?.budget && (
+            <p className='text-sm bg-gray-200 text-gray-600 px-2 py-1 rounded-full'>
+              💰 {trip.userSelection.budget}
+            </p>
+          )}
         </div>
-        <p className='text-sm text-gray-500 mt-2'>🥂 {trip.userSelection?.traveler}</p>
+        
+        {/* Traveler type */}
+        {trip.userSelection?.traveler && (
+          <p className='text-sm text-gray-500 mt-2'>🥂 {trip.userSelection.traveler}</p>
+        )}
       </div>
     </div>
   );
@@ -89,11 +136,16 @@ function TripCard({ trip, onDelete }) {
 
 function MyTrips() {
   const navigate = useNavigate();
-  const { user } = useAuth(); // unified BE user
+  const { user } = useAuth();
   const [userTrips, setUserTrips] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!user?.email) {
+      navigate('/');
+      return;
+    }
+
     (async () => {
       setLoading(true);
       try {
@@ -101,6 +153,14 @@ function MyTrips() {
         const querySnapshot = await getDocs(q);
         const trips = [];
         querySnapshot.forEach((d) => trips.push({ id: d.id, ...d.data() }));
+        
+        // Sort trips by creation date (newest first)
+        trips.sort((a, b) => {
+          const dateA = a.userSelection?.startDate ? new Date(a.userSelection.startDate) : new Date(0);
+          const dateB = b.userSelection?.startDate ? new Date(b.userSelection.startDate) : new Date(0);
+          return dateB - dateA;
+        });
+        
         setUserTrips(trips);
       } catch (error) {
         console.error('Error fetching trips:', error);
@@ -116,7 +176,7 @@ function MyTrips() {
     try {
       await deleteDoc(doc(db, 'AITrips', tripId));
       setUserTrips((prev) => prev.filter((t) => t.id !== tripId));
-      toast.success('Trip deleted');
+      toast.success('Trip deleted successfully');
     } catch (error) {
       console.error('Error deleting trip:', error);
       toast.error('Failed to delete trip, please try again.');
@@ -127,7 +187,9 @@ function MyTrips() {
     return (
       <div className='sm:px-10 md:px-32 lg:px-56 xl:px-10 px-5 mt-10'>
         <h2 className='font-bold text-3xl'>My Trips</h2>
-        <p className='mt-5'>Loading your trips...</p>
+        <div className='mt-10 flex justify-center'>
+          <div className='animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900'></div>
+        </div>
       </div>
     );
   }

@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Select from 'react-select'
+import DatePicker from 'react-datepicker'
+import "react-datepicker/dist/react-datepicker.css"
+import { differenceInDays, format, addDays } from 'date-fns'
 import { AiOutlineLoading3Quarters } from 'react-icons/ai'
 import AuthDialog from '@/components/custom/AuthDialog'
 import Input from '@/components/ui/input'
@@ -8,13 +11,14 @@ import Button from '@/components/ui/Button'
 import { toast } from 'sonner'
 import { AI_PROMPT, SelectBudgetOptions, SelectTravelesList } from '@/constants/options'
 import { generateTrip } from '@/service/AIModel'
-import { db } from '@/service/firebaseConfig'
-import { doc, setDoc } from 'firebase/firestore'
 import { useAuth } from '@/context/AuthContext'
 
 function CreateTrip() {
   const [place, setPlace] = useState(null)
-  const [formData, setFormData] = useState({})
+  const [formData, setFormData] = useState({
+    startDate: null,
+    endDate: null,
+  })
   const [options, setOptions] = useState([])
   const [inputValue, setInputValue] = useState('')
   const [openDialog, setOpenDialog] = useState(false)
@@ -26,15 +30,10 @@ function CreateTrip() {
     setFormData(prev => ({ ...prev, [name]: value }))
   }
 
-  const SaveAITrip = async (TripData) => {
-    const id = Date.now().toString()
-    await setDoc(doc(db, 'AITrips', id), {
-      userSelection: formData,
-      tripData: TripData,
-      userEmail: user?.email || '',
-      id,
-    })
-    return id
+  // Calculate number of days
+  const getTotalDays = () => {
+    if (!formData.startDate || !formData.endDate) return 0
+    return differenceInDays(formData.endDate, formData.startDate) + 1
   }
 
   const onGenerateTrip = async () => {
@@ -44,13 +43,13 @@ function CreateTrip() {
       return
     }
 
-    const daysNum = Number(formData.noOfdays)
-    if (!Number.isFinite(daysNum) || daysNum < 1 || daysNum > 5) {
-      toast.error('Please enter a valid number of days (1-5).', { duration: 1200 })
+    const totalDays = getTotalDays()
+    if (totalDays < 1 || totalDays > 5) {
+      toast.error('Please select a trip between 1-5 days.', { duration: 1200 })
       return
     }
 
-    if (!formData.location || !formData.noOfdays || !formData.budget || !formData.traveler) {
+    if (!formData.location || !formData.startDate || !formData.endDate || !formData.budget || !formData.traveler) {
       toast.error('Please fill all the fields.', { duration: 1200 })
       return
     }
@@ -59,17 +58,15 @@ function CreateTrip() {
 
     const FINAL_PROMPT = AI_PROMPT
       .replace('{location}', formData?.location)
-      .replace('{totalDays}', formData?.noOfdays)
+      .replace('{totalDays}', totalDays)
       .replace('{traveler}', formData?.traveler)
       .replace('{budget}', formData?.budget)
-      .replace('{totalDays}', formData?.noOfdays)
+      .replace('{totalDays}', totalDays)
 
     try {
       const result = await generateTrip(FINAL_PROMPT)
       console.log('Raw result:', result)
-      console.log('Result type:', typeof result)
       
-      // Check if result is already an object or needs parsing
       let tripData
       if (typeof result === 'string') {
         tripData = JSON.parse(result)
@@ -79,12 +76,30 @@ function CreateTrip() {
         throw new Error('Invalid trip data format')
       }
 
+      // Extract TravelPlan
+      const travelPlan = tripData[0]?.TravelPlan || tripData.TravelPlan || tripData
+
+      // Convert Day1, Day2... to actual dates
+      const itineraryWithDates = {}
+      Object.entries(travelPlan.Itinerary).forEach(([dayKey, dayData], index) => {
+        const actualDate = addDays(formData.startDate, index)
+        const dateKey = format(actualDate, 'yyyy-MM-dd')
+        itineraryWithDates[dateKey] = dayData
+      })
+
       setLoading(false)
       navigate('/edit-trip', {
         state: {
           tripData: {
-            userSelection: formData,
-            tripData: tripData
+            userSelection: {
+              ...formData,
+              startDate: format(formData.startDate, 'yyyy-MM-dd'),
+              endDate: format(formData.endDate, 'yyyy-MM-dd'),
+            },
+            tripData: {
+              ...travelPlan,
+              Itinerary: itineraryWithDates,
+            }
           }
         }
       })
@@ -119,9 +134,10 @@ function CreateTrip() {
       </p>
 
       <div className='mt-20 flex flex-col gap-10'>
+        {/* Location Selection */}
         <div>
           <h2 className='text-xl my-3 font-medium'>
-            What is your desire destination?
+            What is your desired destination?
           </h2>
           <Select
             options={options}
@@ -134,66 +150,115 @@ function CreateTrip() {
             placeholder='Search for a location...'
           />
         </div>
-      </div>
 
-      <div>
-        <h2 className='text-xl my-3 font-medium'>
-          How many days are you planning your trip?
-        </h2>
-        <Input
-          placeholder='Ex.3'
-          type='number'
-          onChange={(e) => handleInputChange('noOfdays', e.target.value)}
-        />
-      </div>
-
-      <div>
-        <h2 className='text-xl my-3 font-medium'>
-          What is your budget?
-        </h2>
-        <div className='grid sm:grid-cols-3 mt-5 gap-5'>
-          {SelectBudgetOptions.map((item, index) => (
-            <div
-              key={index}
-              className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg ${formData.budget === item.title ? 'border-blue-500 bg-blue-50' : ''
-                }`}
-              onClick={() => handleInputChange('budget', item.title)}
-            >
-              <h2 className='text-4xl'>{item.icon}</h2>
-              <h2 className='font-bold text-lg'>{item.title}</h2>
-              <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+        {/* Separate Date Pickers */}
+        <div>
+          <h2 className='text-xl my-3 font-medium'>
+            When are you planning your trip?
+          </h2>
+          
+          <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+            {/* Start Date */}
+            <div>
+              <label className='block text-sm font-medium text-gray-700 mb-2'>
+                Start Date
+              </label>
+              <DatePicker
+                selected={formData.startDate}
+                onChange={(date) => handleInputChange('startDate', date)}
+                minDate={new Date()}
+                maxDate={formData.endDate || undefined}
+                dateFormat="dd/MM/yyyy"
+                placeholderText="Select start date"
+                className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+                isClearable
+              />
             </div>
-          ))}
+
+            {/* End Date */}
+            <div>
+              <label className='block text-sm font-medium text-gray-700 mb-2'>
+                End Date
+              </label>
+              <DatePicker
+                selected={formData.endDate}
+                onChange={(date) => handleInputChange('endDate', date)}
+                minDate={formData.startDate || new Date()}
+                dateFormat="dd/MM/yyyy"
+                placeholderText="Select end date"
+                className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+                disabled={!formData.startDate}
+                isClearable
+              />
+            </div>
+          </div>
+
+          {/* Trip Duration Display */}
+          {formData.startDate && formData.endDate && (
+            <div className='mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg'>
+              <p className='text-sm text-blue-800'>
+                ✈️ Trip duration: <span className='font-semibold'>{getTotalDays()} {getTotalDays() === 1 ? 'day' : 'days'}</span>
+              </p>
+              <p className='text-xs text-blue-600 mt-1'>
+                {format(formData.startDate, 'EEEE, MMMM d, yyyy')} → {format(formData.endDate, 'EEEE, MMMM d, yyyy')}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Budget Selection */}
+        <div>
+          <h2 className='text-xl my-3 font-medium'>
+            What is your budget?
+          </h2>
+          <div className='grid sm:grid-cols-3 mt-5 gap-5'>
+            {SelectBudgetOptions.map((item, index) => (
+              <div
+                key={index}
+                className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg transition-all ${
+                  formData.budget === item.title ? 'border-blue-500 bg-blue-50 shadow-md' : ''
+                }`}
+                onClick={() => handleInputChange('budget', item.title)}
+              >
+                <h2 className='text-4xl'>{item.icon}</h2>
+                <h2 className='font-bold text-lg'>{item.title}</h2>
+                <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Traveler Selection */}
+        <div>
+          <h2 className='text-xl my-3 font-medium'>
+            Who do you plan to travel with?
+          </h2>
+          <div className='grid sm:grid-cols-3 mt-5 gap-5'>
+            {SelectTravelesList.map((item, index) => (
+              <div
+                key={index}
+                onClick={() => handleInputChange('traveler', item.title)}
+                className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg transition-all ${
+                  formData.traveler === item.title ? 'border-blue-500 bg-blue-50 shadow-md' : ''
+                }`}
+              >
+                <h2 className='text-4xl'>{item.icon}</h2>
+                <h2 className='font-bold text-lg'>{item.title}</h2>
+                <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div>
-        <h2 className='text-xl my-3 font-medium'>
-          Who do you plan to travel with?
-        </h2>
-        <div className='grid sm:grid-cols-3 mt-5 gap-5'>
-          {SelectTravelesList.map((item, index) => (
-            <div
-              key={index}
-              onClick={() => handleInputChange('traveler', item.title)}
-              className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg ${formData.traveler === item.title ? 'border-blue-500 bg-blue-50' : ''
-                }`}
-            >
-              <h2 className='text-4xl'>{item.icon}</h2>
-              <h2 className='font-bold text-lg'>{item.title}</h2>
-              <h2 className='text-sm text-gray-500'>{item.desc}</h2>
-            </div>
-          ))}
-        </div>
-      </div>
-
+      {/* Generate Button */}
       <div className='my-10 justify-end flex'>
         <Button disabled={loading} onClick={onGenerateTrip}>
           {loading ? <AiOutlineLoading3Quarters className='h-7 w-7 animate-spin' /> : 'Generate Trip'}
         </Button>
       </div>
 
-      {/* Shared Auth Dialog (BE email/password + FE Google via AuthContext) */}
+      {/* Auth Dialog */}
       <AuthDialog
         open={openDialog}
         onOpenChange={setOpenDialog}

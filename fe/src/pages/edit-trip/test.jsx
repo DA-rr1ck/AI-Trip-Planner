@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { useAuth } from '@/context/AuthContext'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/input'
-import { Save, Loader2, GripVertical, Trash2, Sparkles } from 'lucide-react'
+import { Save, Loader2, GripVertical, Trash2, Sparkles, Edit, X } from 'lucide-react'
 import {
   DndContext,
   closestCenter,
@@ -25,6 +25,9 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { regenerateHotels } from './utils/regenerateHotels'
 import { regenerateItinerary } from './utils/regenerateItinerary'
+import { SelectBudgetOptions, SelectTravelesList } from '@/constants/options'
+import { generateTrip } from '@/service/AIModel'
+import { AI_PROMPT } from '@/constants/options'
 
 // Function to get hotel image from Pixabay
 async function getHotelImage(hotelName, hotelAddress) {
@@ -201,9 +204,14 @@ function EditTrip() {
   const [saving, setSaving] = useState(false)
   const [regeneratingHotels, setRegeneratingHotels] = useState(false)
   const [regeneratingItinerary, setRegeneratingItinerary] = useState(false)
+  const [regeneratingAll, setRegeneratingAll] = useState(false)
   const [hotelPreference, setHotelPreference] = useState('')
   const [itineraryPreference, setItineraryPreference] = useState('')
   const [activeId, setActiveId] = useState(null)
+  
+  // NEW: User selection editing
+  const [isEditingSelection, setIsEditingSelection] = useState(false)
+  const [editedSelection, setEditedSelection] = useState(null)
 
   const rawTripData = location.state?.tripData
   const [tripData, setTripData] = useState(() => {
@@ -245,6 +253,92 @@ function EditTrip() {
       navigate('/create-trip')
     }
   }, [tripData, navigate])
+
+  // NEW: Start editing user selection
+  const handleEditSelection = () => {
+    setEditedSelection({
+      noOfdays: tripData.userSelection.noOfdays,
+      budget: tripData.userSelection.budget,
+      traveler: tripData.userSelection.traveler,
+    })
+    setIsEditingSelection(true)
+  }
+
+  // NEW: Cancel editing
+  const handleCancelEdit = () => {
+    setIsEditingSelection(false)
+    setEditedSelection(null)
+  }
+
+  // NEW: Regenerate entire trip based on new user selection
+  const handleRegenerateAll = async () => {
+    if (!editedSelection.noOfdays || !editedSelection.budget || !editedSelection.traveler) {
+      toast.error('Please fill all fields')
+      return
+    }
+
+    const daysNum = Number(editedSelection.noOfdays)
+    if (!Number.isFinite(daysNum) || daysNum < 1 || daysNum > 5) {
+      toast.error('Please enter valid number of days (1-5)')
+      return
+    }
+
+    setRegeneratingAll(true)
+    try {
+      const FINAL_PROMPT = AI_PROMPT
+        .replace('{location}', tripData.userSelection.location)
+        .replace('{totalDays}', editedSelection.noOfdays)
+        .replace('{traveler}', editedSelection.traveler)
+        .replace('{budget}', editedSelection.budget)
+        .replace('{totalDays}', editedSelection.noOfdays)
+
+      const result = await generateTrip(FINAL_PROMPT)
+      console.log('Raw regenerate result:', result)
+
+      let newTripData
+      if (typeof result === 'string') {
+        const cleanResult = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+        newTripData = JSON.parse(cleanResult)
+      } else {
+        newTripData = result
+      }
+
+      // Extract TravelPlan from array if needed
+      const travelPlan = newTripData[0]?.TravelPlan || newTripData.TravelPlan || newTripData
+
+      // Add unique IDs to activities
+      const itineraryWithIds = {}
+      Object.entries(travelPlan.Itinerary).forEach(([dayKey, dayData]) => {
+        itineraryWithIds[dayKey] = {
+          ...dayData,
+          Activities: dayData.Activities.map((activity, idx) => ({
+            ...activity,
+            id: `${dayKey}-activity-${idx}-${Date.now()}-${Math.random()}`,
+          })),
+        }
+      })
+
+      setTripData({
+        userSelection: {
+          ...tripData.userSelection,
+          ...editedSelection,
+        },
+        tripData: {
+          ...travelPlan,
+          Itinerary: itineraryWithIds,
+        },
+      })
+
+      toast.success('Trip regenerated successfully!')
+      setIsEditingSelection(false)
+      setEditedSelection(null)
+    } catch (error) {
+      console.error('Error regenerating trip:', error)
+      toast.error('Failed to regenerate trip. Please try again.')
+    } finally {
+      setRegeneratingAll(false)
+    }
+  }
 
   // Regenerate Hotels with custom preference
   const handleRegenerateHotels = async () => {
@@ -531,7 +625,7 @@ function EditTrip() {
         <div>
           <h1 className='font-bold text-3xl'>Customize Your Trip</h1>
           <p className='text-gray-500 text-sm mt-1'>
-            Drag activities between days to rearrange your itinerary
+            Drag activities between days • Delete unwanted days or activities
           </p>
         </div>
         <Button onClick={handleSaveTrip} disabled={saving}>
@@ -549,16 +643,122 @@ function EditTrip() {
         </Button>
       </div>
 
-      {/* Trip Overview */}
+      {/* NEW: Trip Overview with Edit Option */}
       <div className='mb-8 p-6 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl border border-purple-200'>
-        <h2 className='font-bold text-2xl text-purple-900 mb-2'>
-          {tripData.tripData?.Location}
-        </h2>
-        <div className='flex gap-6 text-purple-700'>
-          <span>📅 {tripData.tripData?.Duration}</span>
-          <span>💰 {tripData.tripData?.Budget}</span>
-          <span>👤 {tripData.tripData?.Traveler}</span>
+        <div className='flex justify-between items-start mb-2'>
+          <h2 className='font-bold text-2xl text-purple-900'>
+            {tripData.tripData?.Location || tripData.userSelection?.location}
+          </h2>
+          {!isEditingSelection && (
+            <Button 
+              onClick={handleEditSelection}
+              variant='outline'
+              size='sm'
+              className='bg-white'
+            >
+              <Edit className='mr-2 h-4 w-4' />
+              Edit Trip Details
+            </Button>
+          )}
         </div>
+
+        {!isEditingSelection ? (
+          <div className='flex gap-6 text-purple-700'>
+            <span>📅 {tripData.userSelection?.noOfdays} Days</span>
+            <span>💰 {tripData.userSelection?.budget}</span>
+            <span>👤 {tripData.userSelection?.traveler}</span>
+          </div>
+        ) : (
+          <div className='mt-4 space-y-4'>
+            {/* Number of Days */}
+            <div>
+              <label className='block text-sm font-medium text-purple-900 mb-2'>
+                Number of Days
+              </label>
+              <Input
+                type='number'
+                min='1'
+                max='5'
+                value={editedSelection.noOfdays}
+                onChange={(e) => setEditedSelection({ ...editedSelection, noOfdays: e.target.value })}
+                className='max-w-[200px]'
+              />
+            </div>
+
+            {/* Budget */}
+            <div>
+              <label className='block text-sm font-medium text-purple-900 mb-2'>
+                Budget
+              </label>
+              <div className='grid grid-cols-3 gap-3'>
+                {SelectBudgetOptions.map((option) => (
+                  <div
+                    key={option.title}
+                    onClick={() => setEditedSelection({ ...editedSelection, budget: option.title })}
+                    className={`p-3 border rounded-lg cursor-pointer hover:shadow-md transition-all ${
+                      editedSelection.budget === option.title 
+                        ? 'border-purple-500 bg-purple-100' 
+                        : 'border-gray-200 bg-white'
+                    }`}
+                  >
+                    <div className='text-2xl mb-1'>{option.icon}</div>
+                    <div className='font-semibold text-sm'>{option.title}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Traveler */}
+            <div>
+              <label className='block text-sm font-medium text-purple-900 mb-2'>
+                Who are you traveling with?
+              </label>
+              <div className='grid grid-cols-3 gap-3'>
+                {SelectTravelesList.map((option) => (
+                  <div
+                    key={option.title}
+                    onClick={() => setEditedSelection({ ...editedSelection, traveler: option.title })}
+                    className={`p-3 border rounded-lg cursor-pointer hover:shadow-md transition-all ${
+                      editedSelection.traveler === option.title 
+                        ? 'border-purple-500 bg-purple-100' 
+                        : 'border-gray-200 bg-white'
+                    }`}
+                  >
+                    <div className='text-2xl mb-1'>{option.icon}</div>
+                    <div className='font-semibold text-sm'>{option.title}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className='flex gap-2'>
+              <Button 
+                onClick={handleRegenerateAll}
+                disabled={regeneratingAll}
+              >
+                {regeneratingAll ? (
+                  <>
+                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                    Regenerating...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className='mr-2 h-4 w-4' />
+                    Regenerate Entire Trip
+                  </>
+                )}
+              </Button>
+              <Button 
+                onClick={handleCancelEdit}
+                variant='outline'
+              >
+                <X className='mr-2 h-4 w-4' />
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Hotels - With Regeneration */}
