@@ -74,8 +74,8 @@ function HotelCard({ hotel }) {
 
   return (
     <div className='border rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow'>
-      <img 
-        src={imageUrl} 
+      <img
+        src={imageUrl}
         alt={hotel.HotelName}
         className='w-full h-[160px] object-cover'
       />
@@ -133,13 +133,13 @@ function SortableActivity({ activity, onRemove }) {
         >
           <GripVertical className='h-5 w-5 text-gray-400' />
         </button>
-        
-        <img 
-          src={imageUrl} 
+
+        <img
+          src={imageUrl}
           alt={activity.PlaceName}
           className='w-[100px] h-[100px] rounded-lg object-cover flex-shrink-0'
         />
-        
+
         <div className='flex-1 min-w-0'>
           <h4 className='font-semibold text-lg'>{activity.PlaceName}</h4>
           <p className='text-sm text-gray-600 mt-1 line-clamp-2'>{activity.PlaceDetails}</p>
@@ -622,6 +622,10 @@ function EditTrip() {
       toast.error('Please log in to save trip')
       return
     }
+    if (!tripData) {
+      toast.error('No trip data to save')
+      return
+    }
 
     // VALIDATION: Check for empty days
     const emptyDays = Object.entries(tripData.tripData.Itinerary)
@@ -637,14 +641,13 @@ function EditTrip() {
 
     setSaving(true)
     try {
-      const docId = Date.now().toString()
-      
-      // Remove IDs before saving
+      const docId = existingTripId || Date.now().toString()
+
       const itineraryWithoutIds = {}
       Object.entries(tripData.tripData.Itinerary).forEach(([dateKey, dayData]) => {
         itineraryWithoutIds[dateKey] = {
           ...dayData,
-          Activities: dayData.Activities.map(({ id, ...activity }) => activity),
+          Activities: (dayData.Activities || []).map(({ id, ...activity }) => activity),
         }
       })
 
@@ -657,8 +660,8 @@ function EditTrip() {
         userEmail: user.email,
         id: docId,
       })
-      
-      toast.success('Trip saved successfully!')
+
+      toast.success(existingTripId ? 'Trip updated successfully!' : 'Trip saved successfully!')
       navigate(`/view-trip/${docId}`)
     } catch (error) {
       console.error('Error saving trip:', error)
@@ -692,7 +695,7 @@ function EditTrip() {
           ) : (
             <>
               <Save className='mr-2 h-4 w-4' />
-              Save Trip
+              {existingTripId ? 'Update Trip' : 'Save Trip'}
             </>
           )}
         </Button>
@@ -832,7 +835,8 @@ function EditTrip() {
       {/* Hotels - With Regeneration */}
       <div className='mb-8'>
         <h2 className='font-bold text-2xl mb-4'>Recommended Hotels</h2>
-        
+
+        {/* Hotel Preference Input */}
         <div className='mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200'>
           <p className='text-sm text-gray-700 mb-2'>
             💡 Not satisfied with the hotels? Describe your preferences and we'll find better options!

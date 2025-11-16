@@ -6,9 +6,6 @@ node_modules
 .env.local
 .env*.local
 
-
-src/service/firebaseConfig.jsx
-
 # Build output
 dist
 dist-ssr
