@@ -9,10 +9,10 @@ import { SelectBudgetOptions, SelectTravelesList } from '@/constants/options'
 import { useAuth } from '@/context/AuthContext'
 import ModeSwitch from './components/ModeSwitch'
 import DestinationSelector from './components/DestinationSelector'
-import HotelSearch from './components/HotelSearch'
-import DayManager from './components/DayManager'
-import { saveManualTrip as saveManualTripUtil } from './utils/tripSaver'
-import { generateAiTripFromForm } from './utils/aiTripGenerator'
+import HotelSearch from './components/manual/HotelSearch'
+import DayManager from './components/manual/DayManager'
+import { saveManualTrip as saveManualTripUtil } from './utils/manual/tripSaver'
+import { generateAiTripFromForm } from './utils/ai/aiTripGenerator'
 
 function CreateTrip() {
   const [formData, setFormData] = useState({})

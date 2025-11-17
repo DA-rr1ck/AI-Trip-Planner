@@ -10,7 +10,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
 
   const addNewDay = () => {
     const dayNumber = tripDays.length + 1
-    onDaysChange([ ...tripDays, { id: Date.now(), dayNumber, places: [] } ])
+    onDaysChange([...tripDays, { id: Date.now(), dayNumber, places: [] }])
   }
 
   const removeDay = (dayId) => {
@@ -30,7 +30,9 @@ function DayManager({ location, tripDays, onDaysChange }) {
         }
       }, 600)
     })
-    return () => { Object.values(timers).forEach(clearTimeout) }
+    return () => {
+      Object.values(timers).forEach(clearTimeout)
+    }
   }, [daySearchQueries, location])
 
   const searchPlacesForDay = async (dayId, query) => {
@@ -154,10 +156,10 @@ function DayManager({ location, tripDays, onDaysChange }) {
                     }}
                     className='w-full px-4 py-3 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none'
                   />
-                  <svg 
-                    className='w-5 h-5 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2' 
-                    fill='none' 
-                    stroke='currentColor' 
+                  <svg
+                    className='w-5 h-5 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2'
+                    fill='none'
+                    stroke='currentColor'
                     viewBox='0 0 24 24'
                   >
                     <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' />
