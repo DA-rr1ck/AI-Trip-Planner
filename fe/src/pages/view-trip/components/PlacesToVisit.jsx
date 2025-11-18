@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { format, parse } from 'date-fns';
 
 // Function to get image from Pixabay
 async function getPlaceImage(placeName) {
@@ -28,7 +29,7 @@ function ActivityCard({ activity, location }) {
 
   return (
     <Link 
-      to={'https://www.google.com/maps/search/?api=1&query=' + activity.PlaceName  + " " + location} 
+      to={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(activity.PlaceName + " " + location)} 
       target='_blank'
     >
       <div className='border rounded-xl p-3 mt-2 flex gap-5 hover:scale-105 transition-all hover:shadow-md cursor-pointer'>
@@ -39,7 +40,7 @@ function ActivityCard({ activity, location }) {
         />
         <div>
           <h2 className='font-bold text-lg'>{activity.PlaceName}</h2>
-          <p className='text-sm text-gray-400'>{activity.PlaceDetails}</p>
+          <p className='text-sm text-gray-400 mt-1'>{activity.PlaceDetails}</p>
           <h2 className='mt-2'>🎟️ {activity.TicketPricing}</h2>
           <h2 className='mt-2'>⏱️ {activity.TimeTravel}</h2>
         </div>
@@ -49,17 +50,24 @@ function ActivityCard({ activity, location }) {
 }
 
 function PlacesToVisit({ trip }) {
-  // FIXED: Handle both old and new data structure
-  const itinerary = trip?.tripData?.Itinerary || trip?.tripData?.[0]?.TravelPlan?.Itinerary;
-  const location = trip?.tripData?.Location || trip?.tripData?.[0]?.TravelPlan?.Location || trip?.userSelection?.location;
-
-  console.log('Itinerary data:', itinerary);
-  console.log('Location:', location);
+  // Handle both date-based and Day-based structures
+  const itinerary = trip?.tripData?.Itinerary;
+  const location = trip?.tripData?.Location || trip?.userSelection?.location;
 
   if (!itinerary) return <div>No itinerary found.</div>;
 
-  // Sort days in correct order (Day1, Day2, Day3, etc.)
+  // Sort by date (for date-based structure like '2024-08-24')
   const sortedDays = Object.entries(itinerary).sort((a, b) => {
+    // Try to parse as date first
+    const dateA = new Date(a[0]);
+    const dateB = new Date(b[0]);
+    
+    // If both are valid dates, sort by date
+    if (!isNaN(dateA) && !isNaN(dateB)) {
+      return dateA - dateB;
+    }
+    
+    // Otherwise, sort by day number (Day1, Day2, etc.)
     const dayNumA = parseInt(a[0].replace('Day', ''));
     const dayNumB = parseInt(b[0].replace('Day', ''));
     return dayNumA - dayNumB;
@@ -69,25 +77,39 @@ function PlacesToVisit({ trip }) {
     <div>
       <h2 className='font-bold text-xl mt-5'>Places to Visit</h2>
       <div>
-        {sortedDays.map(([day, dayPlan]) => (
-          <div key={day} className="mt-5">
-            <h2 className='font-bold text-lg'>{day.replace('Day', 'Day ')}</h2>
-            {dayPlan.Theme && (
-              <p className='text-sm text-gray-600 mb-2'>
-                {dayPlan.Theme} • Best time: {dayPlan.BestTimeToVisit}
-              </p>
-            )}
-            <div className='grid md:grid-cols-2 gap-5'>
-              {dayPlan.Activities?.map((activity, idx) => (
-                <ActivityCard 
-                  key={idx} 
-                  activity={activity} 
-                  location={location}
-                />
-              ))}
+        {sortedDays.map(([dayKey, dayPlan]) => {
+          // Check if dayKey is a date (YYYY-MM-DD format) or Day1, Day2, etc.
+          const isDateFormat = /^\d{4}-\d{2}-\d{2}$/.test(dayKey);
+          
+          let displayTitle;
+          if (isDateFormat) {
+            // Format as "Friday, August 24, 2024"
+            displayTitle = format(parse(dayKey, 'yyyy-MM-dd', new Date()), 'EEEE, MMMM d, yyyy');
+          } else {
+            // Format as "Day 1", "Day 2", etc.
+            displayTitle = dayKey.replace('Day', 'Day ');
+          }
+
+          return (
+            <div key={dayKey} className="mt-5">
+              <h2 className='font-bold text-lg'>{displayTitle}</h2>
+              {dayPlan.Theme && (
+                <p className='text-sm text-gray-600 mb-2'>
+                  {dayPlan.Theme} • Best time: {dayPlan.BestTimeToVisit}
+                </p>
+              )}
+              <div className='grid md:grid-cols-2 gap-5'>
+                {dayPlan.Activities?.map((activity, idx) => (
+                  <ActivityCard 
+                    key={idx} 
+                    activity={activity} 
+                    location={location}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
