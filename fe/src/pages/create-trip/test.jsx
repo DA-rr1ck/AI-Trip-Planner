@@ -30,11 +30,6 @@ function CreateTrip() {
     setFormData(prev => ({ ...prev, [name]: value }))
   }
 
-  const handleDateChange = (dates) => {
-    const [start, end] = dates
-    setFormData(prev => ({ ...prev, startDate: start, endDate: end }))
-  }
-
   // Calculate number of days
   const getTotalDays = () => {
     if (!formData.startDate || !formData.endDate) return 0
@@ -139,6 +134,7 @@ function CreateTrip() {
       </p>
 
       <div className='mt-20 flex flex-col gap-10'>
+        {/* Location Selection */}
         <div>
           <h2 className='text-xl my-3 font-medium'>
             What is your desired destination?
@@ -154,80 +150,115 @@ function CreateTrip() {
             placeholder='Search for a location...'
           />
         </div>
-      </div>
 
-      {/* NEW: Date Range Picker */}
-      <div>
-        <h2 className='text-xl my-3 font-medium'>
-          When are you planning your trip?
-        </h2>
-        <DatePicker
-          selected={formData.startDate}
-          onChange={handleDateChange}
-          startDate={formData.startDate}
-          endDate={formData.endDate}
-          selectsRange
-          minDate={new Date()}
-          dateFormat="dd/MM/yyyy"
-          placeholderText="Select start and end date"
-          className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
-          isClearable
-        />
-        {formData.startDate && formData.endDate && (
-          <p className='mt-2 text-sm text-gray-600'>
-            Trip duration: {getTotalDays()} {getTotalDays() === 1 ? 'day' : 'days'}
-          </p>
-        )}
-      </div>
-
-      <div>
-        <h2 className='text-xl my-3 font-medium'>
-          What is your budget?
-        </h2>
-        <div className='grid sm:grid-cols-3 mt-5 gap-5'>
-          {SelectBudgetOptions.map((item, index) => (
-            <div
-              key={index}
-              className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg ${
-                formData.budget === item.title ? 'border-blue-500 bg-blue-50' : ''
-              }`}
-              onClick={() => handleInputChange('budget', item.title)}
-            >
-              <h2 className='text-4xl'>{item.icon}</h2>
-              <h2 className='font-bold text-lg'>{item.title}</h2>
-              <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+        {/* Separate Date Pickers */}
+        <div>
+          <h2 className='text-xl my-3 font-medium'>
+            When are you planning your trip?
+          </h2>
+          
+          <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+            {/* Start Date */}
+            <div>
+              <label className='block text-sm font-medium text-gray-700 mb-2'>
+                Start Date
+              </label>
+              <DatePicker
+                selected={formData.startDate}
+                onChange={(date) => handleInputChange('startDate', date)}
+                minDate={new Date()}
+                maxDate={formData.endDate || undefined}
+                dateFormat="dd/MM/yyyy"
+                placeholderText="Select start date"
+                className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+                isClearable
+              />
             </div>
-          ))}
+
+            {/* End Date */}
+            <div>
+              <label className='block text-sm font-medium text-gray-700 mb-2'>
+                End Date
+              </label>
+              <DatePicker
+                selected={formData.endDate}
+                onChange={(date) => handleInputChange('endDate', date)}
+                minDate={formData.startDate || new Date()}
+                dateFormat="dd/MM/yyyy"
+                placeholderText="Select end date"
+                className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+                disabled={!formData.startDate}
+                isClearable
+              />
+            </div>
+          </div>
+
+          {/* Trip Duration Display */}
+          {formData.startDate && formData.endDate && (
+            <div className='mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg'>
+              <p className='text-sm text-blue-800'>
+                ✈️ Trip duration: <span className='font-semibold'>{getTotalDays()} {getTotalDays() === 1 ? 'day' : 'days'}</span>
+              </p>
+              <p className='text-xs text-blue-600 mt-1'>
+                {format(formData.startDate, 'EEEE, MMMM d, yyyy')} → {format(formData.endDate, 'EEEE, MMMM d, yyyy')}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Budget Selection */}
+        <div>
+          <h2 className='text-xl my-3 font-medium'>
+            What is your budget?
+          </h2>
+          <div className='grid sm:grid-cols-3 mt-5 gap-5'>
+            {SelectBudgetOptions.map((item, index) => (
+              <div
+                key={index}
+                className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg transition-all ${
+                  formData.budget === item.title ? 'border-blue-500 bg-blue-50 shadow-md' : ''
+                }`}
+                onClick={() => handleInputChange('budget', item.title)}
+              >
+                <h2 className='text-4xl'>{item.icon}</h2>
+                <h2 className='font-bold text-lg'>{item.title}</h2>
+                <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Traveler Selection */}
+        <div>
+          <h2 className='text-xl my-3 font-medium'>
+            Who do you plan to travel with?
+          </h2>
+          <div className='grid sm:grid-cols-3 mt-5 gap-5'>
+            {SelectTravelesList.map((item, index) => (
+              <div
+                key={index}
+                onClick={() => handleInputChange('traveler', item.title)}
+                className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg transition-all ${
+                  formData.traveler === item.title ? 'border-blue-500 bg-blue-50 shadow-md' : ''
+                }`}
+              >
+                <h2 className='text-4xl'>{item.icon}</h2>
+                <h2 className='font-bold text-lg'>{item.title}</h2>
+                <h2 className='text-sm text-gray-500'>{item.desc}</h2>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div>
-        <h2 className='text-xl my-3 font-medium'>
-          Who do you plan to travel with?
-        </h2>
-        <div className='grid sm:grid-cols-3 mt-5 gap-5'>
-          {SelectTravelesList.map((item, index) => (
-            <div
-              key={index}
-              onClick={() => handleInputChange('traveler', item.title)}
-              className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg ${
-                formData.traveler === item.title ? 'border-blue-500 bg-blue-50' : ''
-              }`}
-            >
-              <h2 className='text-4xl'>{item.icon}</h2>
-              <h2 className='font-bold text-lg'>{item.title}</h2>
-              <h2 className='text-sm text-gray-500'>{item.desc}</h2>
-            </div>
-          ))}
-        </div>
-      </div>
-
+      {/* Generate Button */}
       <div className='my-10 justify-end flex'>
         <Button disabled={loading} onClick={onGenerateTrip}>
           {loading ? <AiOutlineLoading3Quarters className='h-7 w-7 animate-spin' /> : 'Generate Trip'}
         </Button>
       </div>
 
+      {/* Auth Dialog */}
       <AuthDialog
         open={openDialog}
         onOpenChange={setOpenDialog}
