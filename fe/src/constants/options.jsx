@@ -56,7 +56,7 @@ export const REGION_OPTIONS = [
   { code: 'AU', cc: '61', label: '🇦🇺 Australia (+61)',  example: '412345678',  min: 9,  max: 9  },
 ];
 
-export const AI_PROMPT = `Generate Travel Plan for Location: {location}, for {totalDays} Days for {adults} Adults and {children} Children with a budget range of ${budgetMin} to ${budgetMax} per person.
+export const AI_PROMPT = `Generate Travel Plan for Location: {location}, for {totalDays} Days for {adults} Adults and {children} Children with a budget range of {budgetMin} to {budgetMax} per person.
 
 You MUST respond with ONLY valid JSON in this EXACT format with NO additional text or explanations:
 
@@ -65,7 +65,7 @@ You MUST respond with ONLY valid JSON in this EXACT format with NO additional te
         "TravelPlan": {
             "Location": "{location}",
             "Duration": "{totalDays} Days",
-            "Budget": "$${budgetMin} - $${budgetMax} per person",
+            "Budget": "{budgetMin} - {budgetMax} per person",
             "Travelers": "{adults} Adults, {children} Children",
             "TotalTravelers": {adults} + {children},
             "Hotels": [

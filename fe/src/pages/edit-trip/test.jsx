@@ -9,6 +9,7 @@ import Input from '@/components/ui/input'
 import { Save, Loader2, GripVertical, Trash2, Sparkles, Edit, X } from 'lucide-react'
 import DatePicker from 'react-datepicker'
 import "react-datepicker/dist/react-datepicker.css"
+import MapRoute from '@/components/MapRoute'
 import { format, parse, differenceInDays, addDays } from 'date-fns'
 import {
   DndContext,
@@ -161,12 +162,13 @@ function SortableActivity({ activity, onRemove }) {
   )
 }
 
-// Droppable Day Card Component - Now displays actual dates
+
+
+// Update DroppableDay component:
 function DroppableDay({ dateKey, dayData, onRemoveDay, children }) {
   const { setNodeRef } = useSortable({ id: dateKey })
   const isEmpty = children.length === 0
 
-  // Format date for display
   const displayDate = format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'EEEE, MMMM d, yyyy')
 
   return (
@@ -190,13 +192,26 @@ function DroppableDay({ dateKey, dayData, onRemoveDay, children }) {
           </button>
         </div>
       </div>
+      
       <div className='space-y-3 pl-4 min-h-[100px]'>
         {isEmpty ? (
           <div className='border-2 border-dashed border-gray-300 rounded-lg p-8 text-center text-gray-400 bg-gray-50'>
             <p className='text-sm'>Drop activities here</p>
           </div>
         ) : (
-          children
+          <>
+            {children}
+            
+            {/* Add Map Route - Only show if there are activities */}
+            {dayData.Activities && dayData.Activities.length > 0 && (
+              <div className='mt-4'>
+                <MapRoute 
+                  activities={dayData.Activities} 
+                  locationName={dayData.Theme}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
