@@ -41,6 +41,12 @@ function CreateTrip() {
   useEffect(() => {
     if (!isManualMode) return
 
+    // Auto-calculate days from date range if dates are selected
+    const totalDays = getTotalDays()
+    if (totalDays > 0) {
+      setFormData(prev => ({ ...prev, noOfdays: totalDays.toString() }))
+    }
+
     const n = parseInt(formData.noOfdays, 10)
     if (!Number.isFinite(n) || n <= 0) return
 
@@ -60,7 +66,7 @@ function CreateTrip() {
       }
       return next
     })
-  }, [formData.noOfdays, isManualMode])
+  }, [formData.noOfdays, formData.startDate, formData.endDate, isManualMode])
 
   useEffect(() => {
     if (!isManualMode) return
@@ -76,7 +82,7 @@ function CreateTrip() {
 
   useEffect(() => {
     if (isManualMode) {
-      setFormData(prev => ({ ...prev, startDate: null, endDate: null }))
+      // Keep dates in manual mode, clear nothing
     } else {
       setConfirmedHotel(null)
       setTripDays([])
@@ -236,20 +242,59 @@ function CreateTrip() {
       {isManualMode ? (
         <div className='mt-20 flex flex-col gap-10'>
           <DestinationSelector
-            label='What is your destination?'
+            label='What is your desired destination?'
             onLocationSelected={(label) => handleInputChange('location', label)}
           />
 
           <div>
             <h2 className='text-xl my-3 font-medium'>
-              How many days are you planning your trip?
+              When are you planning your trip?
             </h2>
-            <Input
-              placeholder='Ex.3'
-              type='number'
-              value={formData.noOfdays || ''}
-              onChange={(event) => handleInputChange('noOfdays', event.target.value)}
-            />
+
+            <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+              <div>
+                <label className='block text-sm font-medium text-gray-700 mb-2'>
+                  Start Date
+                </label>
+                <DatePicker
+                  selected={formData.startDate}
+                  onChange={(date) => handleInputChange('startDate', date)}
+                  minDate={new Date()}
+                  maxDate={formData.endDate || undefined}
+                  dateFormat='dd/MM/yyyy'
+                  placeholderText='Select start date'
+                  className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+                  isClearable
+                />
+              </div>
+
+              <div>
+                <label className='block text-sm font-medium text-gray-700 mb-2'>
+                  End Date
+                </label>
+                <DatePicker
+                  selected={formData.endDate}
+                  onChange={(date) => handleInputChange('endDate', date)}
+                  minDate={formData.startDate || new Date()}
+                  dateFormat='dd/MM/yyyy'
+                  placeholderText='Select end date'
+                  className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+                  disabled={!formData.startDate}
+                  isClearable
+                />
+              </div>
+            </div>
+
+            {formData.startDate && formData.endDate && (
+              <div className='mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg'>
+                <p className='text-sm text-blue-800'>
+                  ✈️ Trip duration: <span className='font-semibold'>{getTotalDays()} {getTotalDays() === 1 ? 'day' : 'days'}</span>
+                </p>
+                <p className='text-xs text-blue-600 mt-1'>
+                  {format(formData.startDate, 'EEEE, MMMM d, yyyy')} → {format(formData.endDate, 'EEEE, MMMM d, yyyy')}
+                </p>
+              </div>
+            )}
           </div>
 
           <div>
