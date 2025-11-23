@@ -6,9 +6,10 @@ import { toast } from 'sonner'
 import { useAuth } from '@/context/AuthContext'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/input'
-import { Save, Loader2, GripVertical, Trash2, Sparkles, Edit, X } from 'lucide-react'
+import { Save, Loader2, GripVertical, Trash2, Sparkles, Edit, X, Minus, Plus, DollarSign } from 'lucide-react'
 import DatePicker from 'react-datepicker'
 import "react-datepicker/dist/react-datepicker.css"
+import MapRoute from '@/components/MapRoute'
 import { format, parse, differenceInDays, addDays } from 'date-fns'
 import {
   DndContext,
@@ -28,7 +29,6 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { regenerateHotels } from './utils/regenerateHotels'
 import { regenerateItinerary } from './utils/regenerateItinerary'
-import { SelectBudgetOptions, SelectTravelesList } from '@/constants/options'
 import { generateTrip } from '@/service/AIModel'
 import { AI_PROMPT } from '@/constants/options'
 
@@ -63,7 +63,7 @@ async function getPlaceImage(placeName) {
 }
 
 // Hotel Card Component with Image
-function HotelCard({ hotel }) {
+function HotelCard({ hotel, onClick }) {
   const [imageUrl, setImageUrl] = useState('/placeholder.jpg');
 
   useEffect(() => {
@@ -73,7 +73,11 @@ function HotelCard({ hotel }) {
   }, [hotel.HotelName, hotel.HotelAddress]);
 
   return (
-    <div className='border rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow'>
+    <div
+      className='border rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow cursor-pointer group'
+      onClick={onClick}
+      role="button"
+    >
       <img
         src={imageUrl}
         alt={hotel.HotelName}
@@ -95,7 +99,7 @@ function HotelCard({ hotel }) {
 }
 
 // Sortable Activity Card Component with Image
-function SortableActivity({ activity, onRemove }) {
+function SortableActivity({ activity, onClick, onRemove }) {
   const {
     attributes,
     listeners,
@@ -123,7 +127,8 @@ function SortableActivity({ activity, onRemove }) {
     <div
       ref={setNodeRef}
       style={style}
-      className='border rounded-lg p-3 bg-white hover:shadow-md transition-shadow'
+      className='border rounded-lg p-3 bg-white hover:shadow-md transition-shadow cursor-pointer'
+      onClick={onClick}
     >
       <div className='flex items-start gap-3'>
         <button
@@ -161,12 +166,11 @@ function SortableActivity({ activity, onRemove }) {
   )
 }
 
-// Droppable Day Card Component - Now displays actual dates
+// Droppable Day component
 function DroppableDay({ dateKey, dayData, onRemoveDay, children }) {
   const { setNodeRef } = useSortable({ id: dateKey })
   const isEmpty = children.length === 0
 
-  // Format date for display
   const displayDate = format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'EEEE, MMMM d, yyyy')
 
   return (
@@ -190,13 +194,25 @@ function DroppableDay({ dateKey, dayData, onRemoveDay, children }) {
           </button>
         </div>
       </div>
+      
       <div className='space-y-3 pl-4 min-h-[100px]'>
         {isEmpty ? (
           <div className='border-2 border-dashed border-gray-300 rounded-lg p-8 text-center text-gray-400 bg-gray-50'>
             <p className='text-sm'>Drop activities here</p>
           </div>
         ) : (
-          children
+          <>
+            {children}
+            
+            {dayData.Activities && dayData.Activities.length > 0 && (
+              <div className='mt-4'>
+                <MapRoute 
+                  activities={dayData.Activities} 
+                  locationName={dayData.Theme}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -219,41 +235,27 @@ function EditTrip() {
   const [editedSelection, setEditedSelection] = useState(null)
 
   const rawTripData = location.state?.tripData
-
-  const existingTripId = rawTripData.id || null
+  const existingTripId = rawTripData?.id || null
   
-  // FIXED: Better state initialization
   const [tripData, setTripData] = useState(() => {
     if (!rawTripData) return null
 
-    console.log('Raw trip data received:', rawTripData)
-
-    // Extract travel plan from various possible structures
     let travelPlan
     if (rawTripData.tripData) {
-      // From create-trip or edit-trip navigation
       travelPlan = rawTripData.tripData
     } else if (Array.isArray(rawTripData) && rawTripData[0]?.TravelPlan) {
-      // From database (array format)
       travelPlan = rawTripData[0].TravelPlan
     } else if (rawTripData.TravelPlan) {
-      // Direct TravelPlan object
       travelPlan = rawTripData.TravelPlan
     } else {
-      // Assume rawTripData is the travel plan
       travelPlan = rawTripData
     }
 
-    console.log('Extracted travel plan:', travelPlan)
-
-    // Validate itinerary exists
     if (!travelPlan || !travelPlan.Itinerary) {
-      console.error('No itinerary found:', travelPlan)
       toast.error('Invalid trip data')
       return null
     }
 
-    // Add unique IDs for drag-and-drop
     const itineraryWithIds = {}
     Object.entries(travelPlan.Itinerary).forEach(([dateKey, dayData]) => {
       itineraryWithIds[dateKey] = {
@@ -289,7 +291,6 @@ function EditTrip() {
     }
   }, [tripData, navigate])
 
-  // Show loading state
   if (tripData === null) {
     return (
       <div className='p-10 md:px-20 lg:px-44 xl:px-56 flex flex-col justify-center items-center min-h-[50vh]'>
@@ -299,7 +300,6 @@ function EditTrip() {
     )
   }
 
-  // Calculate total days from dates
   const getTotalDays = () => {
     if (!tripData?.userSelection?.startDate || !tripData?.userSelection?.endDate) return 0
     const start = parse(tripData.userSelection.startDate, 'yyyy-MM-dd', new Date())
@@ -307,7 +307,18 @@ function EditTrip() {
     return differenceInDays(end, start) + 1
   }
 
-  // Start editing user selection
+  // Helper functions
+  const formatBudget = (min, max) => {
+    return `$${min?.toLocaleString() || 0} - $${max?.toLocaleString() || 0}`
+  }
+
+  const formatTravelers = (adults, children) => {
+    const parts = []
+    if (adults > 0) parts.push(`${adults} ${adults === 1 ? 'Adult' : 'Adults'}`)
+    if (children > 0) parts.push(`${children} ${children === 1 ? 'Child' : 'Children'}`)
+    return parts.join(', ') || '0 Travelers'
+  }
+
   const handleEditSelection = () => {
     const start = parse(tripData.userSelection.startDate, 'yyyy-MM-dd', new Date())
     const end = parse(tripData.userSelection.endDate, 'yyyy-MM-dd', new Date())
@@ -315,22 +326,27 @@ function EditTrip() {
     setEditedSelection({
       startDate: start,
       endDate: end,
-      budget: tripData.userSelection.budget,
-      traveler: tripData.userSelection.traveler,
+      budgetMin: tripData.userSelection.budgetMin || 500,
+      budgetMax: tripData.userSelection.budgetMax || 2000,
+      adults: tripData.userSelection.adults || 2,
+      children: tripData.userSelection.children || 0,
     })
     setIsEditingSelection(true)
   }
 
-  // Cancel editing
   const handleCancelEdit = () => {
     setIsEditingSelection(false)
     setEditedSelection(null)
   }
 
-  // Regenerate entire trip based on new user selection
   const handleRegenerateAll = async () => {
-    if (!editedSelection.startDate || !editedSelection.endDate || !editedSelection.budget || !editedSelection.traveler) {
-      toast.error('Please fill all fields')
+    if (!editedSelection.startDate || !editedSelection.endDate) {
+      toast.error('Please select dates')
+      return
+    }
+
+    if (editedSelection.adults === 0 && editedSelection.children === 0) {
+      toast.error('Please add at least one traveler')
       return
     }
 
@@ -345,12 +361,12 @@ function EditTrip() {
       const FINAL_PROMPT = AI_PROMPT
         .replace('{location}', tripData.userSelection.location)
         .replace('{totalDays}', totalDays)
-        .replace('{traveler}', editedSelection.traveler)
-        .replace('{budget}', editedSelection.budget)
-        .replace('{totalDays}', totalDays)
+        .replace('{adults}', editedSelection.adults)
+        .replace('{children}', editedSelection.children)
+        .replace('{budgetMin}', editedSelection.budgetMin)
+        .replace('{budgetMax}', editedSelection.budgetMax)
 
       const result = await generateTrip(FINAL_PROMPT)
-      console.log('Raw regenerate result:', result)
 
       let newTripData
       if (typeof result === 'string') {
@@ -360,10 +376,8 @@ function EditTrip() {
         newTripData = result
       }
 
-      // Extract TravelPlan from array if needed
       const travelPlan = newTripData[0]?.TravelPlan || newTripData.TravelPlan || newTripData
 
-      // Convert Day1, Day2... to actual dates
       const itineraryWithDates = {}
       Object.entries(travelPlan.Itinerary).forEach(([dayKey, dayData], index) => {
         const actualDate = addDays(editedSelection.startDate, index)
@@ -382,8 +396,12 @@ function EditTrip() {
           ...tripData.userSelection,
           startDate: format(editedSelection.startDate, 'yyyy-MM-dd'),
           endDate: format(editedSelection.endDate, 'yyyy-MM-dd'),
-          budget: editedSelection.budget,
-          traveler: editedSelection.traveler,
+          budgetMin: editedSelection.budgetMin,
+          budgetMax: editedSelection.budgetMax,
+          adults: editedSelection.adults,
+          children: editedSelection.children,
+          budget: formatBudget(editedSelection.budgetMin, editedSelection.budgetMax),
+          traveler: formatTravelers(editedSelection.adults, editedSelection.children),
         },
         tripData: {
           ...travelPlan,
@@ -402,7 +420,6 @@ function EditTrip() {
     }
   }
 
-  // Regenerate Hotels with custom preference
   const handleRegenerateHotels = async () => {
     if (!hotelPreference.trim()) {
       toast.error('Please enter your hotel preferences')
@@ -412,7 +429,6 @@ function EditTrip() {
     setRegeneratingHotels(true)
     try {
       const newHotels = await regenerateHotels(tripData.tripData, hotelPreference)
-
       setTripData({
         ...tripData,
         tripData: {
@@ -420,7 +436,6 @@ function EditTrip() {
           Hotels: newHotels,
         },
       })
-
       toast.success('Hotels regenerated successfully!')
       setHotelPreference('')
     } catch (error) {
@@ -431,7 +446,6 @@ function EditTrip() {
     }
   }
 
-  // Regenerate Itinerary with custom preference
   const handleRegenerateItinerary = async () => {
     if (!itineraryPreference.trim()) {
       toast.error('Please enter your itinerary preferences')
@@ -447,7 +461,6 @@ function EditTrip() {
         dayCount
       )
 
-      // Convert Day1, Day2... to actual dates
       const startDate = parse(tripData.userSelection.startDate, 'yyyy-MM-dd', new Date())
       const itineraryWithDates = {}
       Object.entries(itineraryWithIds).forEach(([dayKey, dayData], index) => {
@@ -474,7 +487,6 @@ function EditTrip() {
     }
   }
 
-  // Delete entire day
   const handleRemoveDay = (dateKey) => {
     const displayDate = format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'MMMM d, yyyy')
     if (!window.confirm(`Delete ${displayDate}? This cannot be undone.`)) {
@@ -500,19 +512,16 @@ function EditTrip() {
     toast.success('Day deleted successfully')
   }
 
-  // Handle drag start
   const handleDragStart = (event) => {
     setActiveId(event.active.id)
   }
 
-  // Handle drag end with support for empty days
   const handleDragEnd = (event) => {
     const { active, over } = event
     setActiveId(null)
 
     if (!over || active.id === over.id) return
 
-    // Find which day each activity belongs to
     const findDayForActivity = (activityId) => {
       for (const [dateKey, dayData] of Object.entries(tripData.tripData.Itinerary)) {
         if (dayData.Activities.find(a => a.id === activityId)) {
@@ -523,11 +532,8 @@ function EditTrip() {
     }
 
     const activeDateKey = findDayForActivity(active.id)
-    
-    // Check if dropping on empty day container
     let overDateKey = findDayForActivity(over.id)
     
-    // If not found in activities, check if it's a date key itself (empty day)
     if (!overDateKey && tripData.tripData.Itinerary[over.id]) {
       overDateKey = over.id
     }
@@ -538,7 +544,6 @@ function EditTrip() {
       const newItinerary = { ...prevData.tripData.Itinerary }
 
       if (activeDateKey === overDateKey) {
-        // Same day - reorder activities
         const dayActivities = [...newItinerary[activeDateKey].Activities]
         const oldIndex = dayActivities.findIndex(a => a.id === active.id)
         const newIndex = dayActivities.findIndex(a => a.id === over.id)
@@ -550,23 +555,17 @@ function EditTrip() {
           }
         }
       } else {
-        // Cross-day - move activity
         const sourceActivities = [...newItinerary[activeDateKey].Activities]
         const targetActivities = [...newItinerary[overDateKey].Activities]
-        
         const activeIndex = sourceActivities.findIndex(a => a.id === active.id)
         
         if (activeIndex !== -1) {
           const [movedActivity] = sourceActivities.splice(activeIndex, 1)
-          
-          // Generate new unique ID for moved activity
           const updatedActivity = {
             ...movedActivity,
             id: `${overDateKey}-activity-${Date.now()}-${Math.random()}`
           }
           
-          // If dropping on an activity, insert at that position
-          // If dropping on empty day container, append to end
           const overIndex = targetActivities.findIndex(a => a.id === over.id)
           if (overIndex !== -1) {
             targetActivities.splice(overIndex, 0, updatedActivity)
@@ -596,7 +595,6 @@ function EditTrip() {
     })
   }
 
-  // Remove activity
   const handleRemoveActivity = (dateKey, activityId) => {
     const updatedActivities = tripData.tripData.Itinerary[dateKey].Activities.filter(
       a => a.id !== activityId
@@ -618,18 +616,12 @@ function EditTrip() {
     toast.success('Activity removed')
   }
 
-  // Validate before saving
   const handleSaveTrip = async () => {
     if (!user) {
       toast.error('Please log in to save trip')
       return
     }
-    if (!tripData) {
-      toast.error('No trip data to save')
-      return
-    }
 
-    // VALIDATION: Check for empty days
     const emptyDays = Object.entries(tripData.tripData.Itinerary)
       .filter(([_, dayData]) => dayData.Activities.length === 0)
       .map(([dateKey]) => format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'MMMM d'))
@@ -674,7 +666,6 @@ function EditTrip() {
   }
 
   const dateKeys = Object.keys(tripData.tripData.Itinerary).sort()
-  
   const allActivityIds = dateKeys.flatMap(dateKey => 
     tripData.tripData.Itinerary[dateKey].Activities.map(a => a.id)
   )
@@ -723,85 +714,179 @@ function EditTrip() {
         </div>
 
         {!isEditingSelection ? (
-          <div className='flex gap-6 text-purple-700'>
+          <div className='flex flex-wrap gap-4 text-purple-700'>
             <span>📅 {format(parse(tripData.userSelection.startDate, 'yyyy-MM-dd', new Date()), 'MMM d')} - {format(parse(tripData.userSelection.endDate, 'yyyy-MM-dd', new Date()), 'MMM d, yyyy')}</span>
             <span>🗓️ {getTotalDays()} Days</span>
-            <span>💰 {tripData.userSelection?.budget}</span>
-            <span>👤 {tripData.userSelection?.traveler}</span>
+            <span>💰 {tripData.userSelection?.budget || formatBudget(tripData.userSelection?.budgetMin, tripData.userSelection?.budgetMax)}</span>
+            <span>👤 {tripData.userSelection?.traveler || formatTravelers(tripData.userSelection?.adults, tripData.userSelection?.children)}</span>
           </div>
         ) : (
-          <div className='mt-4 space-y-4'>
+          <div className='mt-4 space-y-6'>
             {/* Date Range */}
             <div>
               <label className='block text-sm font-medium text-purple-900 mb-2'>
                 Trip Dates
               </label>
-              <DatePicker
-                selected={editedSelection.startDate}
-                onChange={(dates) => {
-                  const [start, end] = dates
-                  setEditedSelection({ ...editedSelection, startDate: start, endDate: end })
-                }}
-                startDate={editedSelection.startDate}
-                endDate={editedSelection.endDate}
-                selectsRange
-                minDate={new Date()}
-                dateFormat="dd/MM/yyyy"
-                placeholderText="Select start and end date"
-                className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500'
-                isClearable
-              />
+              <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                <div>
+                  <label className='block text-xs text-gray-600 mb-1'>Start Date</label>
+                  <DatePicker
+                    selected={editedSelection.startDate}
+                    onChange={(date) => setEditedSelection({ ...editedSelection, startDate: date })}
+                    minDate={new Date()}
+                    maxDate={editedSelection.endDate}
+                    dateFormat="dd/MM/yyyy"
+                    placeholderText="Select start date"
+                    className='w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500'
+                  />
+                </div>
+                <div>
+                  <label className='block text-xs text-gray-600 mb-1'>End Date</label>
+                  <DatePicker
+                    selected={editedSelection.endDate}
+                    onChange={(date) => setEditedSelection({ ...editedSelection, endDate: date })}
+                    minDate={editedSelection.startDate || new Date()}
+                    dateFormat="dd/MM/yyyy"
+                    placeholderText="Select end date"
+                    className='w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500'
+                    disabled={!editedSelection.startDate}
+                  />
+                </div>
+              </div>
               {editedSelection.startDate && editedSelection.endDate && (
                 <p className='mt-2 text-sm text-purple-700'>
-                  Trip duration: {differenceInDays(editedSelection.endDate, editedSelection.startDate) + 1} days
+                  ✈️ Trip duration: {differenceInDays(editedSelection.endDate, editedSelection.startDate) + 1} days
                 </p>
               )}
             </div>
 
-            {/* Budget */}
-            <div>
-              <label className='block text-sm font-medium text-purple-900 mb-2'>
-                Budget
-              </label>
-              <div className='grid grid-cols-3 gap-3'>
-                {SelectBudgetOptions.map((option) => (
-                  <div
-                    key={option.title}
-                    onClick={() => setEditedSelection({ ...editedSelection, budget: option.title })}
-                    className={`p-3 border rounded-lg cursor-pointer hover:shadow-md transition-all ${
-                      editedSelection.budget === option.title 
-                        ? 'border-purple-500 bg-purple-100' 
-                        : 'border-gray-200 bg-white'
-                    }`}
-                  >
-                    <div className='text-2xl mb-1'>{option.icon}</div>
-                    <div className='font-semibold text-sm'>{option.title}</div>
-                  </div>
-                ))}
+            {/* Budget Range Sliders */}
+            <div className='p-4 border rounded-lg bg-gradient-to-br from-green-50 to-emerald-50'>
+              <div className='flex items-center gap-2 mb-3'>
+                <DollarSign className='h-5 w-5 text-green-600' />
+                <span className='text-lg font-bold text-green-700'>
+                  ${editedSelection.budgetMin?.toLocaleString()} - ${editedSelection.budgetMax?.toLocaleString()}
+                </span>
+                <span className='text-xs text-gray-600'>per person</span>
+              </div>
+
+              <div className='space-y-3'>
+                <div>
+                  <label className='block text-xs font-medium text-gray-700 mb-1'>
+                    Minimum: ${editedSelection.budgetMin?.toLocaleString()}
+                  </label>
+                  <input
+                    type='range'
+                    min='100'
+                    max='10000'
+                    step='100'
+                    value={editedSelection.budgetMin}
+                    onChange={(e) => {
+                      const val = Number(e.target.value)
+                      if (val < editedSelection.budgetMax) {
+                        setEditedSelection({ ...editedSelection, budgetMin: val })
+                      }
+                    }}
+                    className='w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600'
+                  />
+                </div>
+
+                <div>
+                  <label className='block text-xs font-medium text-gray-700 mb-1'>
+                    Maximum: ${editedSelection.budgetMax?.toLocaleString()}
+                  </label>
+                  <input
+                    type='range'
+                    min='100'
+                    max='10000'
+                    step='100'
+                    value={editedSelection.budgetMax}
+                    onChange={(e) => {
+                      const val = Number(e.target.value)
+                      if (val > editedSelection.budgetMin) {
+                        setEditedSelection({ ...editedSelection, budgetMax: val })
+                      }
+                    }}
+                    className='w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600'
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Traveler */}
-            <div>
-              <label className='block text-sm font-medium text-purple-900 mb-2'>
-                Who are you traveling with?
-              </label>
-              <div className='grid grid-cols-3 gap-3'>
-                {SelectTravelesList.map((option) => (
-                  <div
-                    key={option.title}
-                    onClick={() => setEditedSelection({ ...editedSelection, traveler: option.title })}
-                    className={`p-3 border rounded-lg cursor-pointer hover:shadow-md transition-all ${
-                      editedSelection.traveler === option.title 
-                        ? 'border-purple-500 bg-purple-100' 
-                        : 'border-gray-200 bg-white'
-                    }`}
-                  >
-                    <div className='text-2xl mb-1'>{option.icon}</div>
-                    <div className='font-semibold text-sm'>{option.title}</div>
+            {/* Number of Travelers */}
+            <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+              {/* Adults */}
+              <div className='p-4 border rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50'>
+                <div className='flex items-center justify-between mb-3'>
+                  <div>
+                    <h3 className='font-semibold'>Adults</h3>
+                    <p className='text-xs text-gray-600'>Age 18+</p>
                   </div>
-                ))}
+                  <span className='text-3xl'>👨‍💼</span>
+                </div>
+                
+                <div className='flex items-center justify-between'>
+                  <button
+                    type='button'
+                    onClick={() => setEditedSelection({ ...editedSelection, adults: Math.max(0, editedSelection.adults - 1) })}
+                    className='w-8 h-8 rounded-full bg-white border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors flex items-center justify-center'
+                    disabled={editedSelection.adults === 0}
+                  >
+                    <Minus className='h-4 w-4' />
+                  </button>
+                  
+                  <span className='text-2xl font-bold text-blue-700'>{editedSelection.adults}</span>
+                  
+                  <button
+                    type='button'
+                    onClick={() => setEditedSelection({ ...editedSelection, adults: Math.min(10, editedSelection.adults + 1) })}
+                    className='w-8 h-8 rounded-full bg-white border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors flex items-center justify-center'
+                    disabled={editedSelection.adults === 10}
+                  >
+                    <Plus className='h-4 w-4' />
+                  </button>
+                </div>
               </div>
+
+              {/* Children */}
+              <div className='p-4 border rounded-lg bg-gradient-to-br from-pink-50 to-rose-50'>
+                <div className='flex items-center justify-between mb-3'>
+                  <div>
+                    <h3 className='font-semibold'>Children</h3>
+                    <p className='text-xs text-gray-600'>Age 0-17</p>
+                  </div>
+                  <span className='text-3xl'>👶</span>
+                </div>
+                
+                <div className='flex items-center justify-between'>
+                  <button
+                    type='button'
+                    onClick={() => setEditedSelection({ ...editedSelection, children: Math.max(0, editedSelection.children - 1) })}
+                    className='w-8 h-8 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
+                    disabled={editedSelection.children === 0}
+                  >
+                    <Minus className='h-4 w-4' />
+                  </button>
+                  
+                  <span className='text-2xl font-bold text-pink-700'>{editedSelection.children}</span>
+                  
+                  <button
+                    type='button'
+                    onClick={() => setEditedSelection({ ...editedSelection, children: Math.min(10, editedSelection.children + 1) })}
+                    className='w-8 h-8 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
+                    disabled={editedSelection.children === 10}
+                  >
+                    <Plus className='h-4 w-4' />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Total Summary */}
+            <div className='p-3 bg-purple-100 border border-purple-300 rounded-lg'>
+              <p className='text-sm text-purple-900 text-center'>
+                👥 Total: <span className='font-semibold'>{formatTravelers(editedSelection.adults, editedSelection.children)}</span>
+              </p>
             </div>
 
             {/* Action Buttons */}
@@ -834,11 +919,9 @@ function EditTrip() {
         )}
       </div>
 
-      {/* Hotels - With Regeneration */}
+      {/* Hotels Section */}
       <div className='mb-8'>
         <h2 className='font-bold text-2xl mb-4'>Recommended Hotels</h2>
-
-        {/* Hotel Preference Input */}
         <div className='mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200'>
           <p className='text-sm text-gray-700 mb-2'>
             💡 Not satisfied with the hotels? Describe your preferences and we'll find better options!
@@ -870,18 +953,30 @@ function EditTrip() {
             </Button>
           </div>
         </div>
-
         <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
           {tripData.tripData?.Hotels?.map((hotel, index) => (
-            <HotelCard key={index} hotel={hotel} />
+            <HotelCard
+              key={index}
+              hotel={hotel}
+              onClick={() => {
+                const slug = encodeURIComponent(hotel.HotelName || 'hotel');
+                navigate(`/hotel/${slug}`, {
+                  state: {
+                    hotel,
+                    tripContext: {
+                      userSelection: tripData.userSelection,
+                    },
+                  },
+                })
+              }}
+            />
           ))}
         </div>
       </div>
 
-      {/* Itinerary - Drag and Drop with Regeneration */}
+      {/* Itinerary Section */}
       <div className='mb-8'>
         <h2 className='font-bold text-2xl mb-4'>Daily Itinerary</h2>
-
         <div className='mb-4 p-4 bg-green-50 rounded-lg border border-green-200'>
           <p className='text-sm text-gray-700 mb-2'>
             ✨ Want different activities? Tell us your preferences and we'll create a new itinerary!
@@ -932,6 +1027,17 @@ function EditTrip() {
                   <SortableActivity
                     key={activity.id}
                     activity={activity}
+                    onClick={() => {
+                      const slug = encodeURIComponent(activity.PlaceName || 'attraction');
+                      navigate(`/attraction/${slug}`, {
+                        state: {
+                          activity,
+                          tripContext: {
+                            userSelection: tripData.userSelection,
+                          },
+                        },
+                      })
+                    }}
                     onRemove={() => handleRemoveActivity(dateKey, activity.id)}
                   />
                 ))}

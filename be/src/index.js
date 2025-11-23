@@ -6,6 +6,8 @@ const helmet = require('helmet');
 
 const { PORT = 8000, CLIENT_ORIGIN } = process.env;
 const authRoutes = require('./routes/auth');
+const profileRoutes = require('./routes/profile');
+const serpRoutes = require('./routes/hotelSerp');
 
 const app = express();
 
@@ -25,6 +27,8 @@ app.use(
 // Routes
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/auth', authRoutes);
+app.use('/api/profile', profileRoutes);
+app.use('/api/serp', serpRoutes);
 
 // Start
 app.listen(PORT, () => {

@@ -17,7 +17,7 @@ function Header() {
   const displayName = user?.username || user?.email || 'User';
 
   return (
-    <div className='p-3 shadow-sm flex justify-between items-center'>
+    <div className='h-20 px-5 shadow-sm flex justify-between items-center'>
       <img
         src='/webicon.jpg'
         height={40}
@@ -55,6 +55,8 @@ function Header() {
                   <img
                     src={avatarSrc}
                     alt={displayName}
+                    loading='lazy'
+                    referrerPolicy='no-referrer'
                     className="h-9 w-9 rounded-full object-cover"
                   />
                   {/* online dot */}
@@ -68,6 +70,8 @@ function Header() {
                     <img
                       src={avatarSrc}
                       alt={displayName}
+                      loading='lazy'
+                      referrerPolicy='no-referrer'
                       className="h-10 w-10 rounded-full object-cover ring-2 ring-white/80"
                     />
                     <div className="min-w-0">
