@@ -63,7 +63,7 @@ async function getPlaceImage(placeName) {
 }
 
 // Hotel Card Component with Image
-function HotelCard({ hotel }) {
+function HotelCard({ hotel, onClick }) {
   const [imageUrl, setImageUrl] = useState('/placeholder.jpg');
 
   useEffect(() => {
@@ -73,7 +73,11 @@ function HotelCard({ hotel }) {
   }, [hotel.HotelName, hotel.HotelAddress]);
 
   return (
-    <div className='border rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow'>
+    <div
+      className='border rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow cursor-pointer group'
+      onClick={onClick}
+      role="button"
+    >
       <img
         src={imageUrl}
         alt={hotel.HotelName}
@@ -95,7 +99,7 @@ function HotelCard({ hotel }) {
 }
 
 // Sortable Activity Card Component with Image
-function SortableActivity({ activity, onRemove }) {
+function SortableActivity({ activity, onClick, onRemove }) {
   const {
     attributes,
     listeners,
@@ -123,7 +127,8 @@ function SortableActivity({ activity, onRemove }) {
     <div
       ref={setNodeRef}
       style={style}
-      className='border rounded-lg p-3 bg-white hover:shadow-md transition-shadow'
+      className='border rounded-lg p-3 bg-white hover:shadow-md transition-shadow cursor-pointer'
+      onClick={onClick}
     >
       <div className='flex items-start gap-3'>
         <button
@@ -873,7 +878,21 @@ function EditTrip() {
 
         <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
           {tripData.tripData?.Hotels?.map((hotel, index) => (
-            <HotelCard key={index} hotel={hotel} />
+            <HotelCard
+              key={index}
+              hotel={hotel}
+              onClick={() => {
+                const slug = encodeURIComponent(hotel.HotelName || 'hotel');
+                navigate(`/hotel/${slug}`, {
+                  state: {
+                    hotel,
+                    tripContext: {
+                      userSelection: tripData.userSelection,
+                    },
+                  },
+                })
+              }}
+            />
           ))}
         </div>
       </div>
@@ -932,6 +951,17 @@ function EditTrip() {
                   <SortableActivity
                     key={activity.id}
                     activity={activity}
+                    onClick={() => {
+                      const slug = encodeURIComponent(activity.PlaceName || 'attraction');
+                      navigate(`/attraction/${slug}`, {
+                        state: {
+                          activity,
+                          tripContext: {
+                            userSelection: tripData.userSelection,
+                          },
+                        },
+                      })
+                    }}
                     onRemove={() => handleRemoveActivity(dateKey, activity.id)}
                   />
                 ))}

@@ -10,13 +10,16 @@ import Header from '@/components/custom/Header.jsx'
 import { AuthProvider } from '@/context/AuthContext.jsx'
 import ProtectedRoute from '@/components/ProtectedRoute/ProtectedRoute.jsx'
 
-// Pages (replace with your actual files)
+// Pages
 import Hero from '@/components/custom/Hero.jsx'                 // Landing content
 import CreateTrip from '@/pages/create-trip/index.jsx'
 import ViewTrip from '@/pages/view-trip/[tripId]/index.jsx'
 import EditTrip from '@/pages/edit-trip/index.jsx'
 import MyTrips from '@/pages/my-trips/index.jsx'
 import ProfilePage from '@/pages/profile/index.jsx'
+
+import HotelDetails from '@/pages/hotel-details/index.jsx'
+import AttractionDetails from '@/pages/attraction-details/index.jsx'
 
 // Root layout INSIDE the router so any component can use <Link/>
 function RootLayout() {
@@ -68,6 +71,24 @@ export default function App() {
                 element={
                   <ProtectedRoute>
                     <MyTrips />
+                  </ProtectedRoute>
+                }
+              />
+
+              <Route
+                path="hotel/:slug"
+                element={
+                  <ProtectedRoute>
+                    <HotelDetails />
+                  </ProtectedRoute>
+                }
+              />
+
+              <Route
+                path="attraction/:slug"
+                element={
+                  <ProtectedRoute>
+                    <AttractionDetails />
                   </ProtectedRoute>
                 }
               />
