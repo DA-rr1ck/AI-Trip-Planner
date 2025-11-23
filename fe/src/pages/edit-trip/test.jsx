@@ -7,6 +7,10 @@ import { useAuth } from '@/context/AuthContext'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/input'
 import { Save, Loader2, GripVertical, Trash2, Sparkles, Edit, X } from 'lucide-react'
+import DatePicker from 'react-datepicker'
+import "react-datepicker/dist/react-datepicker.css"
+import MapRoute from '@/components/MapRoute'
+import { format, parse, differenceInDays, addDays } from 'date-fns'
 import {
   DndContext,
   closestCenter,
@@ -71,8 +75,8 @@ function HotelCard({ hotel }) {
 
   return (
     <div className='border rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow'>
-      <img 
-        src={imageUrl} 
+      <img
+        src={imageUrl}
         alt={hotel.HotelName}
         className='w-full h-[160px] object-cover'
       />
@@ -130,13 +134,13 @@ function SortableActivity({ activity, onRemove }) {
         >
           <GripVertical className='h-5 w-5 text-gray-400' />
         </button>
-        
-        <img 
-          src={imageUrl} 
+
+        <img
+          src={imageUrl}
           alt={activity.PlaceName}
           className='w-[100px] h-[100px] rounded-lg object-cover flex-shrink-0'
         />
-        
+
         <div className='flex-1 min-w-0'>
           <h4 className='font-semibold text-lg'>{activity.PlaceName}</h4>
           <p className='text-sm text-gray-600 mt-1 line-clamp-2'>{activity.PlaceDetails}</p>
@@ -158,10 +162,14 @@ function SortableActivity({ activity, onRemove }) {
   )
 }
 
-// Droppable Day Card Component
-function DroppableDay({ dayKey, dayData, onRemoveDay, children }) {
-  const { setNodeRef } = useSortable({ id: dayKey })
+
+
+// Update DroppableDay component:
+function DroppableDay({ dateKey, dayData, onRemoveDay, children }) {
+  const { setNodeRef } = useSortable({ id: dateKey })
   const isEmpty = children.length === 0
+
+  const displayDate = format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'EEEE, MMMM d, yyyy')
 
   return (
     <div ref={setNodeRef} className='mb-6'>
@@ -169,14 +177,14 @@ function DroppableDay({ dayKey, dayData, onRemoveDay, children }) {
         <div className='flex items-center gap-3'>
           <div className='flex-1'>
             <h3 className='font-bold text-xl text-blue-900'>
-              {dayKey.replace('Day', 'Day ')}
+              {displayDate}
             </h3>
             <p className='text-sm text-blue-700'>
               {dayData.Theme} • Best time: {dayData.BestTimeToVisit}
             </p>
           </div>
           <button
-            onClick={() => onRemoveDay(dayKey)}
+            onClick={() => onRemoveDay(dateKey)}
             className='text-red-500 hover:text-red-700 p-2 rounded hover:bg-red-50'
             title='Delete this day'
           >
@@ -184,13 +192,26 @@ function DroppableDay({ dayKey, dayData, onRemoveDay, children }) {
           </button>
         </div>
       </div>
+      
       <div className='space-y-3 pl-4 min-h-[100px]'>
         {isEmpty ? (
           <div className='border-2 border-dashed border-gray-300 rounded-lg p-8 text-center text-gray-400 bg-gray-50'>
             <p className='text-sm'>Drop activities here</p>
           </div>
         ) : (
-          children
+          <>
+            {children}
+            
+            {/* Add Map Route - Only show if there are activities */}
+            {dayData.Activities && dayData.Activities.length > 0 && (
+              <div className='mt-4'>
+                <MapRoute 
+                  activities={dayData.Activities} 
+                  locationName={dayData.Theme}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -209,30 +230,58 @@ function EditTrip() {
   const [itineraryPreference, setItineraryPreference] = useState('')
   const [activeId, setActiveId] = useState(null)
   
-  // NEW: User selection editing
   const [isEditingSelection, setIsEditingSelection] = useState(false)
   const [editedSelection, setEditedSelection] = useState(null)
 
   const rawTripData = location.state?.tripData
+
+  const existingTripId = rawTripData.id || null
+  
+  // FIXED: Better state initialization
   const [tripData, setTripData] = useState(() => {
     if (!rawTripData) return null
 
-    const travelPlan = rawTripData.tripData?.[0]?.TravelPlan || rawTripData.tripData?.TravelPlan
-    
-    // Add unique IDs to activities for drag-and-drop
+    console.log('Raw trip data received:', rawTripData)
+
+    // Extract travel plan from various possible structures
+    let travelPlan
+    if (rawTripData.tripData) {
+      // From create-trip or edit-trip navigation
+      travelPlan = rawTripData.tripData
+    } else if (Array.isArray(rawTripData) && rawTripData[0]?.TravelPlan) {
+      // From database (array format)
+      travelPlan = rawTripData[0].TravelPlan
+    } else if (rawTripData.TravelPlan) {
+      // Direct TravelPlan object
+      travelPlan = rawTripData.TravelPlan
+    } else {
+      // Assume rawTripData is the travel plan
+      travelPlan = rawTripData
+    }
+
+    console.log('Extracted travel plan:', travelPlan)
+
+    // Validate itinerary exists
+    if (!travelPlan || !travelPlan.Itinerary) {
+      console.error('No itinerary found:', travelPlan)
+      toast.error('Invalid trip data')
+      return null
+    }
+
+    // Add unique IDs for drag-and-drop
     const itineraryWithIds = {}
-    Object.entries(travelPlan.Itinerary).forEach(([dayKey, dayData]) => {
-      itineraryWithIds[dayKey] = {
+    Object.entries(travelPlan.Itinerary).forEach(([dateKey, dayData]) => {
+      itineraryWithIds[dateKey] = {
         ...dayData,
-        Activities: dayData.Activities.map((activity, idx) => ({
+        Activities: (dayData.Activities || []).map((activity, idx) => ({
           ...activity,
-          id: `${dayKey}-activity-${idx}-${Date.now()}-${Math.random()}`,
+          id: `${dateKey}-activity-${idx}-${Date.now()}-${Math.random()}`,
         })),
       }
     })
 
     return {
-      userSelection: rawTripData.userSelection,
+      userSelection: rawTripData.userSelection || {},
       tripData: {
         ...travelPlan,
         Itinerary: itineraryWithIds,
@@ -249,37 +298,60 @@ function EditTrip() {
 
   useEffect(() => {
     if (!tripData) {
-      toast.error('No trip data found')
-      navigate('/create-trip')
+      toast.error('No trip data found. Redirecting...')
+      const timer = setTimeout(() => navigate('/create-trip'), 2000)
+      return () => clearTimeout(timer)
     }
   }, [tripData, navigate])
 
-  // NEW: Start editing user selection
+  // Show loading state
+  if (tripData === null) {
+    return (
+      <div className='p-10 md:px-20 lg:px-44 xl:px-56 flex flex-col justify-center items-center min-h-[50vh]'>
+        <Loader2 className='h-8 w-8 animate-spin mb-4 text-purple-600' />
+        <p className='text-gray-500'>Loading trip data...</p>
+      </div>
+    )
+  }
+
+  // Calculate total days from dates
+  const getTotalDays = () => {
+    if (!tripData?.userSelection?.startDate || !tripData?.userSelection?.endDate) return 0
+    const start = parse(tripData.userSelection.startDate, 'yyyy-MM-dd', new Date())
+    const end = parse(tripData.userSelection.endDate, 'yyyy-MM-dd', new Date())
+    return differenceInDays(end, start) + 1
+  }
+
+  // Start editing user selection
   const handleEditSelection = () => {
+    const start = parse(tripData.userSelection.startDate, 'yyyy-MM-dd', new Date())
+    const end = parse(tripData.userSelection.endDate, 'yyyy-MM-dd', new Date())
+    
     setEditedSelection({
-      noOfdays: tripData.userSelection.noOfdays,
+      startDate: start,
+      endDate: end,
       budget: tripData.userSelection.budget,
       traveler: tripData.userSelection.traveler,
     })
     setIsEditingSelection(true)
   }
 
-  // NEW: Cancel editing
+  // Cancel editing
   const handleCancelEdit = () => {
     setIsEditingSelection(false)
     setEditedSelection(null)
   }
 
-  // NEW: Regenerate entire trip based on new user selection
+  // Regenerate entire trip based on new user selection
   const handleRegenerateAll = async () => {
-    if (!editedSelection.noOfdays || !editedSelection.budget || !editedSelection.traveler) {
+    if (!editedSelection.startDate || !editedSelection.endDate || !editedSelection.budget || !editedSelection.traveler) {
       toast.error('Please fill all fields')
       return
     }
 
-    const daysNum = Number(editedSelection.noOfdays)
-    if (!Number.isFinite(daysNum) || daysNum < 1 || daysNum > 5) {
-      toast.error('Please enter valid number of days (1-5)')
+    const totalDays = differenceInDays(editedSelection.endDate, editedSelection.startDate) + 1
+    if (totalDays < 1 || totalDays > 5) {
+      toast.error('Please select a trip between 1-5 days')
       return
     }
 
@@ -287,10 +359,10 @@ function EditTrip() {
     try {
       const FINAL_PROMPT = AI_PROMPT
         .replace('{location}', tripData.userSelection.location)
-        .replace('{totalDays}', editedSelection.noOfdays)
+        .replace('{totalDays}', totalDays)
         .replace('{traveler}', editedSelection.traveler)
         .replace('{budget}', editedSelection.budget)
-        .replace('{totalDays}', editedSelection.noOfdays)
+        .replace('{totalDays}', totalDays)
 
       const result = await generateTrip(FINAL_PROMPT)
       console.log('Raw regenerate result:', result)
@@ -306,14 +378,16 @@ function EditTrip() {
       // Extract TravelPlan from array if needed
       const travelPlan = newTripData[0]?.TravelPlan || newTripData.TravelPlan || newTripData
 
-      // Add unique IDs to activities
-      const itineraryWithIds = {}
-      Object.entries(travelPlan.Itinerary).forEach(([dayKey, dayData]) => {
-        itineraryWithIds[dayKey] = {
+      // Convert Day1, Day2... to actual dates
+      const itineraryWithDates = {}
+      Object.entries(travelPlan.Itinerary).forEach(([dayKey, dayData], index) => {
+        const actualDate = addDays(editedSelection.startDate, index)
+        const dateKey = format(actualDate, 'yyyy-MM-dd')
+        itineraryWithDates[dateKey] = {
           ...dayData,
           Activities: dayData.Activities.map((activity, idx) => ({
             ...activity,
-            id: `${dayKey}-activity-${idx}-${Date.now()}-${Math.random()}`,
+            id: `${dateKey}-activity-${idx}-${Date.now()}-${Math.random()}`,
           })),
         }
       })
@@ -321,11 +395,14 @@ function EditTrip() {
       setTripData({
         userSelection: {
           ...tripData.userSelection,
-          ...editedSelection,
+          startDate: format(editedSelection.startDate, 'yyyy-MM-dd'),
+          endDate: format(editedSelection.endDate, 'yyyy-MM-dd'),
+          budget: editedSelection.budget,
+          traveler: editedSelection.traveler,
         },
         tripData: {
           ...travelPlan,
-          Itinerary: itineraryWithIds,
+          Itinerary: itineraryWithDates,
         },
       })
 
@@ -385,11 +462,20 @@ function EditTrip() {
         dayCount
       )
 
+      // Convert Day1, Day2... to actual dates
+      const startDate = parse(tripData.userSelection.startDate, 'yyyy-MM-dd', new Date())
+      const itineraryWithDates = {}
+      Object.entries(itineraryWithIds).forEach(([dayKey, dayData], index) => {
+        const actualDate = addDays(startDate, index)
+        const dateKey = format(actualDate, 'yyyy-MM-dd')
+        itineraryWithDates[dateKey] = dayData
+      })
+
       setTripData({
         ...tripData,
         tripData: {
           ...tripData.tripData,
-          Itinerary: itineraryWithIds,
+          Itinerary: itineraryWithDates,
         },
       })
 
@@ -404,38 +490,26 @@ function EditTrip() {
   }
 
   // Delete entire day
-  const handleRemoveDay = (dayKey) => {
-    if (!window.confirm(`Delete ${dayKey.replace('Day', 'Day ')}? This cannot be undone.`)) {
+  const handleRemoveDay = (dateKey) => {
+    const displayDate = format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'MMMM d, yyyy')
+    if (!window.confirm(`Delete ${displayDate}? This cannot be undone.`)) {
       return
     }
 
-    const dayKeys = Object.keys(tripData.tripData.Itinerary)
-    if (dayKeys.length <= 1) {
+    const dateKeys = Object.keys(tripData.tripData.Itinerary).sort()
+    if (dateKeys.length <= 1) {
       toast.error('Cannot delete the last day!')
       return
     }
 
     const newItinerary = { ...tripData.tripData.Itinerary }
-    delete newItinerary[dayKey]
-
-    // Renumber remaining days
-    const reorderedItinerary = {}
-    Object.keys(newItinerary).forEach((oldKey, index) => {
-      const newKey = `Day${index + 1}`
-      reorderedItinerary[newKey] = {
-        ...newItinerary[oldKey],
-        Activities: newItinerary[oldKey].Activities.map((activity, actIdx) => ({
-          ...activity,
-          id: `${newKey}-activity-${actIdx}-${Date.now()}-${Math.random()}`,
-        })),
-      }
-    })
+    delete newItinerary[dateKey]
 
     setTripData({
       ...tripData,
       tripData: {
         ...tripData.tripData,
-        Itinerary: reorderedItinerary,
+        Itinerary: newItinerary,
       },
     })
     toast.success('Day deleted successfully')
@@ -455,45 +529,45 @@ function EditTrip() {
 
     // Find which day each activity belongs to
     const findDayForActivity = (activityId) => {
-      for (const [dayKey, dayData] of Object.entries(tripData.tripData.Itinerary)) {
+      for (const [dateKey, dayData] of Object.entries(tripData.tripData.Itinerary)) {
         if (dayData.Activities.find(a => a.id === activityId)) {
-          return dayKey
+          return dateKey
         }
       }
       return null
     }
 
-    const activeDayKey = findDayForActivity(active.id)
+    const activeDateKey = findDayForActivity(active.id)
     
     // Check if dropping on empty day container
-    let overDayKey = findDayForActivity(over.id)
+    let overDateKey = findDayForActivity(over.id)
     
-    // If not found in activities, check if it's a day key itself (empty day)
-    if (!overDayKey && tripData.tripData.Itinerary[over.id]) {
-      overDayKey = over.id
+    // If not found in activities, check if it's a date key itself (empty day)
+    if (!overDateKey && tripData.tripData.Itinerary[over.id]) {
+      overDateKey = over.id
     }
 
-    if (!activeDayKey || !overDayKey) return
+    if (!activeDateKey || !overDateKey) return
 
     setTripData((prevData) => {
       const newItinerary = { ...prevData.tripData.Itinerary }
 
-      if (activeDayKey === overDayKey) {
+      if (activeDateKey === overDateKey) {
         // Same day - reorder activities
-        const dayActivities = [...newItinerary[activeDayKey].Activities]
+        const dayActivities = [...newItinerary[activeDateKey].Activities]
         const oldIndex = dayActivities.findIndex(a => a.id === active.id)
         const newIndex = dayActivities.findIndex(a => a.id === over.id)
         
         if (oldIndex !== -1 && newIndex !== -1) {
-          newItinerary[activeDayKey] = {
-            ...newItinerary[activeDayKey],
+          newItinerary[activeDateKey] = {
+            ...newItinerary[activeDateKey],
             Activities: arrayMove(dayActivities, oldIndex, newIndex)
           }
         }
       } else {
         // Cross-day - move activity
-        const sourceActivities = [...newItinerary[activeDayKey].Activities]
-        const targetActivities = [...newItinerary[overDayKey].Activities]
+        const sourceActivities = [...newItinerary[activeDateKey].Activities]
+        const targetActivities = [...newItinerary[overDateKey].Activities]
         
         const activeIndex = sourceActivities.findIndex(a => a.id === active.id)
         
@@ -503,7 +577,7 @@ function EditTrip() {
           // Generate new unique ID for moved activity
           const updatedActivity = {
             ...movedActivity,
-            id: `${overDayKey}-activity-${Date.now()}-${Math.random()}`
+            id: `${overDateKey}-activity-${Date.now()}-${Math.random()}`
           }
           
           // If dropping on an activity, insert at that position
@@ -515,13 +589,13 @@ function EditTrip() {
             targetActivities.push(updatedActivity)
           }
           
-          newItinerary[activeDayKey] = {
-            ...newItinerary[activeDayKey],
+          newItinerary[activeDateKey] = {
+            ...newItinerary[activeDateKey],
             Activities: sourceActivities
           }
           
-          newItinerary[overDayKey] = {
-            ...newItinerary[overDayKey],
+          newItinerary[overDateKey] = {
+            ...newItinerary[overDateKey],
             Activities: targetActivities
           }
         }
@@ -538,8 +612,8 @@ function EditTrip() {
   }
 
   // Remove activity
-  const handleRemoveActivity = (dayKey, activityId) => {
-    const updatedActivities = tripData.tripData.Itinerary[dayKey].Activities.filter(
+  const handleRemoveActivity = (dateKey, activityId) => {
+    const updatedActivities = tripData.tripData.Itinerary[dateKey].Activities.filter(
       a => a.id !== activityId
     )
 
@@ -549,8 +623,8 @@ function EditTrip() {
         ...tripData.tripData,
         Itinerary: {
           ...tripData.tripData.Itinerary,
-          [dayKey]: {
-            ...tripData.tripData.Itinerary[dayKey],
+          [dateKey]: {
+            ...tripData.tripData.Itinerary[dateKey],
             Activities: updatedActivities,
           },
         },
@@ -565,11 +639,15 @@ function EditTrip() {
       toast.error('Please log in to save trip')
       return
     }
+    if (!tripData) {
+      toast.error('No trip data to save')
+      return
+    }
 
     // VALIDATION: Check for empty days
     const emptyDays = Object.entries(tripData.tripData.Itinerary)
       .filter(([_, dayData]) => dayData.Activities.length === 0)
-      .map(([dayKey]) => dayKey.replace('Day', 'Day '))
+      .map(([dateKey]) => format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'MMMM d'))
 
     if (emptyDays.length > 0) {
       toast.error(`Please add activities to: ${emptyDays.join(', ')}`, {
@@ -580,14 +658,13 @@ function EditTrip() {
 
     setSaving(true)
     try {
-      const docId = Date.now().toString()
-      
-      // Remove IDs before saving
+      const docId = existingTripId || Date.now().toString()
+
       const itineraryWithoutIds = {}
-      Object.entries(tripData.tripData.Itinerary).forEach(([dayKey, dayData]) => {
-        itineraryWithoutIds[dayKey] = {
+      Object.entries(tripData.tripData.Itinerary).forEach(([dateKey, dayData]) => {
+        itineraryWithoutIds[dateKey] = {
           ...dayData,
-          Activities: dayData.Activities.map(({ id, ...activity }) => activity),
+          Activities: (dayData.Activities || []).map(({ id, ...activity }) => activity),
         }
       })
 
@@ -600,8 +677,8 @@ function EditTrip() {
         userEmail: user.email,
         id: docId,
       })
-      
-      toast.success('Trip saved successfully!')
+
+      toast.success(existingTripId ? 'Trip updated successfully!' : 'Trip saved successfully!')
       navigate(`/view-trip/${docId}`)
     } catch (error) {
       console.error('Error saving trip:', error)
@@ -611,12 +688,10 @@ function EditTrip() {
     }
   }
 
-  if (!tripData) return null
-
-  const dayKeys = Object.keys(tripData.tripData.Itinerary)
+  const dateKeys = Object.keys(tripData.tripData.Itinerary).sort()
   
-  const allActivityIds = dayKeys.flatMap(dayKey => 
-    tripData.tripData.Itinerary[dayKey].Activities.map(a => a.id)
+  const allActivityIds = dateKeys.flatMap(dateKey => 
+    tripData.tripData.Itinerary[dateKey].Activities.map(a => a.id)
   )
 
   return (
@@ -637,13 +712,13 @@ function EditTrip() {
           ) : (
             <>
               <Save className='mr-2 h-4 w-4' />
-              Save Trip
+              {existingTripId ? 'Update Trip' : 'Save Trip'}
             </>
           )}
         </Button>
       </div>
 
-      {/* NEW: Trip Overview with Edit Option */}
+      {/* Trip Overview with Edit Option */}
       <div className='mb-8 p-6 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl border border-purple-200'>
         <div className='flex justify-between items-start mb-2'>
           <h2 className='font-bold text-2xl text-purple-900'>
@@ -664,25 +739,38 @@ function EditTrip() {
 
         {!isEditingSelection ? (
           <div className='flex gap-6 text-purple-700'>
-            <span>📅 {tripData.userSelection?.noOfdays} Days</span>
+            <span>📅 {format(parse(tripData.userSelection.startDate, 'yyyy-MM-dd', new Date()), 'MMM d')} - {format(parse(tripData.userSelection.endDate, 'yyyy-MM-dd', new Date()), 'MMM d, yyyy')}</span>
+            <span>🗓️ {getTotalDays()} Days</span>
             <span>💰 {tripData.userSelection?.budget}</span>
             <span>👤 {tripData.userSelection?.traveler}</span>
           </div>
         ) : (
           <div className='mt-4 space-y-4'>
-            {/* Number of Days */}
+            {/* Date Range */}
             <div>
               <label className='block text-sm font-medium text-purple-900 mb-2'>
-                Number of Days
+                Trip Dates
               </label>
-              <Input
-                type='number'
-                min='1'
-                max='5'
-                value={editedSelection.noOfdays}
-                onChange={(e) => setEditedSelection({ ...editedSelection, noOfdays: e.target.value })}
-                className='max-w-[200px]'
+              <DatePicker
+                selected={editedSelection.startDate}
+                onChange={(dates) => {
+                  const [start, end] = dates
+                  setEditedSelection({ ...editedSelection, startDate: start, endDate: end })
+                }}
+                startDate={editedSelection.startDate}
+                endDate={editedSelection.endDate}
+                selectsRange
+                minDate={new Date()}
+                dateFormat="dd/MM/yyyy"
+                placeholderText="Select start and end date"
+                className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500'
+                isClearable
               />
+              {editedSelection.startDate && editedSelection.endDate && (
+                <p className='mt-2 text-sm text-purple-700'>
+                  Trip duration: {differenceInDays(editedSelection.endDate, editedSelection.startDate) + 1} days
+                </p>
+              )}
             </div>
 
             {/* Budget */}
@@ -764,7 +852,8 @@ function EditTrip() {
       {/* Hotels - With Regeneration */}
       <div className='mb-8'>
         <h2 className='font-bold text-2xl mb-4'>Recommended Hotels</h2>
-        
+
+        {/* Hotel Preference Input */}
         <div className='mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200'>
           <p className='text-sm text-gray-700 mb-2'>
             💡 Not satisfied with the hotels? Describe your preferences and we'll find better options!
@@ -846,19 +935,19 @@ function EditTrip() {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          <SortableContext items={[...allActivityIds, ...dayKeys]} strategy={verticalListSortingStrategy}>
-            {dayKeys.map((dayKey) => (
+          <SortableContext items={[...allActivityIds, ...dateKeys]} strategy={verticalListSortingStrategy}>
+            {dateKeys.map((dateKey) => (
               <DroppableDay
-                key={dayKey}
-                dayKey={dayKey}
-                dayData={tripData.tripData.Itinerary[dayKey]}
+                key={dateKey}
+                dateKey={dateKey}
+                dayData={tripData.tripData.Itinerary[dateKey]}
                 onRemoveDay={handleRemoveDay}
               >
-                {tripData.tripData.Itinerary[dayKey].Activities.map((activity) => (
+                {tripData.tripData.Itinerary[dateKey].Activities.map((activity) => (
                   <SortableActivity
                     key={activity.id}
                     activity={activity}
-                    onRemove={() => handleRemoveActivity(dayKey, activity.id)}
+                    onRemove={() => handleRemoveActivity(dateKey, activity.id)}
                   />
                 ))}
               </DroppableDay>

@@ -39,3 +39,22 @@
 .read-the-docs {
   color: #888;
 }
+
+/* Leaflet Map Styles */
+.leaflet-container {
+  font-family: inherit;
+}
+
+.custom-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Fix Leaflet popup styles */
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+}
+
+.leaflet-popup-content {
+  margin: 0;
+}
