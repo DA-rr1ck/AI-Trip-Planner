@@ -1,18 +1,274 @@
 import React, { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Button from '@/components/ui/Button'
 import { AiOutlineLoading3Quarters } from 'react-icons/ai'
 import { toast } from 'sonner'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { GripVertical } from 'lucide-react'
+import MapRoute from '@/components/MapRoute'
+
+// Function to get place image from Pixabay
+async function getPlaceImage(placeName) {
+  const API_KEY = import.meta.env.VITE_PIXABAY_API_KEY;
+  try {
+    const response = await fetch(
+      `https://pixabay.com/api/?key=${API_KEY}&q=${encodeURIComponent(placeName)}&image_type=photo&per_page=3`
+    );
+    const data = await response.json();
+    return data.hits[0]?.largeImageURL || '/placeholder.jpg';
+  } catch (error) {
+    console.error('Error fetching image:', error);
+    return '/placeholder.jpg';
+  }
+}
+
+// Sortable Place Component
+function SortablePlace({ place, index, onRemove }) {
+  const navigate = useNavigate()
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: place.id })
+
+  const [imageUrl, setImageUrl] = useState('/placeholder.jpg');
+
+  useEffect(() => {
+    if (place.name) {
+      getPlaceImage(place.name).then(setImageUrl);
+    }
+  }, [place.name]);
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      onClick={() => {
+        const slug = encodeURIComponent(place.name || 'attraction');
+        navigate(`/attraction/${slug}`, {
+          state: {
+            activity: {
+              PlaceName: place.name,
+              PlaceDetails: place.address,
+              Address: place.address,
+              GeoCoordinates: {
+                  Latitude: place.lat,
+                  Longitude: place.lon
+              },
+              Rating: 4.5,
+              imageUrl: imageUrl
+            }
+          },
+        })
+      }}
+      className='flex items-start justify-between p-3 bg-green-50 border border-green-200 rounded-lg group cursor-pointer hover:bg-green-100 transition-colors'
+    >
+      <div className='flex items-start gap-3 flex-1'>
+        <button
+          className='mt-1 cursor-grab active:cursor-grabbing touch-none flex-shrink-0 text-gray-400 hover:text-gray-600'
+          onClick={(e) => e.stopPropagation()}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className='h-4 w-4' />
+        </button>
+        
+        <img 
+          src={imageUrl} 
+          alt={place.name} 
+          className="w-[100px] h-[100px] rounded-lg object-cover flex-shrink-0 bg-gray-200"
+        />
+
+        <div className='flex-1 min-w-0'>
+          <div className='flex items-center gap-2'>
+            <span className='text-sm font-semibold text-green-700'>
+              {index + 1}.
+            </span>
+            <p className='font-medium text-green-900 text-sm line-clamp-1'>{place.name}</p>
+          </div>
+          <p className='text-xs text-green-700 mt-0.5 capitalize'>{place.type.replace(/_/g, ' ')}</p>
+          <p className='text-xs text-green-600 mt-0.5 line-clamp-1'>{place.address}</p>
+          <p className='text-[10px] text-green-500 mt-0.5'>
+            {parseFloat(place.lat).toFixed(4)}, {parseFloat(place.lon).toFixed(4)}
+          </p>
+          <a 
+            href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className='flex items-center gap-1 text-[10px] text-green-600 hover:text-green-800 hover:underline mt-1'
+            onClick={(e) => e.stopPropagation()}
+          >
+            Open in Google Maps
+            <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14' />
+            </svg>
+          </a>
+        </div>
+      </div>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        className='text-red-600 hover:text-red-800 ml-2'
+      >
+        <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+          <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M6 18L18 6M6 6l12 12' />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
+// Droppable Day Component
+function DroppableDay({ day, children, onRemoveDay, daySearchQuery, onSearchQueryChange, searching, searchResults, onAddPlace, onHoverPlace, onRemovePlace }) {
+  const { setNodeRef } = useSortable({ id: day.id })
+
+  return (
+    <div ref={setNodeRef} className='border-2 border-gray-200 rounded-xl p-6 bg-white shadow-sm'>
+      <div className='flex items-center justify-between mb-4'>
+        <h3 className='text-xl font-semibold text-gray-900'>
+          Day {day.dayNumber}
+        </h3>
+        <button
+          onClick={() => onRemoveDay(day.id)}
+          className='text-red-600 hover:text-red-800 p-2'
+        >
+          <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' />
+          </svg>
+        </button>
+      </div>
+
+      <div className='mb-4'>
+        <label className='block text-sm font-medium text-gray-700 mb-2'>
+          Search places to visit
+        </label>
+        <div className='relative'>
+          <input
+            type='text'
+            placeholder='Search for attractions, restaurants, etc...'
+            value={daySearchQuery || ''}
+            onChange={(e) => onSearchQueryChange(e.target.value)}
+            className='w-full px-4 py-3 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none'
+          />
+          <svg
+            className='w-5 h-5 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2'
+            fill='none'
+            stroke='currentColor'
+            viewBox='0 0 24 24'
+          >
+            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' />
+          </svg>
+        </div>
+      </div>
+
+      {searching && (
+        <div className='flex items-center justify-center py-6'>
+          <AiOutlineLoading3Quarters className='h-5 w-5 animate-spin text-blue-600' />
+          <span className='ml-2 text-gray-600 text-sm'>Searching places...</span>
+        </div>
+      )}
+
+      {!searching && searchResults?.length > 0 && (
+        <div className='space-y-2 max-h-64 overflow-y-auto mb-4'>
+          <p className='text-xs text-gray-600 mb-2'>
+            Found {searchResults.length} places • Click to add
+          </p>
+          {searchResults.map((place) => (
+            <div
+              key={place.id}
+              onClick={() => onAddPlace(day.id, place)}
+              onMouseEnter={(e) => onHoverPlace(e, place, day.id)}
+              onMouseMove={(e) => onHoverPlace(e, null, null, true)}
+              onMouseLeave={() => onHoverPlace(null)}
+              className='p-3 border border-gray-200 rounded-lg cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all'
+            >
+              <h4 className='font-medium text-gray-900 text-sm'>{place.name}</h4>
+              <p className='text-xs text-gray-600 line-clamp-1 mt-1'>{place.address}</p>
+              {place.type && (
+                <span className='inline-block mt-1 px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded capitalize'>
+                  {place.type.replace(/_/g, ' ')}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className='space-y-2 min-h-[50px]'>
+        {children}
+      </div>
+
+      {day.places.length > 0 && (
+        <div className='mt-4'>
+          <MapRoute 
+            activities={day.places.map(p => ({
+              GeoCoordinates: {
+                Latitude: parseFloat(p.lat),
+                Longitude: parseFloat(p.lon)
+              },
+              PlaceName: p.name,
+              PlaceDetails: p.address,
+              TicketPricing: 'N/A', 
+              TimeTravel: 'N/A' 
+            }))} 
+            locationName={`Day ${day.dayNumber}`}
+          />
+        </div>
+      )}
+
+      {day.places.length === 0 && !daySearchQuery && (
+        <div className='text-center py-6 text-gray-500 text-sm'>
+          Search and add places to visit on this day
+        </div>
+      )}
+    </div>
+  )
+}
 
 function DayManager({ location, tripDays, onDaysChange }) {
   const [daySearchQueries, setDaySearchQueries] = useState({})
   const [dayPlaceResults, setDayPlaceResults] = useState({})
   const [searchingDayPlaces, setSearchingDayPlaces] = useState({})
+  const [activeId, setActiveId] = useState(null)
   
   // Hover state
   const [hoveredPlace, setHoveredPlace] = useState(null)
   const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 })
   const [nearbyData, setNearbyData] = useState({})
   const [loadingNearby, setLoadingNearby] = useState(false)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  )
 
   const handleMouseMove = (e) => {
     const popupHeight = 400 
@@ -199,11 +455,19 @@ function DayManager({ location, tripDays, onDaysChange }) {
   const addPlaceToDay = (dayId, place) => {
     const updated = tripDays.map(day => {
       if (day.id === dayId) {
-        if (day.places.find(p => p.id === place.id)) {
+        // Check for duplicates using original ID if available, or just ID
+        if (day.places.find(p => (p.originalId || p.id) === place.id)) {
           toast.info('This place is already in this day')
           return day
         }
-        return { ...day, places: [...day.places, place] }
+        
+        const newPlace = { 
+          ...place, 
+          originalId: place.id,
+          id: `place-${Date.now()}-${Math.random()}` 
+        }
+        
+        return { ...day, places: [...day.places, newPlace] }
       }
       return day
     })
@@ -225,6 +489,83 @@ function DayManager({ location, tripDays, onDaysChange }) {
     })
     onDaysChange(updated)
   }
+
+  const handleDragStart = (event) => {
+    setActiveId(event.active.id)
+  }
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event
+    setActiveId(null)
+
+    if (!over || active.id === over.id) return
+
+    const findDayForPlace = (placeId) => {
+      for (const day of tripDays) {
+        if (day.places.find(p => p.id === placeId)) {
+          return day.id
+        }
+      }
+      return null
+    }
+
+    const activeDayId = findDayForPlace(active.id)
+    let overDayId = findDayForPlace(over.id)
+
+    if (!overDayId) {
+        // Check if over.id is a day id
+        const overDay = tripDays.find(d => d.id === over.id)
+        if (overDay) {
+            overDayId = overDay.id
+        }
+    }
+
+    if (!activeDayId || !overDayId) return
+
+    if (activeDayId === overDayId) {
+        // Reorder within same day
+        const dayIndex = tripDays.findIndex(d => d.id === activeDayId)
+        const day = tripDays[dayIndex]
+        const oldIndex = day.places.findIndex(p => p.id === active.id)
+        const newIndex = day.places.findIndex(p => p.id === over.id)
+
+        if (oldIndex !== -1 && newIndex !== -1) {
+            const newPlaces = arrayMove(day.places, oldIndex, newIndex)
+            const newTripDays = [...tripDays]
+            newTripDays[dayIndex] = { ...day, places: newPlaces }
+            onDaysChange(newTripDays)
+        }
+    } else {
+        // Move to different day
+        const sourceDayIndex = tripDays.findIndex(d => d.id === activeDayId)
+        const targetDayIndex = tripDays.findIndex(d => d.id === overDayId)
+        
+        const sourceDay = tripDays[sourceDayIndex]
+        const targetDay = tripDays[targetDayIndex]
+
+        const sourcePlaces = [...sourceDay.places]
+        const targetPlaces = [...targetDay.places]
+
+        const activeIndex = sourcePlaces.findIndex(p => p.id === active.id)
+        if (activeIndex !== -1) {
+            const [movedPlace] = sourcePlaces.splice(activeIndex, 1)
+            
+            const overIndex = targetPlaces.findIndex(p => p.id === over.id)
+            if (overIndex !== -1) {
+                targetPlaces.splice(overIndex, 0, movedPlace)
+            } else {
+                targetPlaces.push(movedPlace)
+            }
+
+            const newTripDays = [...tripDays]
+            newTripDays[sourceDayIndex] = { ...sourceDay, places: sourcePlaces }
+            newTripDays[targetDayIndex] = { ...targetDay, places: targetPlaces }
+            onDaysChange(newTripDays)
+        }
+    }
+  }
+
+  const allPlaceIds = tripDays.flatMap(day => day.places.map(p => p.id))
 
   return (
     <div className='mt-10'>
@@ -249,139 +590,49 @@ function DayManager({ location, tripDays, onDaysChange }) {
           </Button>
         </div>
       ) : (
-        <div className='space-y-6'>
-          {tripDays.map((day) => (
-            <div key={day.id} className='border-2 border-gray-200 rounded-xl p-6 bg-white shadow-sm'>
-              <div className='flex items-center justify-between mb-4'>
-                <h3 className='text-xl font-semibold text-gray-900'>
-                  Day {day.dayNumber}
-                </h3>
-                <button
-                  onClick={() => removeDay(day.id)}
-                  className='text-red-600 hover:text-red-800 p-2'
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={[...allPlaceIds, ...tripDays.map(d => d.id)]} strategy={verticalListSortingStrategy}>
+            <div className='space-y-6'>
+              {tripDays.map((day) => (
+                <DroppableDay
+                  key={day.id}
+                  day={day}
+                  onRemoveDay={removeDay}
+                  daySearchQuery={daySearchQueries[day.id]}
+                  onSearchQueryChange={(val) => setDaySearchQueries({ ...daySearchQueries, [day.id]: val })}
+                  searching={searchingDayPlaces[day.id]}
+                  searchResults={dayPlaceResults[day.id]}
+                  onAddPlace={addPlaceToDay}
+                  onHoverPlace={(e, place, dayId, isMove) => {
+                    if (isMove) {
+                      handleMouseMove(e)
+                    } else if (place) {
+                      handleMouseMove(e)
+                      setHoveredPlace({ ...place, dayId })
+                    } else {
+                      setHoveredPlace(null)
+                    }
+                  }}
+                  onRemovePlace={removePlaceFromDay}
                 >
-                  <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' />
-                  </svg>
-                </button>
-              </div>
-
-              <div className='mb-4'>
-                <label className='block text-sm font-medium text-gray-700 mb-2'>
-                  Search places to visit
-                </label>
-                <div className='relative'>
-                  <input
-                    type='text'
-                    placeholder='Search for attractions, restaurants, etc...'
-                    value={daySearchQueries[day.id] || ''}
-                    onChange={(e) => {
-                      setDaySearchQueries({ ...daySearchQueries, [day.id]: e.target.value })
-                    }}
-                    className='w-full px-4 py-3 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none'
-                  />
-                  <svg
-                    className='w-5 h-5 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2'
-                    fill='none'
-                    stroke='currentColor'
-                    viewBox='0 0 24 24'
-                  >
-                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' />
-                  </svg>
-                </div>
-              </div>
-
-              {searchingDayPlaces[day.id] && (
-                <div className='flex items-center justify-center py-6'>
-                  <AiOutlineLoading3Quarters className='h-5 w-5 animate-spin text-blue-600' />
-                  <span className='ml-2 text-gray-600 text-sm'>Searching places...</span>
-                </div>
-              )}
-
-              {!searchingDayPlaces[day.id] && dayPlaceResults[day.id]?.length > 0 && (
-                <div className='space-y-2 max-h-64 overflow-y-auto mb-4'>
-                  <p className='text-xs text-gray-600 mb-2'>
-                    Found {dayPlaceResults[day.id].length} places • Click to add
-                  </p>
-                  {dayPlaceResults[day.id].map((place) => (
-                    <div
+                  {day.places.map((place, index) => (
+                    <SortablePlace
                       key={place.id}
-                      onClick={() => addPlaceToDay(day.id, place)}
-                      onMouseEnter={(e) => {
-                        handleMouseMove(e)
-                        setHoveredPlace({ ...place, dayId: day.id })
-                      }}
-                      onMouseMove={handleMouseMove}
-                      onMouseLeave={() => setHoveredPlace(null)}
-                      className='p-3 border border-gray-200 rounded-lg cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all'
-                    >
-                      <h4 className='font-medium text-gray-900 text-sm'>{place.name}</h4>
-                      <p className='text-xs text-gray-600 line-clamp-1 mt-1'>{place.address}</p>
-                      {place.type && (
-                        <span className='inline-block mt-1 px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded capitalize'>
-                          {place.type.replace(/_/g, ' ')}
-                        </span>
-                      )}
-                    </div>
+                      place={place}
+                      index={index}
+                      onRemove={() => removePlaceFromDay(day.id, place.id)}
+                    />
                   ))}
-                </div>
-              )}
-
-              {day.places.length > 0 && (
-                <div className='mt-4'>
-                  <p className='text-sm font-medium text-gray-700 mb-2'>
-                    Places to visit ({day.places.length})
-                  </p>
-                  <div className='space-y-2'>
-                    {day.places.map((place, index) => (
-                      <div key={place.id} className='flex items-start justify-between p-3 bg-green-50 border border-green-200 rounded-lg'>
-                        <div className='flex items-start gap-2'>
-                          <span className='text-sm font-semibold text-green-700'>
-                            {index + 1}.
-                          </span>
-                          <div>
-                            <p className='font-medium text-green-900 text-sm'>{place.name}</p>
-                            <p className='text-xs text-green-700 mt-0.5 capitalize'>{place.type.replace(/_/g, ' ')}</p>
-                            <p className='text-xs text-green-600 mt-0.5 line-clamp-1'>{place.address}</p>
-                            <p className='text-[10px] text-green-500 mt-0.5'>
-                              {parseFloat(place.lat).toFixed(4)}, {parseFloat(place.lon).toFixed(4)}
-                            </p>
-                            <a 
-                              href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className='flex items-center gap-1 text-[10px] text-green-600 hover:text-green-800 hover:underline mt-1'
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              Open in Google Maps
-                              <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14' />
-                              </svg>
-                            </a>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => removePlaceFromDay(day.id, place.id)}
-                          className='text-red-600 hover:text-red-800'
-                        >
-                          <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M6 18L18 6M6 6l12 12' />
-                          </svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {day.places.length === 0 && !daySearchQueries[day.id] && (
-                <div className='text-center py-6 text-gray-500 text-sm'>
-                  Search and add places to visit on this day
-                </div>
-              )}
+                </DroppableDay>
+              ))}
             </div>
-          ))}
-        </div>
+          </SortableContext>
+        </DndContext>
       )}
 
       {/* Hover Popup */}

@@ -44,8 +44,63 @@ function CreateTrip() {
   const [isManualMode, setIsManualMode] = useState(false)
   const [confirmedHotel, setConfirmedHotel] = useState(null)
   const [tripDays, setTripDays] = useState([])
+  const [hotelSearchState, setHotelSearchState] = useState({ query: '', results: [] })
+  const [isLoaded, setIsLoaded] = useState(false)
   const navigate = useNavigate()
   const { isAuthenticated, user } = useAuth()
+
+  // Load session data on mount
+  useEffect(() => {
+    // Check if page was reloaded
+    const navEntry = performance.getEntriesByType("navigation")[0];
+    if (navEntry && navEntry.type === 'reload') {
+      sessionStorage.removeItem('createTripSession');
+      setIsLoaded(true);
+      return;
+    }
+
+    const savedSession = sessionStorage.getItem('createTripSession')
+    if (savedSession) {
+      try {
+        const parsed = JSON.parse(savedSession)
+        // Restore dates from strings
+        if (parsed.aiFormData) {
+          if (parsed.aiFormData.startDate) parsed.aiFormData.startDate = new Date(parsed.aiFormData.startDate)
+          if (parsed.aiFormData.endDate) parsed.aiFormData.endDate = new Date(parsed.aiFormData.endDate)
+          setAiFormData(parsed.aiFormData)
+        }
+        if (parsed.manualFormData) {
+          if (parsed.manualFormData.startDate) parsed.manualFormData.startDate = new Date(parsed.manualFormData.startDate)
+          if (parsed.manualFormData.endDate) parsed.manualFormData.endDate = new Date(parsed.manualFormData.endDate)
+          setManualFormData(parsed.manualFormData)
+        }
+        if (parsed.isManualMode !== undefined) setIsManualMode(parsed.isManualMode)
+        if (parsed.confirmedHotel) setConfirmedHotel(parsed.confirmedHotel)
+        if (parsed.tripDays) setTripDays(parsed.tripDays)
+        if (parsed.place) setPlace(parsed.place)
+        if (parsed.hotelSearchState) setHotelSearchState(parsed.hotelSearchState)
+      } catch (e) {
+        console.error('Failed to restore session', e)
+      }
+    }
+    setIsLoaded(true)
+  }, [])
+
+  // Save session data on change
+  useEffect(() => {
+    if (!isLoaded) return
+
+    const sessionData = {
+      place,
+      aiFormData,
+      manualFormData,
+      isManualMode,
+      confirmedHotel,
+      tripDays,
+      hotelSearchState
+    }
+    sessionStorage.setItem('createTripSession', JSON.stringify(sessionData))
+  }, [place, aiFormData, manualFormData, isManualMode, confirmedHotel, tripDays, hotelSearchState, isLoaded])
 
   const formData = isManualMode ? manualFormData : aiFormData
 
@@ -168,6 +223,9 @@ function CreateTrip() {
         itineraryWithDates[dateKey] = dayData
       })
 
+      // Clear session on success
+      sessionStorage.removeItem('createTripSession')
+
       navigate('/edit-trip', {
         state: {
           tripData: {
@@ -196,7 +254,7 @@ function CreateTrip() {
 
   useEffect(() => {
     if (isManualMode) {
-      setPlace(null)
+      // Do not clear place here as it is used in Manual Mode too
       setOptions([])
       setInputValue('')
       return
@@ -229,6 +287,10 @@ function CreateTrip() {
       
       const tripId = await saveManualTrip({ formData: manualFormData, confirmedHotel, tripDays, user })
       toast.success('Trip saved successfully!')
+      
+      // Clear session on success
+      sessionStorage.removeItem('createTripSession')
+      
       navigate(`/view-trip/${tripId}`)
     } catch (error) {
       toast.error(error.message)
@@ -258,6 +320,26 @@ function CreateTrip() {
     setTripDays(newTripDays)
   }
 
+  // Warn user before refreshing if there are unsaved changes
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      const hasData = place || 
+                      (isManualMode && (confirmedHotel || tripDays.length > 0)) ||
+                      (!isManualMode && (aiFormData.startDate || aiFormData.endDate));
+
+      if (hasData) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [place, isManualMode, confirmedHotel, tripDays, aiFormData]);
+
   return (
     <div className='sm:px-10 md:px-32 lg:px-56 px-5 mt-10'>
       <ModeSwitch isManualMode={isManualMode} onChange={setIsManualMode} />
@@ -275,7 +357,11 @@ function CreateTrip() {
         <div className='mt-20 flex flex-col gap-10'>
           <DestinationSelector
             label='What is your desired destination?'
-            onLocationSelected={(label) => handleInputChange('location', label)}
+            value={place}
+            onLocationSelected={(label, val) => {
+              setPlace(val)
+              handleInputChange('location', label)
+            }}
           />
 
           <div>
@@ -487,6 +573,9 @@ function CreateTrip() {
               budgetMax={formData.budgetMax}
               adults={formData.adults}
               children={formData.children}
+              savedQuery={hotelSearchState.query}
+              savedResults={hotelSearchState.results}
+              onSearchStateChange={(query, results) => setHotelSearchState({ query, results })}
             />
           )}
 

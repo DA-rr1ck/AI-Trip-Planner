@@ -170,8 +170,17 @@ function useHotelDetails(initialHotel) {
         Photos: ['/placeholder.jpg', '/landing2.jpg', '/landing3.jpg'],
     }
 
+    const hotel = { ...placeholderHotel, ...initialHotel }
+
+    // If we have an imageUrl passed from search, use it as the first photo
+    if (initialHotel?.imageUrl && !initialHotel.Photos) {
+        // Remove placeholder if we have a real image
+        const otherPhotos = placeholderHotel.Photos.filter(p => p !== '/placeholder.jpg')
+        hotel.Photos = [initialHotel.imageUrl, ...otherPhotos]
+    }
+
     return {
-        hotel: { ...placeholderHotel, ...initialHotel },
+        hotel,
         isLoading: false,
         error: null,
     }
@@ -1084,7 +1093,7 @@ export default function HotelDetailsPage() {
     const { hotel, isLoading, error } = useHotelDetails(hotelFromState)
 
     const fallbackHotelName = slugToTitle(slug) || 'hotel'
-    const displayHotelName = hotelFromState.HotelName || fallbackHotelName
+    const displayHotelName = hotelFromState?.HotelName || fallbackHotelName
 
     const scrollToMap = () => {
         const el = document.getElementById('hotel-map')
@@ -1094,12 +1103,24 @@ export default function HotelDetailsPage() {
     }
 
     const handleSelectHotelForTrip = () => {
-        // TODO: implement logic:
-        // - navigate back to EditTrip with selected hotel info in state
-        console.log('Select hotel for trip (placeholder):', {
-            hotelFromState,
-            tripContext,
-        })
+        try {
+            const savedSession = sessionStorage.getItem('createTripSession')
+            if (savedSession) {
+                const parsed = JSON.parse(savedSession)
+                // Update confirmedHotel
+                // We use hotelFromState because it contains the original search result data (lat, lon, id)
+                // which is needed for the map and other logic in CreateTrip
+                parsed.confirmedHotel = hotelFromState
+                sessionStorage.setItem('createTripSession', JSON.stringify(parsed))
+                navigate('/create-trip')
+            } else {
+                // If no session, maybe just go back?
+                navigate(-1)
+            }
+        } catch (e) {
+            console.error('Error updating session:', e)
+            navigate(-1)
+        }
     }
 
     const propertyDescriptionData = {
@@ -1112,6 +1133,10 @@ export default function HotelDetailsPage() {
             ? [hotel.Description]
             : null,
     }
+
+    useEffect(() => {
+        window.scrollTo(0, 0)
+    }, [location.pathname])
 
     if (error) {
         return (
@@ -1196,11 +1221,11 @@ export default function HotelDetailsPage() {
             {/* Rooms & prices */}
             <HotelRoomsSection
                 hotelName={displayHotelName}
-                checkInDate={tripContext?.userSelection.startDate}
-                checkOutDate={tripContext?.userSelection.endDate}
-                adults={tripContext?.userSelection.adults}
-                children={tripContext?.userSelection.children}
-                childrenAges={tripContext?.userSelection.childrenAges}
+                checkInDate={tripContext?.userSelection?.startDate}
+                checkOutDate={tripContext?.userSelection?.endDate}
+                adults={tripContext?.userSelection?.adults}
+                children={tripContext?.userSelection?.children}
+                childrenAges={tripContext?.userSelection?.childrenAges}
                 gl={'vn'}
                 hl={'en'}
                 currency={'USD'}

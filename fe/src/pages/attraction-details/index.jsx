@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useRef, useState, useEffect } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import Button from '@/components/ui/Button'
 import {
@@ -106,6 +106,13 @@ function useAttractionDetails(initialActivity) {
         Photos: initialActivity?.Photos || placeholderAttraction.Photos,
         Address: initialActivity?.Address || placeholderAttraction.Address,
         RecommendedVisit: initialActivity?.RecommendedVisit || placeholderAttraction.RecommendedVisit,
+    }
+
+    // If we have an imageUrl passed from search, use it as the first photo
+    if (initialActivity?.imageUrl && !initialActivity.Photos) {
+        // Remove placeholder if we have a real image
+        const otherPhotos = placeholderAttraction.Photos.filter(p => p !== '/placeholder.jpg')
+        attraction.Photos = [initialActivity.imageUrl, ...otherPhotos]
     }
 
     const tickets = activityTickets.length > 0 ? activityTickets : placeholderTickets
@@ -723,6 +730,10 @@ export default function AttractionDetailsPage() {
 
     const fallbackAttractionName = slugToTitle(slug) || 'attraction'
     const displayAttractionName = attraction.PlaceName || fallbackAttractionName
+
+    useEffect(() => {
+        window.scrollTo(0, 0)
+    }, [location.pathname])
 
     const scrollToMap = () => {
         const el = document.getElementById('attraction-map')

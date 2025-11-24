@@ -1,9 +1,25 @@
 import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { AiOutlineLoading3Quarters } from 'react-icons/ai'
 import Button from '@/components/ui/Button'
 import { toast } from 'sonner'
 
-import { differenceInDays } from 'date-fns'
+import { differenceInDays, format } from 'date-fns'
+
+// Function to get hotel image from Pixabay
+async function getHotelImage(hotelName, hotelAddress) {
+  const API_KEY = import.meta.env.VITE_PIXABAY_API_KEY;
+  try {
+    const response = await fetch(
+      `https://pixabay.com/api/?key=${API_KEY}&q=${encodeURIComponent(hotelName + ' ' + hotelAddress)}&image_type=photo&per_page=3`
+    );
+    const data = await response.json();
+    return data.hits[0]?.largeImageURL || '/placeholder.jpg';
+  } catch (error) {
+    console.error('Error fetching image:', error);
+    return '/placeholder.jpg';
+  }
+}
 
 function HotelSearch({ 
   location, 
@@ -15,16 +31,35 @@ function HotelSearch({
   budgetMin,
   budgetMax,
   adults,
-  children
+  children,
+  savedQuery = '',
+  savedResults = [],
+  onSearchStateChange
 }) {
-  const [hotelSearchQuery, setHotelSearchQuery] = useState('')
-  const [hotelResults, setHotelResults] = useState([])
+  const [hotelSearchQuery, setHotelSearchQuery] = useState(savedQuery)
+  const [hotelResults, setHotelResults] = useState(savedResults)
   const [searchingHotels, setSearchingHotels] = useState(false)
   const [selectedHotel, setSelectedHotel] = useState(null)
   const [hoveredHotel, setHoveredHotel] = useState(null)
   const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 })
   const [nearbyData, setNearbyData] = useState({})
   const [loadingNearby, setLoadingNearby] = useState(false)
+  const [hotelImage, setHotelImage] = useState(null)
+  const navigate = useNavigate()
+
+  // Fetch hotel image when confirmedHotel changes
+  useEffect(() => {
+    if (confirmedHotel) {
+      getHotelImage(confirmedHotel.name, confirmedHotel.address).then(setHotelImage)
+    } else {
+      setHotelImage(null)
+    }
+  }, [confirmedHotel])
+
+  // Sync state changes to parent
+  useEffect(() => {
+    onSearchStateChange?.(hotelSearchQuery, hotelResults)
+  }, [hotelSearchQuery, hotelResults])
 
   // Calculate estimated price for a hotel
   const getEstimatedPrice = (hotelId) => {
@@ -280,8 +315,42 @@ function HotelSearch({
     return (
       <div className='border-2 border-gray-200 rounded-xl p-6 bg-white shadow-sm'>
         <div className='p-4 bg-blue-50 border-2 border-blue-300 rounded-lg'>
+          {hotelImage && (
+            <div className="mb-4 rounded-lg overflow-hidden h-48 w-full shadow-sm">
+              <img 
+                src={hotelImage} 
+                alt={confirmedHotel.name} 
+                className="w-full h-full object-cover hover:scale-105 transition-transform duration-500"
+              />
+            </div>
+          )}
           <div className='flex items-start justify-between mb-3'>
-            <div>
+            <div 
+              className="cursor-pointer hover:opacity-80 transition-opacity group"
+              onClick={() => {
+                const slug = encodeURIComponent(confirmedHotel.name)
+                navigate(`/hotel/${slug}`, {
+                  state: {
+                    hotel: {
+                      HotelName: confirmedHotel.name,
+                      HotelAddress: confirmedHotel.address,
+                      Rating: 4.5,
+                      lat: confirmedHotel.lat,
+                      lon: confirmedHotel.lon,
+                      imageUrl: hotelImage
+                    },
+                    tripContext: {
+                      userSelection: {
+                        startDate: startDate ? format(startDate, 'yyyy-MM-dd') : undefined,
+                        endDate: endDate ? format(endDate, 'yyyy-MM-dd') : undefined,
+                        adults,
+                        children
+                      }
+                    }
+                  }
+                })
+              }}
+            >
               <div className='flex items-center gap-2 mb-1'>
                 <p className='text-sm font-semibold text-blue-900'>
                   ✓ Selected
@@ -290,7 +359,15 @@ function HotelSearch({
                   {confirmedHotel.type}
                 </span>
               </div>
-              <p className='font-medium text-blue-800 text-lg'>{confirmedHotel.name}</p>
+              <p className='font-medium text-blue-800 text-lg group-hover:underline decoration-blue-800 underline-offset-2'>
+                {confirmedHotel.name}
+              </p>
+              <p className='text-[10px] text-blue-600 mt-0.5 flex items-center gap-1'>
+                Click to view details
+                <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' />
+                </svg>
+              </p>
             </div>
             <button
               onClick={onRemoveHotel}
@@ -480,6 +557,39 @@ function HotelSearch({
                         {hotel.city && (
                           <p className='text-sm text-gray-400'>{hotel.city}, {hotel.country}</p>
                         )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const slug = encodeURIComponent(hotel.name)
+                            
+                            navigate(`/hotel/${slug}`, { 
+                              state: { 
+                                hotel: {
+                                  ...hotel,
+                                  HotelName: hotel.name,
+                                  HotelAddress: hotel.address
+                                },
+                                tripContext: {
+                                  userSelection: {
+                                    location,
+                                    startDate,
+                                    endDate,
+                                    budget: { min: budgetMin, max: budgetMax },
+                                    adults: adults || 1,
+                                    children: children || 0,
+                                    travelers: (adults || 1) + (children || 0)
+                                  }
+                                }
+                              } 
+                            })
+                          }}
+                          className='text-xs text-blue-600 hover:text-blue-800 hover:underline mt-1 inline-flex items-center gap-1'
+                        >
+                          View Details
+                          <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14' />
+                          </svg>
+                        </button>
                       </div>
                       {isSelected && (
                         <svg className='w-5 h-5 text-blue-500' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
