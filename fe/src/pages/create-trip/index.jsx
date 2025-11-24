@@ -9,20 +9,33 @@ import AuthDialog from '@/components/custom/AuthDialog'
 import Input from '@/components/ui/input'
 import Button from '@/components/ui/Button'
 import { toast } from 'sonner'
-import { SelectBudgetOptions, SelectTravelesList } from '@/constants/options'
+import { AI_PROMPT } from '@/constants/options'
+import { generateTrip } from '@/service/AIModel'
 import { useAuth } from '@/context/AuthContext'
-import ModeSwitch from './components/ModeSwitch'
+import { Minus, Plus, DollarSign } from 'lucide-react'
 import DestinationSelector from './components/DestinationSelector'
+import ModeSwitch from './components/ModeSwitch'
 import HotelSearch from './components/manual/HotelSearch'
 import DayManager from './components/manual/DayManager'
-import { saveManualTrip as saveManualTripUtil } from './utils/manual/tripSaver'
-import { generateAiTripFromForm } from './utils/ai/aiTripGenerator'
+import { saveManualTrip } from './utils/manual/tripSaver'
 
 function CreateTrip() {
   const [place, setPlace] = useState(null)
-  const [formData, setFormData] = useState({
+  const [aiFormData, setAiFormData] = useState({
     startDate: null,
-    endDate: null
+    endDate: null,
+    budgetMin: 500,
+    budgetMax: 2000,
+    adults: 2,
+    children: 0,
+  })
+  const [manualFormData, setManualFormData] = useState({
+    startDate: null,
+    endDate: null,
+    budgetMin: 500,
+    budgetMax: 2000,
+    adults: 2,
+    children: 0,
   })
   const [options, setOptions] = useState([])
   const [inputValue, setInputValue] = useState('')
@@ -34,8 +47,14 @@ function CreateTrip() {
   const navigate = useNavigate()
   const { isAuthenticated, user } = useAuth()
 
+  const formData = isManualMode ? manualFormData : aiFormData
+
   const handleInputChange = (name, value) => {
-    setFormData(prev => ({ ...prev, [name]: value }))
+    if (isManualMode) {
+      setManualFormData(prev => ({ ...prev, [name]: value }))
+    } else {
+      setAiFormData(prev => ({ ...prev, [name]: value }))
+    }
   }
 
   useEffect(() => {
@@ -44,7 +63,7 @@ function CreateTrip() {
     // Auto-calculate days from date range if dates are selected
     const totalDays = getTotalDays()
     if (totalDays > 0) {
-      setFormData(prev => ({ ...prev, noOfdays: totalDays.toString() }))
+      setManualFormData(prev => ({ ...prev, noOfdays: totalDays.toString() }))
     }
 
     const n = parseInt(formData.noOfdays, 10)
@@ -80,38 +99,17 @@ function CreateTrip() {
     return differenceInDays(formData.endDate, formData.startDate) + 1
   }
 
-  useEffect(() => {
-    if (isManualMode) {
-      // Keep dates in manual mode, clear nothing
-    } else {
-      setConfirmedHotel(null)
-      setTripDays([])
-    }
-  }, [isManualMode])
+  // Format budget range
+  const formatBudget = (min, max) => {
+    return `$${min.toLocaleString()} - $${max.toLocaleString()}`
+  }
 
-  const saveManualTrip = async () => {
-    if (!isAuthenticated) {
-      setOpenDialog(true)
-      toast.info('Please sign in to save your trip.')
-      return
-    }
-
-    if (!formData.location || !confirmedHotel || tripDays.length === 0) {
-      toast.error('Please complete your trip: location, hotel, and at least one day required.')
-      return
-    }
-
-    setLoading(true)
-    try {
-      const id = await saveManualTripUtil({ formData, confirmedHotel, tripDays, user })
-      toast.success('Trip saved successfully!')
-      navigate(`/view-trip/${id}`)
-    } catch (error) {
-      console.error('Error saving manual trip:', error)
-      toast.error('Failed to save trip. Please try again.')
-    } finally {
-      setLoading(false)
-    }
+  // Format travelers
+  const formatTravelers = () => {
+    const parts = []
+    if (formData.adults > 0) parts.push(`${formData.adults} ${formData.adults === 1 ? 'Adult' : 'Adults'}`)
+    if (formData.children > 0) parts.push(`${formData.children} ${formData.children === 1 ? 'Child' : 'Children'}`)
+    return parts.join(', ') || '0 Travelers'
   }
 
   const onGenerateTrip = async () => {
@@ -127,14 +125,40 @@ function CreateTrip() {
       return
     }
 
-    if (!formData.location || !formData.startDate || !formData.endDate || !formData.budget || !formData.traveler) {
+    if (!formData.location || !formData.startDate || !formData.endDate) {
       toast.error('Please fill all the fields.', { duration: 1200 })
       return
     }
 
+    if (formData.adults === 0 && formData.children === 0) {
+      toast.error('Please add at least one traveler.', { duration: 1200 })
+      return
+    }
+
     setLoading(true)
+
+    const FINAL_PROMPT = AI_PROMPT
+      .replace('{location}', formData?.location)
+      .replace('{totalDays}', totalDays)
+      .replace('{adults}', formData.adults)
+      .replace('{children}', formData.children)
+      .replace('{budgetMin}', formData.budgetMin)
+      .replace('{budgetMax}', formData.budgetMax)
+
     try {
-      const tripData = await generateAiTripFromForm({ ...formData, noOfdays: totalDays })
+      const result = await generateTrip(FINAL_PROMPT)
+      console.log('Raw result:', result)
+      
+      let tripData
+      if (typeof result === 'string') {
+        tripData = JSON.parse(result)
+      } else if (typeof result === 'object') {
+        tripData = result
+      } else {
+        throw new Error('Invalid trip data format')
+      }
+
+      // Extract TravelPlan
       const travelPlan = tripData[0]?.TravelPlan || tripData.TravelPlan || tripData
 
       const itineraryWithDates = {}
@@ -149,9 +173,11 @@ function CreateTrip() {
           tripData: {
             userSelection: {
               ...formData,
-              noOfdays: totalDays,
+              location: formData.location,
               startDate: format(formData.startDate, 'yyyy-MM-dd'),
-              endDate: format(formData.endDate, 'yyyy-MM-dd')
+              endDate: format(formData.endDate, 'yyyy-MM-dd'),
+              budget: formatBudget(formData.budgetMin, formData.budgetMax),
+              traveler: formatTravelers(),
             },
             tripData: {
               ...travelPlan,
@@ -190,41 +216,47 @@ function CreateTrip() {
     return () => clearTimeout(timer)
   }, [inputValue, isManualMode])
 
-  const renderBudgetOptions = (selectedValue) => (
-    <div className='grid sm:grid-cols-3 mt-5 gap-5'>
-      {SelectBudgetOptions.map((item, index) => (
-        <div
-          key={index}
-          className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg transition-all ${
-            selectedValue === item.title ? 'border-blue-500 bg-blue-50 shadow-md' : ''
-          }`}
-          onClick={() => handleInputChange('budget', item.title)}
-        >
-          <h2 className='text-4xl'>{item.icon}</h2>
-          <h2 className='font-bold text-lg'>{item.title}</h2>
-          <h2 className='text-sm text-gray-500'>{item.desc}</h2>
-        </div>
-      ))}
-    </div>
-  )
+  const onSaveManualTrip = async () => {
+    if (!user) {
+      setOpenDialog(true)
+      return
+    }
+    setLoading(true)
+    try {
+      const budget = formatBudget(formData.budgetMin, formData.budgetMax)
+      const traveler = formatTravelers()
+      const manualFormData = { ...formData, budget, traveler }
+      
+      const tripId = await saveManualTrip({ formData: manualFormData, confirmedHotel, tripDays, user })
+      toast.success('Trip saved successfully!')
+      navigate(`/view-trip/${tripId}`)
+    } catch (error) {
+      toast.error(error.message)
+    } finally {
+      setLoading(false)
+    }
+  }
 
-  const renderTravelerOptions = (selectedValue) => (
-    <div className='grid sm:grid-cols-3 mt-5 gap-5'>
-      {SelectTravelesList.map((item, index) => (
-        <div
-          key={index}
-          onClick={() => handleInputChange('traveler', item.title)}
-          className={`p-4 cursor-pointer border rounded-lg hover:shadow-lg transition-all ${
-            selectedValue === item.title ? 'border-blue-500 bg-blue-50 shadow-md' : ''
-          }`}
-        >
-          <h2 className='text-4xl'>{item.icon}</h2>
-          <h2 className='font-bold text-lg'>{item.title}</h2>
-          <h2 className='text-sm text-gray-500'>{item.desc}</h2>
-        </div>
-      ))}
-    </div>
-  )
+  const handleManualDaysChange = (newTripDays) => {
+    const currentDaysCount = tripDays.length
+    const newDaysCount = newTripDays.length
+
+    if (newDaysCount < currentDaysCount) {
+      toast.success('Day deleted', { duration: 1000 })
+      
+      if (formData.startDate) {
+        const newEndDate = addDays(formData.startDate, newDaysCount - 1)
+        setManualFormData(prev => ({ ...prev, endDate: newEndDate }))
+      }
+    } else if (newDaysCount > currentDaysCount) {
+      if (formData.startDate) {
+        const newEndDate = addDays(formData.startDate, newDaysCount - 1)
+        setManualFormData(prev => ({ ...prev, endDate: newEndDate }))
+      }
+    }
+    
+    setTripDays(newTripDays)
+  }
 
   return (
     <div className='sm:px-10 md:px-32 lg:px-56 px-5 mt-10'>
@@ -297,19 +329,151 @@ function CreateTrip() {
             )}
           </div>
 
-          <div>
-            <h2 className='text-xl my-3 font-medium'>
-              What is your budget?
-            </h2>
-            {renderBudgetOptions(formData.budget)}
+        {/* Budget Range Slider */}
+        <div>
+          <h2 className='text-xl my-3 font-medium'>
+            What is your budget range? (per person)
+          </h2>
+          
+          <div className='p-6 border rounded-lg bg-gradient-to-br from-green-50 to-emerald-50'>
+            <div className='flex justify-between items-center mb-4'>
+              <div className='flex items-center gap-2'>
+                <DollarSign className='h-5 w-5 text-green-600' />
+                <span className='text-2xl font-bold text-green-700'>
+                  ${formData.budgetMin.toLocaleString()} - ${formData.budgetMax.toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* Min Budget Slider */}
+            <div className='mb-4'>
+              <label className='block text-sm font-medium text-gray-700 mb-2'>
+                Minimum Budget: ${formData.budgetMin.toLocaleString()}
+              </label>
+              <input
+                type='range'
+                min='100'
+                max='10000'
+                step='100'
+                value={formData.budgetMin}
+                onChange={(e) => {
+                  const val = Number(e.target.value)
+                  if (val < formData.budgetMax) {
+                    handleInputChange('budgetMin', val)
+                  }
+                }}
+                className='w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600'
+              />
+            </div>
+
+            {/* Max Budget Slider */}
+            <div>
+              <label className='block text-sm font-medium text-gray-700 mb-2'>
+                Maximum Budget: ${formData.budgetMax.toLocaleString()}
+              </label>
+              <input
+                type='range'
+                min='100'
+                max='10000'
+                step='100'
+                value={formData.budgetMax}
+                onChange={(e) => {
+                  const val = Number(e.target.value)
+                  if (val > formData.budgetMin) {
+                    handleInputChange('budgetMax', val)
+                  }
+                }}
+                className='w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600'
+              />
+            </div>
+
+            <p className='text-xs text-gray-600 mt-3 text-center'>
+              💡 This is the total budget per person for the entire trip
+            </p>
+          </div>
+        </div>
+
+        {/* Number of Travelers */}
+        <div>
+          <h2 className='text-xl my-3 font-medium'>
+            How many people are traveling?
+          </h2>
+          
+          <div className='grid grid-cols-1 md:grid-cols-2 gap-6'>
+            {/* Adults */}
+            <div className='p-6 border rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50'>
+              <div className='flex items-center justify-between mb-4'>
+                <div>
+                  <h3 className='font-semibold text-lg'>Adults</h3>
+                  <p className='text-xs text-gray-600'>Age 18+</p>
+                </div>
+                <span className='text-4xl'>👨‍💼</span>
+              </div>
+              
+              <div className='flex items-center justify-between'>
+                <button
+                  type='button'
+                  onClick={() => handleInputChange('adults', Math.max(0, formData.adults - 1))}
+                  className='w-10 h-10 rounded-full bg-white border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors flex items-center justify-center'
+                  disabled={formData.adults === 0}
+                >
+                  <Minus className='h-4 w-4' />
+                </button>
+                
+                <span className='text-3xl font-bold text-blue-700'>{formData.adults}</span>
+                
+                <button
+                  type='button'
+                  onClick={() => handleInputChange('adults', Math.min(10, formData.adults + 1))}
+                  className='w-10 h-10 rounded-full bg-white border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors flex items-center justify-center'
+                  disabled={formData.adults === 10}
+                >
+                  <Plus className='h-4 w-4' />
+                </button>
+              </div>
+            </div>
+
+            {/* Children */}
+            <div className='p-6 border rounded-lg bg-gradient-to-br from-pink-50 to-rose-50'>
+              <div className='flex items-center justify-between mb-4'>
+                <div>
+                  <h3 className='font-semibold text-lg'>Children</h3>
+                  <p className='text-xs text-gray-600'>Age 0-17</p>
+                </div>
+                <span className='text-4xl'>👶</span>
+              </div>
+              
+              <div className='flex items-center justify-between'>
+                <button
+                  type='button'
+                  onClick={() => handleInputChange('children', Math.max(0, formData.children - 1))}
+                  className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
+                  disabled={formData.children === 0}
+                >
+                  <Minus className='h-4 w-4' />
+                </button>
+                
+                <span className='text-3xl font-bold text-pink-700'>{formData.children}</span>
+                
+                <button
+                  type='button'
+                  onClick={() => handleInputChange('children', Math.min(10, formData.children + 1))}
+                  className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
+                  disabled={formData.children === 10}
+                >
+                  <Plus className='h-4 w-4' />
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div>
-            <h2 className='text-xl my-3 font-medium'>
-              Who do you plan to travel with?
-            </h2>
-            {renderTravelerOptions(formData.traveler)}
+          {/* Total Travelers Summary */}
+          <div className='mt-4 p-3 bg-purple-50 border border-purple-200 rounded-lg'>
+            <p className='text-sm text-purple-800 text-center'>
+              👥 Total: <span className='font-semibold'>{formatTravelers()}</span>
+            </p>
           </div>
+        </div>
 
           {formData.location && (
             <HotelSearch
@@ -317,6 +481,12 @@ function CreateTrip() {
               confirmedHotel={confirmedHotel}
               onHotelConfirm={(hotel) => setConfirmedHotel(hotel)}
               onRemoveHotel={() => setConfirmedHotel(null)}
+              startDate={formData.startDate}
+              endDate={formData.endDate}
+              budgetMin={formData.budgetMin}
+              budgetMax={formData.budgetMax}
+              adults={formData.adults}
+              children={formData.children}
             />
           )}
 
@@ -324,7 +494,7 @@ function CreateTrip() {
             <DayManager
               location={formData.location}
               tripDays={tripDays}
-              onDaysChange={setTripDays}
+              onDaysChange={handleManualDaysChange}
             />
           )}
         </div>
@@ -346,77 +516,210 @@ function CreateTrip() {
             />
           </div>
 
-          <div>
-            <h2 className='text-xl my-3 font-medium'>
-              When are you planning your trip?
-            </h2>
+        {/* Date Pickers */}
+        <div>
+          <h2 className='text-xl my-3 font-medium'>
+            When are you planning your trip?
+          </h2>
+          
+          <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+            <div>
+              <label className='block text-sm font-medium text-gray-700 mb-2'>
+                Start Date
+              </label>
+              <DatePicker
+                selected={formData.startDate}
+                onChange={(date) => handleInputChange('startDate', date)}
+                minDate={new Date()}
+                maxDate={formData.endDate || undefined}
+                dateFormat="dd/MM/yyyy"
+                placeholderText="Select start date"
+                className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+                isClearable
+              />
+            </div>
 
-            <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
-              <div>
-                <label className='block text-sm font-medium text-gray-700 mb-2'>
-                  Start Date
-                </label>
-                <DatePicker
-                  selected={formData.startDate}
-                  onChange={(date) => handleInputChange('startDate', date)}
-                  minDate={new Date()}
-                  maxDate={formData.endDate || undefined}
-                  dateFormat='dd/MM/yyyy'
-                  placeholderText='Select start date'
-                  className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
-                  isClearable
-                />
-              </div>
+            <div>
+              <label className='block text-sm font-medium text-gray-700 mb-2'>
+                End Date
+              </label>
+              <DatePicker
+                selected={formData.endDate}
+                onChange={(date) => handleInputChange('endDate', date)}
+                minDate={formData.startDate || new Date()}
+                dateFormat="dd/MM/yyyy"
+                placeholderText="Select end date"
+                className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+                disabled={!formData.startDate}
+                isClearable
+              />
+            </div>
+          </div>
 
-              <div>
-                <label className='block text-sm font-medium text-gray-700 mb-2'>
-                  End Date
-                </label>
-                <DatePicker
-                  selected={formData.endDate}
-                  onChange={(date) => handleInputChange('endDate', date)}
-                  minDate={formData.startDate || new Date()}
-                  dateFormat='dd/MM/yyyy'
-                  placeholderText='Select end date'
-                  className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
-                  disabled={!formData.startDate}
-                  isClearable
-                />
+          {formData.startDate && formData.endDate && (
+            <div className='mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg'>
+              <p className='text-sm text-blue-800'>
+                ✈️ Trip duration: <span className='font-semibold'>{getTotalDays()} {getTotalDays() === 1 ? 'day' : 'days'}</span>
+              </p>
+              <p className='text-xs text-blue-600 mt-1'>
+                {format(formData.startDate, 'EEEE, MMMM d, yyyy')} → {format(formData.endDate, 'EEEE, MMMM d, yyyy')}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Budget Range Slider */}
+        <div>
+          <h2 className='text-xl my-3 font-medium'>
+            What is your budget range? (per person)
+          </h2>
+          
+          <div className='p-6 border rounded-lg bg-gradient-to-br from-green-50 to-emerald-50'>
+            <div className='flex justify-between items-center mb-4'>
+              <div className='flex items-center gap-2'>
+                <DollarSign className='h-5 w-5 text-green-600' />
+                <span className='text-2xl font-bold text-green-700'>
+                  ${formData.budgetMin.toLocaleString()} - ${formData.budgetMax.toLocaleString()}
+                </span>
               </div>
             </div>
 
-            {formData.startDate && formData.endDate && (
-              <div className='mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg'>
-                <p className='text-sm text-blue-800'>
-                  ✈️ Trip duration: <span className='font-semibold'>{getTotalDays()} {getTotalDays() === 1 ? 'day' : 'days'}</span>
-                </p>
-                <p className='text-xs text-blue-600 mt-1'>
-                  {format(formData.startDate, 'EEEE, MMMM d, yyyy')} → {format(formData.endDate, 'EEEE, MMMM d, yyyy')}
-                </p>
+            {/* Min Budget Slider */}
+            <div className='mb-4'>
+              <label className='block text-sm font-medium text-gray-700 mb-2'>
+                Minimum Budget: ${formData.budgetMin.toLocaleString()}
+              </label>
+              <input
+                type='range'
+                min='100'
+                max='10000'
+                step='100'
+                value={formData.budgetMin}
+                onChange={(e) => {
+                  const val = Number(e.target.value)
+                  if (val < formData.budgetMax) {
+                    handleInputChange('budgetMin', val)
+                  }
+                }}
+                className='w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600'
+              />
+            </div>
+
+            {/* Max Budget Slider */}
+            <div>
+              <label className='block text-sm font-medium text-gray-700 mb-2'>
+                Maximum Budget: ${formData.budgetMax.toLocaleString()}
+              </label>
+              <input
+                type='range'
+                min='100'
+                max='10000'
+                step='100'
+                value={formData.budgetMax}
+                onChange={(e) => {
+                  const val = Number(e.target.value)
+                  if (val > formData.budgetMin) {
+                    handleInputChange('budgetMax', val)
+                  }
+                }}
+                className='w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600'
+              />
+            </div>
+
+            <p className='text-xs text-gray-600 mt-3 text-center'>
+              💡 This is the total budget per person for the entire trip
+            </p>
+          </div>
+        </div>
+
+        {/* Number of Travelers */}
+        <div>
+          <h2 className='text-xl my-3 font-medium'>
+            How many people are traveling?
+          </h2>
+          
+          <div className='grid grid-cols-1 md:grid-cols-2 gap-6'>
+            {/* Adults */}
+            <div className='p-6 border rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50'>
+              <div className='flex items-center justify-between mb-4'>
+                <div>
+                  <h3 className='font-semibold text-lg'>Adults</h3>
+                  <p className='text-xs text-gray-600'>Age 18+</p>
+                </div>
+                <span className='text-4xl'>👨‍💼</span>
               </div>
-            )}
+              
+              <div className='flex items-center justify-between'>
+                <button
+                  type='button'
+                  onClick={() => handleInputChange('adults', Math.max(0, formData.adults - 1))}
+                  className='w-10 h-10 rounded-full bg-white border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors flex items-center justify-center'
+                  disabled={formData.adults === 0}
+                >
+                  <Minus className='h-4 w-4' />
+                </button>
+                
+                <span className='text-3xl font-bold text-blue-700'>{formData.adults}</span>
+                
+                <button
+                  type='button'
+                  onClick={() => handleInputChange('adults', Math.min(10, formData.adults + 1))}
+                  className='w-10 h-10 rounded-full bg-white border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors flex items-center justify-center'
+                  disabled={formData.adults === 10}
+                >
+                  <Plus className='h-4 w-4' />
+                </button>
+              </div>
+            </div>
+
+            {/* Children */}
+            <div className='p-6 border rounded-lg bg-gradient-to-br from-pink-50 to-rose-50'>
+              <div className='flex items-center justify-between mb-4'>
+                <div>
+                  <h3 className='font-semibold text-lg'>Children</h3>
+                  <p className='text-xs text-gray-600'>Age 0-17</p>
+                </div>
+                <span className='text-4xl'>👶</span>
+              </div>
+              
+              <div className='flex items-center justify-between'>
+                <button
+                  type='button'
+                  onClick={() => handleInputChange('children', Math.max(0, formData.children - 1))}
+                  className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
+                  disabled={formData.children === 0}
+                >
+                  <Minus className='h-4 w-4' />
+                </button>
+                
+                <span className='text-3xl font-bold text-pink-700'>{formData.children}</span>
+                
+                <button
+                  type='button'
+                  onClick={() => handleInputChange('children', Math.min(10, formData.children + 1))}
+                  className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
+                  disabled={formData.children === 10}
+                >
+                  <Plus className='h-4 w-4' />
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div>
-            <h2 className='text-xl my-3 font-medium'>
-              What is your budget?
-            </h2>
-            {renderBudgetOptions(formData.budget)}
+          {/* Total Travelers Summary */}
+          <div className='mt-4 p-3 bg-purple-50 border border-purple-200 rounded-lg'>
+            <p className='text-sm text-purple-800 text-center'>
+              👥 Total: <span className='font-semibold'>{formatTravelers()}</span>
+            </p>
           </div>
-
-          <div>
-            <h2 className='text-xl my-3 font-medium'>
-              Who do you plan to travel with?
-            </h2>
-            {renderTravelerOptions(formData.traveler)}
-          </div>
+        </div>
         </div>
       )}
 
       <div className='my-10 justify-end flex'>
         <Button
           disabled={loading}
-          onClick={isManualMode ? saveManualTrip : onGenerateTrip}
+          onClick={isManualMode ? onSaveManualTrip : onGenerateTrip}
         >
           {loading
             ? <AiOutlineLoading3Quarters className='h-7 w-7 animate-spin' />
@@ -430,7 +733,7 @@ function CreateTrip() {
         onSuccess={() => {
           setOpenDialog(false)
           if (isManualMode) {
-            saveManualTrip()
+            onSaveManualTrip()
           } else {
             onGenerateTrip()
           }

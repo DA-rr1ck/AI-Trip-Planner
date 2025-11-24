@@ -40,7 +40,7 @@ export function AuthProvider({ children }) {
   const navigate = useNavigate();
 
   const [initializing, setInitializing] = useState(true);
-  const [provider, setProvider] = useState(null);     // 'local' | 'google'
+  const [provider, setProvider] = useState(null);     // 'email' | 'google'
   const [user, setUser] = useState(null);
 
   const [localExpiresAt, setLocalExpiresAt] = useState(null);
@@ -91,11 +91,10 @@ export function AuthProvider({ children }) {
         setUser(saved.user);
         setGoogleExpiresAt(saved.googleExpiresAt ?? null);
       }
-      else if (saved?.provider === "local" && saved?.user) {
-        setProvider("local");
+      else if (saved?.provider === "email" && saved?.user) {
+        setProvider("email");
         setUser(saved.user);
         setLocalExpiresAt(saved.localExpiresAt ?? null);
-        // saveSession({ provider: "local", user: saved.user, localExpiresAt: saved.localExpiresAt ?? null });
       }
       else {
         handleHardLogout();
@@ -119,7 +118,7 @@ export function AuthProvider({ children }) {
     let expiresAt = null;
     if (provider === "google" && googleExpiresAt) {
       expiresAt = googleExpiresAt;
-    } else if (provider === "local" && localExpiresAt) {
+    } else if (provider === "email" && localExpiresAt) {
       expiresAt = localExpiresAt;
     }
     if (!expiresAt) return;
@@ -143,14 +142,14 @@ export function AuthProvider({ children }) {
     const u = data.user;
 
     setUser(u);
-    setProvider("local");
+    setProvider("email");
 
     const expiration = typeof data.session.expiresAt === "number" ? data.session.expiresAt : null;
     setLocalExpiresAt(expiration);
     setTimerArmed(true)
 
     saveSession({
-      provider: "local",
+      provider: "email",
       user: u,
       localExpiresAt: expiration,
     });
@@ -181,7 +180,7 @@ export function AuthProvider({ children }) {
       if (!accessToken) return;
 
       // Send token to BE. BE will: verify/fetch Google profile, upsert user, set session cookie
-      const { data } = await api.post("/auth/google", { accessToken }, { withCredentials: true });
+      const { data } = await api.post("/auth/google", { accessToken });
       const u = data.user;
 
       setUser(u);
@@ -221,7 +220,7 @@ export function AuthProvider({ children }) {
   }, [handleHardLogout]);
 
   const value = useMemo(() => {
-    const isLocal = provider === "local";
+    const isEmail = provider === "email";
     const isGoogle = provider === "google";
     const isAuthenticated = !!user;
 
@@ -230,7 +229,7 @@ export function AuthProvider({ children }) {
       initializing,
       provider,
       isAuthenticated,
-      isLocal,
+      isEmail,
       isGoogle,
       user,
 

@@ -3,7 +3,7 @@ const https = require('https');
 const bcrypt = require('bcrypt');
 const { db, FieldValue } = require('../config/firebase');
 const { AUTH_EXPIRATION } = process.env;
-const { signToken } = require('../utils/jwt');
+const { signToken, verifyToken } = require('../utils/jwt');
 
 const GOOGLE_USERINFO_API = 'https://www.googleapis.com/oauth2/v3/userinfo';
 const router = express.Router();
@@ -34,7 +34,7 @@ function normalizeBackendUser(info) {
         avatar: info.avatar || null,
         createdAt: info.createdAt,
         updatedAt: info.updatedAt,
-        provider: "local",
+        provider: "email",
     };
 }
 
@@ -98,8 +98,7 @@ async function getUserById(id) {
 }
 
 const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-// E.164: + and 9–15 digits
-const phoneRe = /^\+?[1-9]\d{8,14}$/;
+const phoneRe = /^[1-9]\d{0,3}-\d{6,14}$/;
 
 router.post('/register', async (req, res) => {
     try {
@@ -108,13 +107,13 @@ router.post('/register', async (req, res) => {
         const normalizedEmail = String(email).trim().toLowerCase();
         const normalizedPhone = String(phone).trim();
 
-        if (!username || !email || !phone || !password) {
+        if (!username || !email || !password) {
             return res.status(400).json({ message: 'Please enter all required credentials!' });
         }
         if (!emailRe.test(normalizedEmail)) {
             return res.status(400).json({ message: "Invalid email format!" });
         }
-        if (!phoneRe.test(normalizedPhone)) {
+        if (normalizedPhone && !phoneRe.test(normalizedPhone)) {
             return res.status(400).json({ message: "Invalid phone number format!" });
         }
         if (password.length < 6) {
@@ -122,7 +121,11 @@ router.post('/register', async (req, res) => {
         }
 
         const existingEmail = await findUserByEmail(normalizedEmail);
-        const existingPhone = await findUserByPhone(normalizedPhone);
+
+        let existingPhone = null;
+        if (normalizedPhone) {
+            existingPhone = await findUserByPhone(normalizedPhone);
+        }
 
         if (existingEmail) {
             return res.status(409).json({ message: "Email is already registered!" });
@@ -138,7 +141,7 @@ router.post('/register', async (req, res) => {
         const payload = {
             username: username,
             email: normalizedEmail,
-            phone: normalizedPhone,
+            phone: normalizedPhone || '',
             passwordHash,
             avatar: '',
             createdAt: now,
@@ -147,7 +150,7 @@ router.post('/register', async (req, res) => {
         await ref.set(payload);
         let user = { id: ref.id, ...payload };
 
-        const token = signToken({ uid: ref.id, email: ref.email });
+        const token = signToken({ uid: ref.id, email: normalizedEmail });
         res.cookie('token', token, cookieOptions());
 
         return res.status(201).json({
@@ -224,8 +227,8 @@ router.post('/google', async (req, res) => {
             await ref.set(payload);
             user = { id: ref.id, ...payload };
         } else {
-            const update = { 
-                updatedAt: FieldValue.serverTimestamp() 
+            const update = {
+                updatedAt: FieldValue.serverTimestamp()
             };
             if (!user.googleSub && info.sub) update.googleSub = info.sub;
             let avatar = formatGoogleAvatar(info.picture);
@@ -259,7 +262,6 @@ router.get('/me', async (req, res) => {
         const token = req.cookies?.token;
         if (!token) return res.status(401).json({ message: 'Unauthorized' });
 
-        const { verifyToken } = require('../utils/jwt');
         const decoded = verifyToken(token);
 
         const me = await getUserById(decoded.uid);
