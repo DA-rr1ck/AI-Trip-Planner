@@ -26,19 +26,44 @@ function InfoSection({ trip }) {
     }
   }, [trip]);
 
-  // Calculate total days
+  // Calculate total days (supports both date ranges and legacy day counts)
   const getTotalDays = () => {
-    if (!trip?.userSelection?.startDate || !trip?.userSelection?.endDate) return 0;
-    const start = parse(trip.userSelection.startDate, 'yyyy-MM-dd', new Date());
-    const end = parse(trip.userSelection.endDate, 'yyyy-MM-dd', new Date());
-    return differenceInDays(end, start) + 1;
-  };
+    const startDate = trip?.userSelection?.startDate
+    const endDate = trip?.userSelection?.endDate
+
+    if (startDate && endDate) {
+      const start = parse(startDate, 'yyyy-MM-dd', new Date())
+      const end = parse(endDate, 'yyyy-MM-dd', new Date())
+      return differenceInDays(end, start) + 1
+    }
+
+    if (trip?.userSelection?.noOfdays) {
+      const manualDays = Number(trip.userSelection.noOfdays)
+      if (Number.isFinite(manualDays) && manualDays > 0) {
+        return manualDays
+      }
+    }
+
+    const durationText = trip?.tripData?.Duration
+    if (typeof durationText === 'string') {
+      const match = durationText.match(/\d+/)
+      if (match) {
+        const parsed = Number(match[0])
+        if (Number.isFinite(parsed) && parsed > 0) {
+          return parsed
+        }
+      }
+    }
+
+    return null
+  }
 
   const location = trip?.tripData?.Location || trip?.userSelection?.location;
   const startDate = trip?.userSelection?.startDate;
   const endDate = trip?.userSelection?.endDate;
   const budget = trip?.userSelection?.budget || trip?.tripData?.Budget;
   const traveler = trip?.userSelection?.traveler || trip?.tripData?.Traveler;
+  const totalDays = getTotalDays()
 
   return (
     <div>
@@ -68,13 +93,19 @@ function InfoSection({ trip }) {
           )}
 
           {/* Duration */}
-          <div className='flex items-center gap-2'>
-            <span className='text-2xl'>🗓️</span>
-            <div>
-              <p className='text-xs text-gray-500'>Duration</p>
-              <p className='font-medium'>{getTotalDays()} {getTotalDays() === 1 ? 'Day' : 'Days'}</p>
+          {(totalDays || trip?.tripData?.Duration) && (
+            <div className='flex items-center gap-2'>
+              <span className='text-2xl'>🗓️</span>
+              <div>
+                <p className='text-xs text-gray-500'>Duration</p>
+                <p className='font-medium'>
+                  {totalDays
+                    ? `${totalDays} ${totalDays === 1 ? 'Day' : 'Days'}`
+                    : trip?.tripData?.Duration}
+                </p>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Budget */}
           {budget && (

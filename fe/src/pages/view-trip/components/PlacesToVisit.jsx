@@ -54,9 +54,6 @@ function PlacesToVisit({ trip }) {
   const itinerary = trip?.tripData?.Itinerary;
   const location = trip?.tripData?.Location || trip?.userSelection?.location;
 
-  console.log('Itinerary data:', itinerary);
-  console.log('Location:', location);
-
   if (!itinerary) return <div>No itinerary found.</div>;
 
   // Sort by date (for date-based structure like '2024-08-24')

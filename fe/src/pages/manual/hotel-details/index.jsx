@@ -32,6 +32,249 @@ function toSafeNumber(value, fallback = null) {
     return Number.isFinite(num) ? num : fallback;
 }
 
+/**
+ * Fetches detailed hotel info (amenities, description, policies, reviews) from SerpAPI.
+ * Returns combined data from navigation state + API response.
+ */
+function useHotelDetails(initialHotel, tripContext) {
+    const [apiData, setApiData] = useState(null)
+    const [isLoading, setIsLoading] = useState(true)
+    const [error, setError] = useState(null)
+
+    const hotelName = initialHotel?.HotelName || null
+    const checkInDate = tripContext?.userSelection?.startDate
+    const checkOutDate = tripContext?.userSelection?.endDate
+
+    useEffect(() => {
+        if (!hotelName) {
+            setIsLoading(false)
+            return
+        }
+
+        const controller = new AbortController()
+
+        async function fetchHotelDetails() {
+            try {
+                setIsLoading(true)
+                setError(null)
+
+                const params = new URLSearchParams()
+                params.set('q', hotelName)
+
+                // Default dates if not provided
+                const today = new Date()
+                const tomorrow = new Date(today)
+                tomorrow.setDate(tomorrow.getDate() + 1)
+                const dayAfter = new Date(tomorrow)
+                dayAfter.setDate(dayAfter.getDate() + 1)
+
+                const formatDate = (d) => d.toISOString().split('T')[0]
+                params.set('check_in_date', checkInDate || formatDate(tomorrow))
+                params.set('check_out_date', checkOutDate || formatDate(dayAfter))
+
+                params.set('gl', 'vn')
+                params.set('hl', 'en')
+                params.set('currency', 'USD')
+
+                const res = await fetch(
+                    `/api/serp/hotel/details?${params.toString()}`,
+                    { signal: controller.signal }
+                )
+
+                if (!res.ok) {
+                    const text = await res.text()
+                    throw new Error(text || `Request failed with status ${res.status}`)
+                }
+
+                const json = await res.json()
+                setApiData(json)
+            } catch (err) {
+                if (err.name === 'AbortError') return
+                console.error('Failed to load hotel details', err)
+                setError(err.message || 'Failed to load hotel details')
+            } finally {
+                setIsLoading(false)
+            }
+        }
+
+        fetchHotelDetails()
+
+        return () => controller.abort()
+    }, [hotelName, checkInDate, checkOutDate])
+
+    // Debug: Log API response
+    useEffect(() => {
+        console.log('useHotelDetails - apiData:', apiData)
+    }, [apiData])
+
+    // Merge initial hotel data with API data
+    const hotel = {
+        // From navigation state (hotel search result)
+        HotelName: initialHotel?.HotelName || null,
+        HotelAddress: apiData?.locationInfo?.address || initialHotel?.HotelAddress || 'Address not available',
+        Rating: apiData?.overallRating || initialHotel?.Rating || null,
+        Price: initialHotel?.Price || null,
+
+        // From API
+        Description: apiData?.descriptionParagraphs?.join('\n\n') || null,
+        numberOfRooms: apiData?.numberOfRooms || null,
+        hotelClass: apiData?.hotelClass || null,
+        
+        // Contact info
+        Contact: {
+            phone: apiData?.phone || null,
+            email: null, // SerpAPI doesn't provide email
+            website: apiData?.locationInfo?.link || null,
+        },
+
+        // Amenities - convert to ID-based format for the ServicesAmenitiesCard
+        amenities: normalizeAmenities(apiData?.amenities || []),
+        rawAmenities: apiData?.amenities || [],
+
+        // Policies
+        policies: apiData?.policies || {},
+
+        // Reviews data
+        reviewsData: {
+            rating: apiData?.overallRating || null,
+            ratingCount: apiData?.reviewsCount || null,
+            ratingBreakdown: apiData?.ratingBreakdown || {},
+            reviews: (apiData?.userReviews || []).slice(0, 2), // Limit to 2 comments as requested
+        },
+
+        // Photos - use images from API if available, otherwise fall back to initial
+        Photos: buildPhotoArray(initialHotel, apiData?.images),
+    }
+
+    return {
+        hotel,
+        isLoading,
+        error,
+    }
+}
+
+/**
+ * Convert SerpAPI amenities array to our ID-based system.
+ * Maps common amenity strings to our predefined IDs.
+ */
+function normalizeAmenities(amenitiesArray) {
+    if (!Array.isArray(amenitiesArray) || amenitiesArray.length === 0) {
+        return null // null means show demo mode
+    }
+
+    const amenityMapping = {
+        // WiFi variations
+        'wi-fi': 'wifi_public_areas_free',
+        'wifi': 'wifi_public_areas_free',
+        'free wi-fi': 'wifi_public_areas_free',
+        'free wifi': 'wifi_public_areas_free',
+        'wireless internet': 'wifi_public_areas_free',
+        
+        // Parking
+        'parking': 'parking',
+        'free parking': 'parking',
+        'valet parking': 'parking',
+        
+        // Front desk
+        'front desk': 'front_desk_limited_hours',
+        '24-hour front desk': 'front_desk_limited_hours',
+        'concierge': 'front_desk_limited_hours',
+        
+        // Wake up
+        'wake-up call': 'wake_up_call',
+        'wake up call': 'wake_up_call',
+        
+        // Currency
+        'currency exchange': 'currency_exchange',
+        
+        // Tour
+        'tour desk': 'tour_ticket_booking',
+        'tour services': 'tour_ticket_booking',
+        
+        // Languages
+        'english': 'lang_en',
+        'japanese': 'lang_ja',
+        'vietnamese': 'lang_vi',
+        
+        // Health
+        'spa': 'beauty_and_makeup',
+        'beauty salon': 'beauty_and_makeup',
+        'massage': 'beauty_and_makeup',
+        
+        // Smoking
+        'smoking area': 'smoking_area',
+        'designated smoking area': 'smoking_area',
+        
+        // Cleaning
+        'laundry': 'dry_cleaning',
+        'laundry service': 'dry_cleaning',
+        'dry cleaning': 'dry_cleaning',
+        'ironing service': 'ironing_service',
+        
+        // Business
+        'postal service': 'postal_service',
+        'business center': 'postal_service',
+        
+        // Safety
+        'smoke detector': 'smoke_detector',
+        'fire extinguisher': 'fire_extinguisher',
+        'security': 'security_personnel',
+        '24-hour security': 'security_personnel',
+    }
+
+    const matchedIds = []
+    
+    amenitiesArray.forEach(amenity => {
+        const lower = amenity.toLowerCase().trim()
+        
+        // Direct match
+        if (amenityMapping[lower]) {
+            matchedIds.push(amenityMapping[lower])
+            return
+        }
+        
+        // Partial match
+        for (const [key, id] of Object.entries(amenityMapping)) {
+            if (lower.includes(key) || key.includes(lower)) {
+                matchedIds.push(id)
+                return
+            }
+        }
+    })
+
+    // Return unique IDs only
+    return [...new Set(matchedIds)]
+}
+
+/**
+ * Build photo array combining initial hotel image with API images.
+ */
+function buildPhotoArray(initialHotel, apiImages) {
+    const photos = []
+
+    // Add initial image from search if available
+    if (initialHotel?.imageUrl) {
+        photos.push(initialHotel.imageUrl)
+    }
+
+    // Add API images
+    if (Array.isArray(apiImages) && apiImages.length > 0) {
+        apiImages.forEach(img => {
+            const url = typeof img === 'string' ? img : img.thumbnail || img.original
+            if (url && !photos.includes(url)) {
+                photos.push(url)
+            }
+        })
+    }
+
+    // Fallback to placeholder if no images
+    if (photos.length === 0) {
+        photos.push('/placeholder.jpg', '/landing2.jpg', '/landing3.jpg')
+    }
+
+    return photos
+}
+
 function useHotelRooms({
     hotelName,
     checkInDate,
@@ -147,50 +390,14 @@ function useHotelRooms({
     return { rooms, error }
 }
 
-/**
- * Stubbed "data layer" for hotel detail.
- * Later you can replace implementation with SerpAPI + Google Maps data,
- * without touching UI components.
- */
-function useHotelDetails(initialHotel) {
-    // TODO: replace this with real fetch to your Node backend (SerpAPI + Google)
-    const placeholderHotel = {
-        // HotelName: 'Hotel Name (placeholder)',
-        HotelAddress: 'Hotel address will be loaded from Google / SerpAPI.',
-        Rating: 4.4,
-        Price: '$120 / night',
-        Description:
-            'Hotel description will appear here once data is loaded from APIs. For now this is just placeholder text.',
-        Contact: {
-            phone: '+00 000 000 000',
-            email: 'contact@hotel.com',
-            website: 'https://hotel-website.com',
-        },
-        Amenities: ['Free Wi-Fi', 'Breakfast included', 'Swimming pool', 'Gym', 'Airport shuttle'],
-        Photos: ['/placeholder.jpg', '/landing2.jpg', '/landing3.jpg'],
-    }
-
-    const hotel = { ...placeholderHotel, ...initialHotel }
-
-    // If we have an imageUrl passed from search, use it as the first photo
-    if (initialHotel?.imageUrl && !initialHotel.Photos) {
-        // Remove placeholder if we have a real image
-        const otherPhotos = placeholderHotel.Photos.filter(p => p !== '/placeholder.jpg')
-        hotel.Photos = [initialHotel.imageUrl, ...otherPhotos]
-    }
-
-    return {
-        hotel,
-        isLoading: false,
-        error: null,
-    }
-}
-
 // Services and Amenities card
-function ServicesAmenitiesCard({ amenities }) {
+function ServicesAmenitiesCard({ amenities, rawAmenities }) {
     // amenities: array of ids from the API. If null/empty => show all as demo
     const amenitySet =
         Array.isArray(amenities) && amenities.length > 0 ? new Set(amenities) : null
+
+    // Check if we have raw amenities but no mapped ones
+    const hasRawOnly = !amenitySet && Array.isArray(rawAmenities) && rawAmenities.length > 0
 
     const shouldShow = (id) => !amenitySet || amenitySet.has(id)
 
@@ -245,7 +452,17 @@ function ServicesAmenitiesCard({ amenities }) {
 
     const hasAny =
         mostPopularCols.length > 0 ||
-        categoryColumns.some((col) => col.length > 0)
+        categoryColumns.some((col) => col.length > 0) ||
+        hasRawOnly
+
+    // Chunk raw amenities into 3 columns
+    const rawAmenitiesColumns = hasRawOnly ? (() => {
+        const cols = [[], [], []]
+        rawAmenities.forEach((amenity, idx) => {
+            cols[idx % 3].push(amenity)
+        })
+        return cols
+    })() : []
 
     return (
         <SectionCard
@@ -256,8 +473,27 @@ function ServicesAmenitiesCard({ amenities }) {
                 <p className='text-sm text-gray-400'>N/A</p>
             ) : (
                 <div className='space-y-8'>
-                    {/* Row 1: Most popular amenities */}
-                    {mostPopularCols.length > 0 && (
+                    {/* If we have raw amenities only, show them in a simple grid */}
+                    {hasRawOnly && (
+                        <div className='space-y-3'>
+                            <h3 className='font-semibold text-sm'>Available Amenities</h3>
+                            <div className='grid md:grid-cols-3 gap-4'>
+                                {rawAmenitiesColumns.map((col, colIdx) => (
+                                    <ul key={colIdx} className='space-y-1'>
+                                        {col.map((amenity, idx) => (
+                                            <li key={idx} className='flex items-center gap-2 text-sm text-gray-700'>
+                                                <span className='text-base leading-none'>✓</span>
+                                                <span>{amenity}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Row 1: Most popular amenities (only if we have mapped amenities) */}
+                    {!hasRawOnly && mostPopularCols.length > 0 && (
                         <div className='space-y-3'>
                             <h3 className='font-semibold text-sm'>
                                 {HOTEL_AMENITIES_CONFIG.mostPopular.title}
@@ -272,8 +508,8 @@ function ServicesAmenitiesCard({ amenities }) {
                         </div>
                     )}
 
-                    {/* Row 2: More amenities */}
-                    {categoryColumns.some((col) => col.length > 0) && (
+                    {/* Row 2: More amenities (only if we have mapped amenities) */}
+                    {!hasRawOnly && categoryColumns.some((col) => col.length > 0) && (
                         <div className='space-y-3'>
                             <h3 className='font-semibold text-sm'>
                                 {HOTEL_AMENITIES_CONFIG.moreAmenitiesTitle}
@@ -729,7 +965,7 @@ function HotelReviewsSection({
         return Number.isFinite(num) ? num : 0;
     })();
 
-    // If caller doesn’t give ratingCount, try reviews length, else placeholder
+    // If caller doesn't give ratingCount, try reviews length, else placeholder
     const totalReviews =
         ratingCount ??
         (Array.isArray(reviews) ? reviews.length : null) ??
@@ -771,7 +1007,7 @@ function HotelReviewsSection({
             user: 'Traveler D',
             date: '1 month ago',
             rating: 3,
-            text: 'This will be loaded when clicking on “Load more comments”.',
+            text: 'This will be loaded when clicking on "Load more comments".',
         },
     ];
 
@@ -939,7 +1175,7 @@ function HotelMapSection({ mapRef }) {
 function NearbyHotelCard({ hotel }) {
     const openInNewTab = (hotel) => {
         const slug = encodeURIComponent(hotel.name || 'hotel')
-        window.open(`/hotel/${slug}`, '_blank')
+        window.open(`/manual/hotel/${slug}`, '_blank')
         console.log('Open nearby hotel detail (placeholder):', hotel)
     }
 
@@ -1077,11 +1313,12 @@ function NearbyHotelsSection({ hotels }) {
 }
 
 /**
- * MAIN PAGE: HotelDetailPage
+ * MAIN PAGE: ManualHotelDetailsPage
  * - Receives hotel + tripContext via location.state
  * - Renders independent, detachable cards for each feature.
+ * - For manual trip creation flow
  */
-export default function HotelDetailsPage() {
+export default function ManualHotelDetailsPage() {
     const navigate = useNavigate()
     const location = useLocation()
     const { slug } = useParams()
@@ -1090,7 +1327,16 @@ export default function HotelDetailsPage() {
 
     const mapRef = useRef(null)
 
-    const { hotel, isLoading, error } = useHotelDetails(hotelFromState)
+    const { hotel, isLoading, error } = useHotelDetails(hotelFromState, tripContext)
+
+    // Debug logging
+    useEffect(() => {
+        console.log('ManualHotelDetailsPage - hotelFromState:', hotelFromState)
+        console.log('ManualHotelDetailsPage - tripContext:', tripContext)
+        console.log('ManualHotelDetailsPage - hotel:', hotel)
+        console.log('ManualHotelDetailsPage - isLoading:', isLoading)
+        console.log('ManualHotelDetailsPage - error:', error)
+    }, [hotelFromState, tripContext, hotel, isLoading, error])
 
     const fallbackHotelName = slugToTitle(slug) || 'hotel'
     const displayHotelName = hotelFromState?.HotelName || fallbackHotelName
@@ -1127,10 +1373,9 @@ export default function HotelDetailsPage() {
         numberOfRooms: hotel.numberOfRooms ?? null,
         phone: hotel.Contact?.phone ?? null,
         email: hotel.Contact?.email ?? null,
-        // for now just wrap Description in one paragraph;
-        // later you can split from Google/SerpAPI text
+        // Split description by double newlines if present, otherwise single paragraph
         paragraphs: hotel.Description
-            ? [hotel.Description]
+            ? hotel.Description.split('\n\n').filter(p => p.trim())
             : null,
     }
 
@@ -1148,14 +1393,24 @@ export default function HotelDetailsPage() {
                 >
                     <ArrowLeft className='h-4 w-4' /> Back
                 </Button>
-                <p className='text-red-500 text-sm'>Failed to load hotel details.</p>
+                <p className='text-red-500 text-sm'>Failed to load hotel details: {error}</p>
             </div>
         )
     }
 
-    if (isLoading) {
+    // Show basic info while loading API data (don't block the whole page)
+    // Only show full loading screen if we don't have any hotel info at all
+    if (isLoading && !hotelFromState) {
         return (
             <div className='p-6 mx-auto md:px-20 lg:w-7xl'>
+                <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => navigate(-1)}
+                    className='mb-4 flex items-center gap-2'
+                >
+                    <ArrowLeft className='h-4 w-4' /> Back to trip
+                </Button>
                 <p className='text-gray-500 text-sm'>Loading hotel details...</p>
             </div>
         )
@@ -1210,7 +1465,7 @@ export default function HotelDetailsPage() {
             </SectionCard>
 
             {/* Services & Amenities */}
-            <ServicesAmenitiesCard amenities={hotel.amenities} />
+            <ServicesAmenitiesCard amenities={hotel.amenities} rawAmenities={hotel.rawAmenities} />
 
             {/* Property Policies */}
             <PropertyPoliciesCard policies={hotel.policies} />
@@ -1232,7 +1487,12 @@ export default function HotelDetailsPage() {
             />
 
             {/* Ratings & reviews */}
-            <HotelReviewsSection rating={hotel.Rating} />
+            <HotelReviewsSection 
+                rating={hotel.reviewsData?.rating || hotel.Rating} 
+                ratingCount={hotel.reviewsData?.ratingCount}
+                ratingBreakdown={hotel.reviewsData?.ratingBreakdown}
+                reviews={hotel.reviewsData?.reviews}
+            />
 
             {/* Map & nearby places */}
             <HotelMapSection mapRef={mapRef} />
