@@ -51,13 +51,22 @@ function CreateTrip() {
 
   // Load session data on mount
   useEffect(() => {
-    // Check if page was reloaded
-    const navEntry = performance.getEntriesByType("navigation")[0];
-    if (navEntry && navEntry.type === 'reload') {
-      sessionStorage.removeItem('createTripSession');
-      setIsLoaded(true);
-      return;
+    // Check if this is a hard reload (F5/Ctrl+R) using sessionStorage flag
+    const wasPageReloaded = sessionStorage.getItem('createTripPageLoaded') === 'true'
+    
+    if (wasPageReloaded) {
+      // This is a reload - check navigation type
+      const navEntry = performance.getEntriesByType("navigation")[0];
+      if (navEntry && navEntry.type === 'reload') {
+        sessionStorage.removeItem('createTripSession');
+        sessionStorage.removeItem('createTripPageLoaded');
+        setIsLoaded(true);
+        return;
+      }
     }
+    
+    // Mark that this page has been loaded (for detecting future reloads)
+    sessionStorage.setItem('createTripPageLoaded', 'true')
 
     const savedSession = sessionStorage.getItem('createTripSession')
     if (savedSession) {

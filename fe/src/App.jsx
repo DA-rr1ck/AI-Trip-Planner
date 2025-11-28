@@ -20,6 +20,8 @@ import ProfilePage from '@/pages/profile/index.jsx'
 
 import HotelDetails from '@/pages/hotel-details/index.jsx'
 import AttractionDetails from '@/pages/attraction-details/index.jsx'
+import ManualHotelDetails from '@/pages/manual/hotel-details/index.jsx'
+import ManualAttractionDetails from '@/pages/manual/attraction-details/index.jsx'
 
 // Root layout INSIDE the router so any component can use <Link/>
 function RootLayout() {
@@ -89,6 +91,25 @@ export default function App() {
                 element={
                   <ProtectedRoute>
                     <AttractionDetails />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Manual trip creation detail pages */}
+              <Route
+                path="manual/hotel/:slug"
+                element={
+                  <ProtectedRoute>
+                    <ManualHotelDetails />
+                  </ProtectedRoute>
+                }
+              />
+
+              <Route
+                path="manual/attraction/:slug"
+                element={
+                  <ProtectedRoute>
+                    <ManualAttractionDetails />
                   </ProtectedRoute>
                 }
               />

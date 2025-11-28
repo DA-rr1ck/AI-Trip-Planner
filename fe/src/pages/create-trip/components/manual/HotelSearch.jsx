@@ -6,18 +6,43 @@ import { toast } from 'sonner'
 
 import { differenceInDays, format } from 'date-fns'
 
-// Function to get hotel image from Pixabay
-async function getHotelImage(hotelName, hotelAddress) {
+// Fallback to Pixabay if SerpAPI fails
+async function getImageFromPixabay(query) {
   const API_KEY = import.meta.env.VITE_PIXABAY_API_KEY;
+  if (!API_KEY) return '/placeholder.jpg';
   try {
     const response = await fetch(
-      `https://pixabay.com/api/?key=${API_KEY}&q=${encodeURIComponent(hotelName + ' ' + hotelAddress)}&image_type=photo&per_page=3`
+      `https://pixabay.com/api/?key=${API_KEY}&q=${encodeURIComponent(query)}&image_type=photo&per_page=3`
     );
     const data = await response.json();
-    return data.hits[0]?.largeImageURL || '/placeholder.jpg';
+    return data.hits?.[0]?.largeImageURL || '/placeholder.jpg';
   } catch (error) {
-    console.error('Error fetching image:', error);
+    console.error('Pixabay fallback failed:', error);
     return '/placeholder.jpg';
+  }
+}
+
+// Function to get hotel image from SerpAPI (via backend) with Pixabay fallback
+async function getHotelImage(hotelName, hotelAddress) {
+  const searchQuery = `${hotelName} ${hotelAddress} hotel exterior`;
+  
+  try {
+    const response = await fetch(
+      `/api/serp/images/search?q=${encodeURIComponent(searchQuery)}`
+    );
+    
+    if (!response.ok) {
+      throw new Error('SerpAPI request failed');
+    }
+    
+    const data = await response.json();
+    const imageUrl = data.images?.[0]?.original || data.images?.[0]?.thumbnail;
+    
+    if (imageUrl) return imageUrl;
+    throw new Error('No images found');
+  } catch (error) {
+    console.warn('SerpAPI failed, falling back to Pixabay:', error.message);
+    return getImageFromPixabay(`${hotelName} hotel`);
   }
 }
 
@@ -329,7 +354,7 @@ function HotelSearch({
               className="cursor-pointer hover:opacity-80 transition-opacity group"
               onClick={() => {
                 const slug = encodeURIComponent(confirmedHotel.name)
-                navigate(`/hotel/${slug}`, {
+                navigate(`/manual/hotel/${slug}`, {
                   state: {
                     hotel: {
                       HotelName: confirmedHotel.name,

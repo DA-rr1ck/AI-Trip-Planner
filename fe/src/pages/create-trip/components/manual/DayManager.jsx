@@ -22,18 +22,43 @@ import { CSS } from '@dnd-kit/utilities'
 import { GripVertical } from 'lucide-react'
 import MapRoute from '@/components/MapRoute'
 
-// Function to get place image from Pixabay
-async function getPlaceImage(placeName) {
+// Fallback to Pixabay if SerpAPI fails
+async function getImageFromPixabay(query) {
   const API_KEY = import.meta.env.VITE_PIXABAY_API_KEY;
+  if (!API_KEY) return '/placeholder.jpg';
   try {
     const response = await fetch(
-      `https://pixabay.com/api/?key=${API_KEY}&q=${encodeURIComponent(placeName)}&image_type=photo&per_page=3`
+      `https://pixabay.com/api/?key=${API_KEY}&q=${encodeURIComponent(query)}&image_type=photo&per_page=3`
     );
     const data = await response.json();
-    return data.hits[0]?.largeImageURL || '/placeholder.jpg';
+    return data.hits?.[0]?.largeImageURL || '/placeholder.jpg';
   } catch (error) {
-    console.error('Error fetching image:', error);
+    console.error('Pixabay fallback failed:', error);
     return '/placeholder.jpg';
+  }
+}
+
+// Function to get place image from SerpAPI (via backend) with Pixabay fallback
+async function getPlaceImage(placeName) {
+  const searchQuery = `${placeName} tourist attraction`;
+  
+  try {
+    const response = await fetch(
+      `/api/serp/images/search?q=${encodeURIComponent(searchQuery)}`
+    );
+    
+    if (!response.ok) {
+      throw new Error('SerpAPI request failed');
+    }
+    
+    const data = await response.json();
+    const imageUrl = data.images?.[0]?.original || data.images?.[0]?.thumbnail;
+    
+    if (imageUrl) return imageUrl;
+    throw new Error('No images found');
+  } catch (error) {
+    console.warn('SerpAPI failed, falling back to Pixabay:', error.message);
+    return getImageFromPixabay(placeName);
   }
 }
 
@@ -69,7 +94,7 @@ function SortablePlace({ place, index, onRemove }) {
       style={style}
       onClick={() => {
         const slug = encodeURIComponent(place.name || 'attraction');
-        navigate(`/attraction/${slug}`, {
+        navigate(`/manual/attraction/${slug}`, {
           state: {
             activity: {
               PlaceName: place.name,
