@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Select from 'react-select'
@@ -12,7 +13,7 @@ import { toast } from 'sonner'
 import { AI_PROMPT } from '@/constants/options'
 import { generateTrip } from '@/service/AIModel'
 import { useAuth } from '@/context/AuthContext'
-import { Minus, Plus, DollarSign } from 'lucide-react'
+import { Minus, Plus, DollarSign, X } from 'lucide-react'
 
 function CreateTrip() {
   const [place, setPlace] = useState(null)
@@ -23,6 +24,7 @@ function CreateTrip() {
     budgetMax: 2000,
     adults: 2,
     children: 0,
+    childrenAges: [], // Array to store ages of each child
   })
   const [options, setOptions] = useState([])
   const [inputValue, setInputValue] = useState('')
@@ -33,6 +35,31 @@ function CreateTrip() {
 
   const handleInputChange = (name, value) => {
     setFormData(prev => ({ ...prev, [name]: value }))
+  }
+
+
+  const handleChildrenChange = (newCount) => {
+    const currentCount = formData.children
+    
+    if (newCount > currentCount) {
+
+      const newAges = [...formData.childrenAges]
+      for (let i = currentCount; i < newCount; i++) {
+        newAges.push(5) 
+      }
+      setFormData(prev => ({ ...prev, children: newCount, childrenAges: newAges }))
+    } else {
+
+      const newAges = formData.childrenAges.slice(0, newCount)
+      setFormData(prev => ({ ...prev, children: newCount, childrenAges: newAges }))
+    }
+  }
+
+
+  const handleChildAgeChange = (index, age) => {
+    const newAges = [...formData.childrenAges]
+    newAges[index] = age
+    setFormData(prev => ({ ...prev, childrenAges: newAges }))
   }
 
   // Calculate number of days
@@ -50,7 +77,11 @@ function CreateTrip() {
   const formatTravelers = () => {
     const parts = []
     if (formData.adults > 0) parts.push(`${formData.adults} ${formData.adults === 1 ? 'Adult' : 'Adults'}`)
-    if (formData.children > 0) parts.push(`${formData.children} ${formData.children === 1 ? 'Child' : 'Children'}`)
+    if (formData.children > 0) {
+      const childrenText = `${formData.children} ${formData.children === 1 ? 'Child' : 'Children'}`
+      const agesText = formData.childrenAges.length > 0 ? ` (ages: ${formData.childrenAges.join(', ')})` : ''
+      parts.push(childrenText + agesText)
+    }
     return parts.join(', ') || '0 Travelers'
   }
 
@@ -77,6 +108,12 @@ function CreateTrip() {
       return
     }
 
+    // NEW: Validate that all children have ages set
+    if (formData.children > 0 && formData.childrenAges.length !== formData.children) {
+      toast.error('Please set ages for all children.', { duration: 1200 })
+      return
+    }
+
     setLoading(true)
 
     const FINAL_PROMPT = AI_PROMPT
@@ -84,6 +121,7 @@ function CreateTrip() {
       .replace('{totalDays}', totalDays)
       .replace('{adults}', formData.adults)
       .replace('{children}', formData.children)
+      .replace('{childrenAges}', formData.childrenAges.join(', '))
       .replace('{budgetMin}', formData.budgetMin)
       .replace('{budgetMax}', formData.budgetMax)
 
@@ -138,7 +176,7 @@ function CreateTrip() {
     }
   }
 
-  // Debounced place search (OpenStreetMap Nominatim)
+ 
   useEffect(() => {
     const t = setTimeout(() => {
       if ((inputValue || '').length > 2) {
@@ -161,7 +199,7 @@ function CreateTrip() {
       </p>
 
       <div className='mt-20 flex flex-col gap-10'>
-        {/* Location Selection */}
+       
         <div>
           <h2 className='text-xl my-3 font-medium'>
             What is your desired destination?
@@ -347,7 +385,7 @@ function CreateTrip() {
               <div className='flex items-center justify-between'>
                 <button
                   type='button'
-                  onClick={() => handleInputChange('children', Math.max(0, formData.children - 1))}
+                  onClick={() => handleChildrenChange(Math.max(0, formData.children - 1))}
                   className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
                   disabled={formData.children === 0}
                 >
@@ -358,7 +396,7 @@ function CreateTrip() {
                 
                 <button
                   type='button'
-                  onClick={() => handleInputChange('children', Math.min(10, formData.children + 1))}
+                  onClick={() => handleChildrenChange(Math.min(10, formData.children + 1))}
                   className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
                   disabled={formData.children === 10}
                 >
@@ -367,6 +405,40 @@ function CreateTrip() {
               </div>
             </div>
           </div>
+
+          {/* NEW: Children Ages Selection */}
+          {formData.children > 0 && (
+            <div className='mt-6 p-6 border rounded-lg bg-gradient-to-br from-purple-50 to-pink-50'>
+              <h3 className='font-semibold text-lg mb-4 flex items-center gap-2'>
+                <span>👶</span>
+                Ages of Children
+              </h3>
+              <p className='text-xs text-gray-600 mb-4'>
+                Please select the age of each child at the time of travel (0-17 years)
+              </p>
+              
+              <div className='grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4'>
+                {Array.from({ length: formData.children }).map((_, index) => (
+                  <div key={index} className='bg-white p-4 rounded-lg border border-purple-200'>
+                    <label className='block text-sm font-medium text-gray-700 mb-2'>
+                      Child {index + 1}
+                    </label>
+                    <select
+                      value={formData.childrenAges[index] ?? 5}
+                      onChange={(e) => handleChildAgeChange(index, Number(e.target.value))}
+                      className='w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500'
+                    >
+                      {Array.from({ length: 18 }, (_, i) => i).map((age) => (
+                        <option key={age} value={age}>
+                          {age} {age === 0 ? 'year (infant)' : age === 1 ? 'year' : 'years'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Total Travelers Summary */}
           <div className='mt-4 p-3 bg-purple-50 border border-purple-200 rounded-lg'>

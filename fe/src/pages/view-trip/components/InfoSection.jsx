@@ -1,15 +1,23 @@
 import React, { useEffect, useState } from 'react'
 import { format, parse, differenceInDays } from 'date-fns'
 
-// Function to get location image from Unsplash
+// Function to get location image from your backend SerpAPI
 async function getLocationImage(locationName) {
-  const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY;
   try {
     const response = await fetch(
-      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(locationName)}&client_id=${UNSPLASH_ACCESS_KEY}&per_page=1`
+      `/api/serp/images/search?q=${encodeURIComponent(locationName + ' landmark tourist destination')}`
     );
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
     const data = await response.json();
-    return data.results[0]?.urls?.regular || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=800';
+    
+    // Return the first image's original URL, or fallback to thumbnail, or default fallback
+    return data.images?.[0]?.original || 
+           data.images?.[0]?.thumbnail || 
+           'https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=800';
   } catch (error) {
     console.error('Error fetching location image:', error);
     return 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=800';
@@ -18,11 +26,21 @@ async function getLocationImage(locationName) {
 
 function InfoSection({ trip }) {
   const [imageUrl, setImageUrl] = useState('https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=800');
+  const [imageLoading, setImageLoading] = useState(true);
 
   useEffect(() => {
     const location = trip?.tripData?.Location || trip?.userSelection?.location;
     if (location) {
-      getLocationImage(location).then(setImageUrl);
+      setImageLoading(true);
+      getLocationImage(location)
+        .then(url => {
+          setImageUrl(url);
+          setImageLoading(false);
+        })
+        .catch(err => {
+          console.error('Failed to load location image:', err);
+          setImageLoading(false);
+        });
     }
   }, [trip]);
 
@@ -42,12 +60,26 @@ function InfoSection({ trip }) {
 
   return (
     <div>
-      {/* Hero Image */}
-      <img 
-        src={imageUrl} 
-        alt={location}
-        className='h-[340px] w-full object-cover rounded-xl mb-6'
-      />
+      {/* Hero Image with Loading State */}
+      <div className='h-[340px] w-full rounded-xl mb-6 overflow-hidden relative'>
+        {imageLoading && (
+          <div className='absolute inset-0 bg-gray-200 flex items-center justify-center'>
+            <div className='animate-spin rounded-full h-12 w-12 border-b-2 border-gray-400'></div>
+          </div>
+        )}
+        <img 
+          src={imageUrl} 
+          alt={location}
+          className={`h-full w-full object-cover transition-opacity duration-300 ${
+            imageLoading ? 'opacity-0' : 'opacity-100'
+          }`}
+          onLoad={() => setImageLoading(false)}
+          onError={(e) => {
+            e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=800';
+            setImageLoading(false);
+          }}
+        />
+      </div>
 
       {/* Trip Details Card */}
       <div className='bg-white p-6 rounded-xl shadow-md border'>

@@ -2,15 +2,32 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { format, parse } from 'date-fns';
 
-// Function to get image from Pixabay
+// Simple in-memory cache
+const imageCache = new Map();
+
+// Function to get image from your backend SerpAPI
 async function getPlaceImage(placeName) {
-  const API_KEY = import.meta.env.VITE_PIXABAY_API_KEY;
+  // Check cache first
+  if (imageCache.has(placeName)) {
+    return imageCache.get(placeName);
+  }
+
   try {
     const response = await fetch(
-      `https://pixabay.com/api/?key=${API_KEY}&q=${encodeURIComponent(placeName)}&image_type=photo&per_page=3`
+      `/api/serp/images/search?q=${encodeURIComponent(placeName)}`
     );
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
     const data = await response.json();
-    return data.hits[0]?.largeImageURL || '/placeholder.jpg';
+    const imageUrl = data.images?.[0]?.original || data.images?.[0]?.thumbnail || '/placeholder.jpg';
+    
+    // Cache the result
+    imageCache.set(placeName, imageUrl);
+    
+    return imageUrl;
   } catch (error) {
     console.error('Error fetching image:', error);
     return '/placeholder.jpg';
@@ -20,10 +37,24 @@ async function getPlaceImage(placeName) {
 // Component for each activity card
 function ActivityCard({ activity, location }) {
   const [imageUrl, setImageUrl] = useState('/placeholder.jpg');
+  const [imageLoading, setImageLoading] = useState(true);
+  const [imageError, setImageError] = useState(false);
 
   useEffect(() => {
     if (activity.PlaceName) {
-      getPlaceImage(activity.PlaceName).then(setImageUrl);
+      setImageLoading(true);
+      setImageError(false);
+      
+      getPlaceImage(activity.PlaceName)
+        .then(url => {
+          setImageUrl(url);
+          setImageLoading(false);
+        })
+        .catch(err => {
+          console.error('Failed to load image:', err);
+          setImageError(true);
+          setImageLoading(false);
+        });
     }
   }, [activity.PlaceName]);
 
@@ -33,14 +64,34 @@ function ActivityCard({ activity, location }) {
       target='_blank'
     >
       <div className='border rounded-xl p-3 mt-2 flex gap-5 hover:scale-105 transition-all hover:shadow-md cursor-pointer'>
-        <img 
-          src={imageUrl} 
-          alt={activity.PlaceName} 
-          className='w-[130px] h-[130px] rounded-xl object-cover'
-        />
-        <div>
+        <div className='w-[130px] h-[130px] rounded-xl overflow-hidden bg-gray-200 flex-shrink-0 relative'>
+          {imageLoading && (
+            <div className='absolute inset-0 flex items-center justify-center'>
+              <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400'></div>
+            </div>
+          )}
+          
+          {!imageLoading && imageError && (
+            <div className='absolute inset-0 flex items-center justify-center'>
+              <svg className='h-8 w-8 text-gray-400' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' />
+              </svg>
+            </div>
+          )}
+
+          {!imageLoading && !imageError && (
+            <img 
+              src={imageUrl} 
+              alt={activity.PlaceName} 
+              className='w-full h-full object-cover'
+              onError={() => setImageError(true)}
+            />
+          )}
+        </div>
+        
+        <div className='flex-1'>
           <h2 className='font-bold text-lg'>{activity.PlaceName}</h2>
-          <p className='text-sm text-gray-400 mt-1'>{activity.PlaceDetails}</p>
+          <p className='text-sm text-gray-400 mt-1 line-clamp-2'>{activity.PlaceDetails}</p>
           <h2 className='mt-2'>🎟️ {activity.TicketPricing}</h2>
           <h2 className='mt-2'>⏱️ {activity.TimeTravel}</h2>
         </div>

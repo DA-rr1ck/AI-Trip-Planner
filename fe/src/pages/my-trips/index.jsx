@@ -4,22 +4,35 @@ import { MoreVertical, Trash2, Pencil } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { collection, query, where, getDocs, deleteDoc, doc } from "firebase/firestore";
 import { db } from '@/service/firebaseConfig';
-import { createApi } from 'unsplash-js';
 import { toast } from 'sonner'
 import { useAuth } from '@/context/AuthContext'
 import { format, parse, differenceInDays } from 'date-fns'
 
-const unsplash = createApi({
-  accessKey: import.meta.env.VITE_UNSPLASH_ACCESS_KEY,
-});
+// Simple in-memory cache
+const imageCache = new Map();
 
 async function getPlaceImage(placeName) {
+  // Check cache first
+  if (imageCache.has(placeName)) {
+    return imageCache.get(placeName);
+  }
+
   try {
-    const result = await unsplash.search.getPhotos({ query: placeName, page: 1, perPage: 1 });
-    if (result?.response?.results?.length) {
-      return result.response.results[0]?.urls?.regular || '/placeholder.jpg';
+    const response = await fetch(
+      `/api/serp/images/search?q=${encodeURIComponent(placeName + ' landmark tourist destination')}`
+    );
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
     }
-    return '/placeholder.jpg';
+
+    const data = await response.json();
+    const imageUrl = data.images?.[0]?.original || data.images?.[0]?.thumbnail || '/placeholder.jpg';
+    
+    // Cache the result
+    imageCache.set(placeName, imageUrl);
+    
+    return imageUrl;
   } catch (error) {
     console.error('Error fetching image:', error);
     return '/placeholder.jpg';
@@ -28,11 +41,25 @@ async function getPlaceImage(placeName) {
 
 function TripCard({ trip, onDelete }) {
   const [imageUrl, setImageUrl] = useState('/placeholder.jpg');
+  const [imageLoading, setImageLoading] = useState(true);
+  const [imageError, setImageError] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
     if (trip.userSelection?.location) {
-      getPlaceImage(trip.userSelection.location).then(setImageUrl);
+      setImageLoading(true);
+      setImageError(false);
+      
+      getPlaceImage(trip.userSelection.location)
+        .then(url => {
+          setImageUrl(url);
+          setImageLoading(false);
+        })
+        .catch(err => {
+          console.error('Failed to load image:', err);
+          setImageError(true);
+          setImageLoading(false);
+        });
     }
   }, [trip.userSelection?.location]);
 
@@ -101,7 +128,31 @@ function TripCard({ trip, onDelete }) {
         </PopoverContent>
       </Popover>
 
-      <img src={imageUrl} alt={trip.userSelection?.location} className='h-[220px] w-full object-cover' />
+      {/* Trip Image with Loading State */}
+      <div className='relative h-[220px] w-full bg-gray-200'>
+        {imageLoading && (
+          <div className='absolute inset-0 flex items-center justify-center'>
+            <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400'></div>
+          </div>
+        )}
+        
+        {!imageLoading && imageError && (
+          <div className='absolute inset-0 flex items-center justify-center'>
+            <svg className='h-12 w-12 text-gray-400' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' />
+            </svg>
+          </div>
+        )}
+
+        {!imageLoading && !imageError && (
+          <img 
+            src={imageUrl} 
+            alt={trip.userSelection?.location} 
+            className='h-full w-full object-cover'
+            onError={() => setImageError(true)}
+          />
+        )}
+      </div>
 
       <div className='p-3'>
         <h3 className='font-bold text-lg'>{trip.userSelection?.location}</h3>
