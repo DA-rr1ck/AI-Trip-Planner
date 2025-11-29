@@ -136,6 +136,222 @@ function extractRoomsFromHotelDetails(data) {
 }
 
 /**
+ * Extract hotel details (amenities, description, policies, reviews) from SerpAPI response.
+ */
+function extractHotelDetails(data) {
+    // amenities: array of strings like ["Free Wi-Fi", "Pool", ...]
+    const amenities = Array.isArray(data.amenities) ? data.amenities : [];
+
+    // Description paragraphs
+    const descriptionParagraphs = [];
+    if (data.description) {
+        descriptionParagraphs.push(data.description);
+    }
+
+    // Essential info (overall_rating, reviews count, etc.)
+    const overallRating = data.overall_rating || null;
+    const reviewsCount = data.reviews || null;
+
+    // Reviews breakdown by star (if available)
+    const ratingBreakdown = {};
+    if (data.reviews_breakdown && Array.isArray(data.reviews_breakdown)) {
+        data.reviews_breakdown.forEach((item) => {
+            // item looks like { stars: 5, count: 123 } or { name: "5", count: 123 }
+            const stars = item.stars || parseInt(item.name, 10);
+            if (stars >= 1 && stars <= 5) {
+                ratingBreakdown[stars] = item.count || 0;
+            }
+        });
+    }
+
+    // Typical prices
+    const typicalPrices = data.typical_prices || null;
+
+    // Location details
+    const locationInfo = {
+        address: data.address || null,
+        gpsCoordinates: data.gps_coordinates || null,
+        link: data.link || null,
+    };
+
+    // Hotel class (stars)
+    const hotelClass = data.hotel_class || null;
+
+    // Check-in/Check-out times
+    const checkInTime = data.check_in_time || null;
+    const checkOutTime = data.check_out_time || null;
+
+    // Number of rooms
+    const numberOfRooms = data.rooms || null;
+
+    // Phone
+    const phone = data.phone || null;
+
+    // Extract user reviews from Google hotel search
+    // These come from featured_reviews or reviews array
+    const userReviews = [];
+    const reviewSources = [
+        data.featured_reviews,
+        data.reviews_by_category?.all,
+        data.extracted_reviews,
+    ].filter(Boolean);
+
+    for (const source of reviewSources) {
+        if (Array.isArray(source)) {
+            source.forEach((r) => {
+                userReviews.push({
+                    user: r.author || r.user || r.username || 'Anonymous',
+                    date: r.date || r.published_date || r.time || null,
+                    rating: r.rating || null,
+                    text: r.snippet || r.text || r.description || r.content || '',
+                    source: r.source || 'Google',
+                });
+            });
+        }
+        // Limit to avoid too many
+        if (userReviews.length >= 10) break;
+    }
+
+    // Property policies: try to extract from structured data if available
+    const policies = {
+        checkInOut: checkInTime && checkOutTime 
+            ? `Check-in: ${checkInTime}, Check-out: ${checkOutTime}`
+            : checkInTime 
+                ? `Check-in: ${checkInTime}`
+                : checkOutTime 
+                    ? `Check-out: ${checkOutTime}`
+                    : null,
+        childPolicies: null,
+        cribsAndExtraBeds: null,
+        breakfast: null,
+        depositPolicy: null,
+        pets: null,
+        serviceAnimals: null,
+        ageRequirements: null,
+        paymentMethods: null,
+    };
+
+    // Try to extract policies from data if they exist in other keys
+    if (data.about && Array.isArray(data.about)) {
+        data.about.forEach((item) => {
+            const title = (item.title || '').toLowerCase();
+            const content = item.contents || item.content || null;
+            
+            if (title.includes('child') || title.includes('kid')) {
+                policies.childPolicies = content;
+            } else if (title.includes('pet')) {
+                policies.pets = content;
+            } else if (title.includes('breakfast') || title.includes('meal')) {
+                policies.breakfast = content;
+            } else if (title.includes('payment') || title.includes('card')) {
+                policies.paymentMethods = content;
+            } else if (title.includes('deposit')) {
+                policies.depositPolicy = content;
+            }
+        });
+    }
+
+    return {
+        amenities,
+        descriptionParagraphs,
+        overallRating,
+        reviewsCount,
+        ratingBreakdown,
+        typicalPrices,
+        locationInfo,
+        hotelClass,
+        checkInTime,
+        checkOutTime,
+        numberOfRooms,
+        phone,
+        userReviews,
+        policies,
+    };
+}
+
+/**
+ * GET /api/serp/hotel/details
+ *
+ * Query params:
+ *  - q               : search query (hotel name + city, etc.)  [REQUIRED]
+ *  - check_in_date   : YYYY-MM-DD [REQUIRED]
+ *  - check_out_date  : YYYY-MM-DD [REQUIRED]
+ *  - gl              : country, e.g. "vn"
+ *  - hl              : language, e.g. "en"
+ *  - currency        : e.g. "USD"
+ *
+ * Returns: hotel details including amenities, description, policies, reviews
+ */
+router.get('/hotel/details', async (req, res) => {
+    if (!SERPAPI_KEY) {
+        return res
+            .status(500)
+            .json({ error: 'Missing SERPAPI_KEY in environment variables' });
+    }
+
+    if (!req.query.q) {
+        return res
+            .status(400)
+            .json({ error: 'Query parameter "q" (search query) is required' });
+    }
+
+    try {
+        const baseParams = buildBaseParams(req.query);
+
+        // First call: search to get property token
+        const initialResp = await axios.get(SERPAPI_ENDPOINT, {
+            params: baseParams,
+        });
+        let data = initialResp.data || {};
+
+        // If we have properties[], do second call using property_token
+        if (Array.isArray(data.properties) && data.properties.length > 0) {
+            const firstProperty = data.properties[0];
+            const propertyToken =
+                firstProperty.property_token || firstProperty.token || null;
+
+            if (propertyToken) {
+                const detailsParams = {
+                    ...baseParams,
+                    property_token: propertyToken,
+                    type: 'property_details',
+                };
+
+                const detailsResp = await axios.get(SERPAPI_ENDPOINT, {
+                    params: detailsParams,
+                });
+                data = detailsResp.data || {};
+            }
+        }
+
+        // Extract details from the response
+        const hotelDetails = extractHotelDetails(data);
+
+        // Also include some raw data for debugging
+        return res.json({
+            query: { ...req.query },
+            ...hotelDetails,
+            // Include images if available
+            images: data.images || [],
+        });
+    } catch (err) {
+        console.error(
+            'Error fetching hotel details from SerpApi:',
+            err?.response?.data || err.message
+        );
+
+        const status = err.response?.status || 500;
+        return res.status(status).json({
+            error: 'Failed to fetch hotel details from SerpApi',
+            details:
+                err.response?.data?.error ||
+                err.response?.data?.error_message ||
+                err.message,
+        });
+    }
+});
+
+/**
  * GET /api/serp/hotel/rooms
  *
  * Query params:

@@ -9,7 +9,7 @@ export async function generateTrip(prompt) {
     responseMimeType: "application/json"
   };
 
-  const model = 'gemini-2.0-flash';
+  const model = 'gemini-2.5-pro';
   const contents = [
     {
       role: 'user',
