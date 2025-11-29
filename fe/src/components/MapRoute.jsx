@@ -2,9 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import 'leaflet-routing-machine/dist/leaflet-routing-machine.css'
-import 'leaflet-routing-machine'
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import { Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 
 // Fix Leaflet default marker icon issue
 delete L.Icon.Default.prototype._getIconUrl
@@ -17,217 +15,211 @@ L.Icon.Default.mergeOptions({
 function MapRoute({ activities, locationName, onRouteCalculated }) {
   const mapRef = useRef(null)
   const mapInstance = useRef(null)
-  const routingControl = useRef(null)
   const [routeMode, setRouteMode] = useState('car')
+  const [loading, setLoading] = useState(true)
+  const [routeLines, setRouteLines] = useState([])
+  const [markers, setMarkers] = useState([])
   const [showDetails, setShowDetails] = useState(false)
   const [detailedInstructions, setDetailedInstructions] = useState([])
 
+  // Initialize map only once
   useEffect(() => {
-    if (!activities || activities.length === 0) return
+    if (!activities || activities.length === 0 || !mapRef.current || mapInstance.current) return
 
-    if (!mapInstance.current && mapRef.current) {
-      mapInstance.current = L.map(mapRef.current).setView(
-        [activities[0].GeoCoordinates.Latitude, activities[0].GeoCoordinates.Longitude],
-        13
-      )
-
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '© OpenStreetMap contributors'
-      }).addTo(mapInstance.current)
-    }
-
-    if (mapInstance.current) {
-      updateRoute()
-    }
-
-    return () => {
-      if (routingControl.current && mapInstance.current) {
-        mapInstance.current.removeControl(routingControl.current)
-        routingControl.current = null
-      }
-    }
-  }, [activities, routeMode])
-
-  const updateRoute = () => {
-    if (!mapInstance.current) return
-
-    if (routingControl.current) {
-      mapInstance.current.removeControl(routingControl.current)
-    }
-
-    const waypoints = activities.map(activity =>
-      L.latLng(activity.GeoCoordinates.Latitude, activity.GeoCoordinates.Longitude)
+    mapInstance.current = L.map(mapRef.current).setView(
+      [activities[0].GeoCoordinates.Latitude, activities[0].GeoCoordinates.Longitude],
+      13
     )
 
-    // ENHANCED: Get service URL and profile based on mode
-    let serviceUrl = ''
-    let profile = 'driving' // OSRM profile
-    
-    if (routeMode === 'car') {
-      serviceUrl = 'https://router.project-osrm.org/route/v1'
-      profile = 'driving'
-    } else if (routeMode === 'bike') {
-      serviceUrl = 'https://routing.openstreetmap.de/routed-bike/route/v1'
-      profile = 'cycling'
-    } else if (routeMode === 'walk') {
-      serviceUrl = 'https://routing.openstreetmap.de/routed-foot/route/v1'
-      profile = 'foot'
-    }
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(mapInstance.current)
 
-    routingControl.current = L.Routing.control({
-      waypoints: waypoints,
-      router: L.Routing.osrmv1({
-        serviceUrl: serviceUrl,
-        profile: profile, // Specify the profile
-      }),
-      routeWhileDragging: false,
-      addWaypoints: false,
-      draggableWaypoints: false,
-      fitSelectedRoutes: true,
-      showAlternatives: false,
-      lineOptions: {
-        styles: [
+    return () => {
+      if (mapInstance.current) {
+        mapInstance.current.remove()
+        mapInstance.current = null
+      }
+    }
+  }, [])
+
+  // Fetch routes when activities or mode changes
+  useEffect(() => {
+    if (!mapInstance.current || !activities || activities.length === 0) return
+    fetchRoutes()
+  }, [activities, routeMode])
+
+  const fetchRoutes = async () => {
+    setLoading(true)
+    
+    // Clear existing markers and routes
+    markers.forEach(marker => marker.remove())
+    routeLines.forEach(line => line.remove())
+
+    try {
+      const API_KEY = import.meta.env.VITE_OPENROUTE_API_KEY
+
+      if (!API_KEY) {
+        throw new Error('OpenRouteService API key is missing')
+      }
+
+      // Get profile based on mode
+      const profileMap = {
+        car: 'driving-car',
+        bike: 'cycling-regular',
+        walk: 'foot-walking'
+      }
+      const profile = profileMap[routeMode]
+
+      const newMarkers = []
+      const newRouteLines = []
+      const segments = []
+      const instructions = []
+
+      // Create markers
+      activities.forEach((activity, index) => {
+        const marker = L.marker(
+          [activity.GeoCoordinates.Latitude, activity.GeoCoordinates.Longitude],
           {
-            color: routeMode === 'car' ? '#4F46E5' : routeMode === 'bike' ? '#10B981' : '#F59E0B',
-            opacity: 0.7,
-            weight: 6
+            icon: L.divIcon({
+              className: 'custom-marker',
+              html: `<div style="
+                background-color: ${routeMode === 'car' ? '#4F46E5' : routeMode === 'bike' ? '#10B981' : '#F59E0B'};
+                color: white;
+                border-radius: 50%;
+                width: 32px;
+                height: 32px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-weight: bold;
+                border: 3px solid white;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+              ">${index + 1}</div>`,
+              iconSize: [32, 32],
+              iconAnchor: [16, 16]
+            })
           }
+        ).addTo(mapInstance.current)
+
+        marker.bindPopup(`
+          <div style="min-width: 200px;">
+            <h3 style="margin: 0 0 8px 0; font-weight: bold;">${activity.PlaceName}</h3>
+            <p style="margin: 0 0 8px 0; font-size: 13px; color: #666;">${activity.PlaceDetails}</p>
+            <div style="font-size: 12px; color: #888;">
+              <div>💰 ${activity.TicketPricing}</div>
+              <div>⏱️ ${activity.Duration || activity.TimeTravel || 'N/A'}</div>
+            </div>
+          </div>
+        `)
+
+        newMarkers.push(marker)
+      })
+
+      // Fetch routes for each segment
+      for (let i = 0; i < activities.length - 1; i++) {
+        const start = [
+          activities[i].GeoCoordinates.Longitude,
+          activities[i].GeoCoordinates.Latitude
         ]
-      },
-      createMarker: function(i, waypoint, n) {
-        const activity = activities[i]
-        const marker = L.marker(waypoint.latLng, {
-          draggable: false,
-          icon: L.divIcon({
-            className: 'custom-marker',
-            html: `<div style="
-              background-color: ${routeMode === 'car' ? '#4F46E5' : routeMode === 'bike' ? '#10B981' : '#F59E0B'};
-              color: white;
-              border-radius: 50%;
-              width: 32px;
-              height: 32px;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              font-weight: bold;
-              border: 3px solid white;
-              box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-            ">${i + 1}</div>`,
-            iconSize: [32, 32],
-            iconAnchor: [16, 16]
+        const end = [
+          activities[i + 1].GeoCoordinates.Longitude,
+          activities[i + 1].GeoCoordinates.Latitude
+        ]
+
+        // Use POST request (more reliable than GET for OpenRouteService)
+        const url = `https://api.openrouteservice.org/v2/directions/${profile}/geojson`
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json, application/geo+json',
+            'Content-Type': 'application/json',
+            'Authorization': API_KEY
+          },
+          body: JSON.stringify({
+            coordinates: [start, end]
           })
         })
 
-        if (activity) {
-          marker.bindPopup(`
-            <div style="min-width: 200px;">
-              <h3 style="margin: 0 0 8px 0; font-weight: bold;">${activity.PlaceName}</h3>
-              <p style="margin: 0 0 8px 0; font-size: 13px; color: #666;">${activity.PlaceDetails}</p>
-              <div style="font-size: 12px; color: #888;">
-                <div>💰 ${activity.TicketPricing}</div>
-                <div>⏱️ ${activity.TimeTravel}</div>
-              </div>
-            </div>
-          `)
+        if (!response.ok) {
+          throw new Error(`API request failed: ${response.status}`)
         }
 
-        return marker
-      }
-    })
-    .on('routesfound', function(e) {
-      const routes = e.routes
-      if (routes && routes.length > 0) {
-        const route = routes[0]
-        const segments = []
-        const instructions = []
-        
-        const waypointIndices = route.waypointIndices || []
-        
-        // Calculate segments and collect detailed instructions
-        for (let i = 0; i < activities.length - 1; i++) {
-          const startIdx = waypointIndices[i] || 0
-          const endIdx = waypointIndices[i + 1] || route.coordinates.length - 1
+        const data = await response.json()
+
+        if (data.features && data.features.length > 0) {
+          const route = data.features[0]
+          const segment = route.properties.segments[0]
           
-          let legDistance = 0
-          let legDuration = 0
-          const legInstructions = []
-          
-          // Sum up distance and collect instructions for this leg
-          for (let coordIdx = startIdx; coordIdx < endIdx; coordIdx++) {
-            if (route.coordinates[coordIdx + 1]) {
-              // Calculate distance
-              const lat1 = route.coordinates[coordIdx].lat
-              const lon1 = route.coordinates[coordIdx].lng
-              const lat2 = route.coordinates[coordIdx + 1].lat
-              const lon2 = route.coordinates[coordIdx + 1].lng
-              
-              const R = 6371
-              const dLat = (lat2 - lat1) * Math.PI / 180
-              const dLon = (lon2 - lon1) * Math.PI / 180
-              const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                       Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                       Math.sin(dLon/2) * Math.sin(dLon/2)
-              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
-              const distance = R * c * 1000
-              
-              legDistance += distance
-            }
-            
-            // Collect instruction for this coordinate index
-            const instruction = route.instructions.find(inst => inst.index === coordIdx)
-            if (instruction) {
-              legInstructions.push(instruction)
-              legDuration += instruction.time || 0
-            }
-          }
-          
-          // Fallback duration estimation
-          if (legDuration === 0 && legDistance > 0) {
-            const speedKmh = routeMode === 'car' ? 50 : routeMode === 'bike' ? 15 : 5
-            legDuration = (legDistance / 1000) / speedKmh * 3600
-          }
-          
+          // Convert coordinates from [lng, lat] to [lat, lng]
+          const coords = route.geometry.coordinates.map(coord => [coord[1], coord[0]])
+
+          // Draw route line
+          const routeLine = L.polyline(coords, {
+            color: routeMode === 'car' ? '#4F46E5' : routeMode === 'bike' ? '#10B981' : '#F59E0B',
+            weight: 6,
+            opacity: 0.7
+          }).addTo(mapInstance.current)
+
+          newRouteLines.push(routeLine)
+
+          // Store segment info
+          const distance = (segment.distance / 1000).toFixed(2)
+          const duration = Math.round(segment.duration / 60)
+
           segments.push({
             fromIndex: i,
             toIndex: i + 1,
-            distance: (legDistance / 1000).toFixed(2),
-            duration: Math.round(legDuration / 60),
+            distance: distance,
+            duration: duration,
             mode: routeMode
           })
-          
+
           // Store detailed instructions
           instructions.push({
             from: activities[i].PlaceName,
             to: activities[i + 1].PlaceName,
-            steps: legInstructions.map(inst => ({
-              text: inst.text || 'Continue',
-              distance: ((inst.distance || 0) / 1000).toFixed(2),
-              time: Math.round((inst.time || 0) / 60),
-              direction: inst.direction || ''
+            steps: segment.steps.map(step => ({
+              text: step.instruction,
+              distance: (step.distance / 1000).toFixed(2),
+              time: Math.round(step.duration / 60),
+              direction: step.name || ''
             }))
           })
         }
-        
-        console.log('Calculated segments:', segments)
-        console.log('Detailed instructions:', instructions)
-        
-        if (onRouteCalculated) {
-          onRouteCalculated(segments, instructions) // Pass BOTH
-        }
       }
-    })
-    .addTo(mapInstance.current)
 
-    if (waypoints.length > 0) {
-      const bounds = L.latLngBounds(waypoints)
-      mapInstance.current.fitBounds(bounds, { padding: [50, 50] })
+      setMarkers(newMarkers)
+      setRouteLines(newRouteLines)
+      setDetailedInstructions(instructions)
+
+      // Fit map to show all markers
+      if (activities.length > 0) {
+        const bounds = L.latLngBounds(
+          activities.map(a => [a.GeoCoordinates.Latitude, a.GeoCoordinates.Longitude])
+        )
+        mapInstance.current.fitBounds(bounds, { padding: [50, 50] })
+      }
+
+      console.log('Calculated segments:', segments)
+      console.log('Detailed instructions:', instructions)
+
+      if (onRouteCalculated) {
+        onRouteCalculated(segments, instructions)
+      }
+
+    } catch (error) {
+      console.error('Error fetching routes:', error)
+    } finally {
+      setLoading(false)
     }
   }
 
   const handleModeChange = (mode) => {
     setRouteMode(mode)
-    setShowDetails(false) // Close details when changing mode
+    setShowDetails(false)
   }
 
   const getModeLabel = () => {
@@ -235,6 +227,8 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
     if (routeMode === 'bike') return 'cycling'
     return 'walking'
   }
+
+  if (!activities || activities.length === 0) return null
 
   return (
     <div className='mt-4'>
@@ -244,48 +238,57 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
         <div className='flex gap-2 mb-3'>
           <button
             onClick={() => handleModeChange('car')}
+            disabled={loading}
             className={`px-4 py-2 rounded-lg border transition-all ${
               routeMode === 'car'
                 ? 'bg-indigo-600 text-white border-indigo-600'
                 : 'bg-white text-gray-700 border-gray-300 hover:border-indigo-400'
-            }`}
+            } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             🚗 Car
           </button>
           <button
             onClick={() => handleModeChange('bike')}
+            disabled={loading}
             className={`px-4 py-2 rounded-lg border transition-all ${
               routeMode === 'bike'
                 ? 'bg-green-600 text-white border-green-600'
                 : 'bg-white text-gray-700 border-gray-300 hover:border-green-400'
-            }`}
+            } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             🚴 Bicycle
           </button>
           <button
             onClick={() => handleModeChange('walk')}
+            disabled={loading}
             className={`px-4 py-2 rounded-lg border transition-all ${
               routeMode === 'walk'
                 ? 'bg-amber-600 text-white border-amber-600'
                 : 'bg-white text-gray-700 border-gray-300 hover:border-amber-400'
-            }`}
+            } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             🚶 Walking
           </button>
         </div>
       </div>
 
-      <div 
-        ref={mapRef} 
-        className='w-full h-[400px] rounded-lg border border-gray-300 shadow-sm'
-      />
+      <div className='relative'>
+        <div 
+          ref={mapRef} 
+          className='w-full h-[400px] rounded-lg border border-gray-300 shadow-sm'
+        />
+        {loading && (
+          <div className='absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center rounded-lg'>
+            <Loader2 className='h-8 w-8 animate-spin text-blue-600' />
+          </div>
+        )}
+      </div>
       
       <div className='mt-3 flex items-center justify-between'>
         <p className='text-xs text-gray-500'>
           💡 Click on numbered markers to see activity details
         </p>
         
-        {/* Show detailed instructions button */}
         {detailedInstructions.length > 0 && (
           <button
             onClick={() => setShowDetails(!showDetails)}
@@ -304,7 +307,6 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
         )}
       </div>
 
-      {/* Detailed turn-by-turn instructions */}
       {showDetails && detailedInstructions.length > 0 && (
         <div className='mt-4 space-y-4 p-4 bg-gray-50 rounded-lg border'>
           <h4 className='font-semibold text-sm'>

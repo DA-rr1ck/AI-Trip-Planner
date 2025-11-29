@@ -1,4 +1,3 @@
-// fe/src/pages/edit-trip/components/TripOverview.jsx
 import React from 'react'
 import { format, parse, differenceInDays } from 'date-fns'
 import DatePicker from 'react-datepicker'
@@ -17,6 +16,32 @@ function TripOverview({
   regeneratingAll,
   getTotalDays
 }) {
+  // Handle children count change with age array management
+  const handleChildrenChange = (newCount) => {
+    const currentCount = editedSelection.children || 0
+    const currentAges = editedSelection.childrenAges || []
+    
+    if (newCount > currentCount) {
+      // Adding children - add default ages
+      const newAges = [...currentAges]
+      for (let i = currentCount; i < newCount; i++) {
+        newAges.push(5) // Default age
+      }
+      setEditedSelection({ ...editedSelection, children: newCount, childrenAges: newAges })
+    } else {
+      // Removing children - trim ages array
+      const newAges = currentAges.slice(0, newCount)
+      setEditedSelection({ ...editedSelection, children: newCount, childrenAges: newAges })
+    }
+  }
+
+  // Handle individual child age change
+  const handleChildAgeChange = (index, age) => {
+    const newAges = [...(editedSelection.childrenAges || [])]
+    newAges[index] = age
+    setEditedSelection({ ...editedSelection, childrenAges: newAges })
+  }
+
   return (
     <div className='mb-8 p-6 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl border border-purple-200'>
       <div className='flex justify-between items-start mb-2'>
@@ -184,7 +209,7 @@ function TripOverview({
               <div className='flex items-center justify-between'>
                 <button
                   type='button'
-                  onClick={() => setEditedSelection({ ...editedSelection, children: Math.max(0, editedSelection.children - 1) })}
+                  onClick={() => handleChildrenChange(Math.max(0, editedSelection.children - 1))}
                   className='w-8 h-8 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
                   disabled={editedSelection.children === 0}
                 >
@@ -195,7 +220,7 @@ function TripOverview({
                 
                 <button
                   type='button'
-                  onClick={() => setEditedSelection({ ...editedSelection, children: Math.min(10, editedSelection.children + 1) })}
+                  onClick={() => handleChildrenChange(Math.min(10, editedSelection.children + 1))}
                   className='w-8 h-8 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
                   disabled={editedSelection.children === 10}
                 >
@@ -205,10 +230,44 @@ function TripOverview({
             </div>
           </div>
 
+          {/* Children Ages Selection */}
+          {editedSelection.children > 0 && (
+            <div className='p-4 border rounded-lg bg-gradient-to-br from-purple-50 to-pink-50'>
+              <h3 className='font-semibold mb-3 flex items-center gap-2'>
+                <span>👶</span>
+                Ages of Children
+              </h3>
+              <p className='text-xs text-gray-600 mb-3'>
+                Please select the age of each child at the time of travel (0-17 years)
+              </p>
+              
+              <div className='grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3'>
+                {Array.from({ length: editedSelection.children }).map((_, index) => (
+                  <div key={index} className='bg-white p-3 rounded-lg border border-purple-200'>
+                    <label className='block text-xs font-medium text-gray-700 mb-1'>
+                      Child {index + 1}
+                    </label>
+                    <select
+                      value={editedSelection.childrenAges?.[index] ?? 5}
+                      onChange={(e) => handleChildAgeChange(index, Number(e.target.value))}
+                      className='w-full px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm'
+                    >
+                      {Array.from({ length: 18 }, (_, i) => i).map((age) => (
+                        <option key={age} value={age}>
+                          {age} {age === 0 ? 'year' : age === 1 ? 'year' : 'years'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Total Summary */}
           <div className='p-3 bg-purple-100 border border-purple-300 rounded-lg'>
             <p className='text-sm text-purple-900 text-center'>
-              👥 Total: <span className='font-semibold'>{formatTravelers(editedSelection.adults, editedSelection.children)}</span>
+              👥 Total: <span className='font-semibold'>{formatTravelers(editedSelection.adults, editedSelection.children, editedSelection.childrenAges)}</span>
             </p>
           </div>
 
@@ -216,7 +275,7 @@ function TripOverview({
           <div className='flex gap-2'>
             <Button 
               onClick={onRegenerateAll}
-              disabled={regeneratingAll}
+              disabled={regeneratingAll || (editedSelection.children > 0 && (!editedSelection.childrenAges || editedSelection.childrenAges.length !== editedSelection.children))}
             >
               {regeneratingAll ? (
                 <>

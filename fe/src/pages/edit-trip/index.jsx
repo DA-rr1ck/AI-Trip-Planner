@@ -172,16 +172,42 @@ function EditTrip() {
 
       const travelPlan = newTripData[0]?.TravelPlan || newTripData.TravelPlan || newTripData
 
+      // Add IDs to activities in time-slotted structure
       const itineraryWithDates = {}
       Object.entries(travelPlan.Itinerary).forEach(([dayKey, dayData], index) => {
         const actualDate = addDays(editedSelection.startDate, index)
         const dateKey = format(actualDate, 'yyyy-MM-dd')
+        
         itineraryWithDates[dateKey] = {
           ...dayData,
-          Activities: dayData.Activities.map((activity, idx) => ({
-            ...activity,
-            id: `${dateKey}-activity-${idx}-${Date.now()}-${Math.random()}`,
-          })),
+          Morning: dayData.Morning ? {
+            ...dayData.Morning,
+            Activities: (dayData.Morning.Activities || []).map((activity, idx) => ({
+              ...activity,
+              id: `${dateKey}-morning-${idx}-${Date.now()}-${Math.random()}`,
+            }))
+          } : undefined,
+          Lunch: dayData.Lunch ? {
+            ...dayData.Lunch,
+            Activity: dayData.Lunch.Activity ? {
+              ...dayData.Lunch.Activity,
+              id: `${dateKey}-lunch-${Date.now()}-${Math.random()}`,
+            } : undefined
+          } : undefined,
+          Afternoon: dayData.Afternoon ? {
+            ...dayData.Afternoon,
+            Activities: (dayData.Afternoon.Activities || []).map((activity, idx) => ({
+              ...activity,
+              id: `${dateKey}-afternoon-${idx}-${Date.now()}-${Math.random()}`,
+            }))
+          } : undefined,
+          Evening: dayData.Evening ? {
+            ...dayData.Evening,
+            Activities: (dayData.Evening.Activities || []).map((activity, idx) => ({
+              ...activity,
+              id: `${dateKey}-evening-${idx}-${Date.now()}-${Math.random()}`,
+            }))
+          } : undefined,
         }
       })
 
@@ -246,7 +272,7 @@ function EditTrip() {
     }
   }
 
-  // NEW: Handle per-day regeneration
+  // Handle per-day regeneration
   const handleRegenerateSingleDay = async (dateKey, preference) => {
     try {
       const dayNumber = Object.keys(tripData.tripData.Itinerary).sort().indexOf(dateKey) + 1
@@ -259,11 +285,38 @@ function EditTrip() {
         dayNumber
       )
 
-      // Add date-specific IDs to activities
-      const activitiesWithIds = newDayData.Activities.map((activity, idx) => ({
-        ...activity,
-        id: `${dateKey}-activity-${idx}-${Date.now()}-${Math.random()}`,
-      }))
+      // Add date-specific IDs to activities in time slots
+      const dayDataWithIds = {
+        ...newDayData,
+        Morning: newDayData.Morning ? {
+          ...newDayData.Morning,
+          Activities: (newDayData.Morning.Activities || []).map((activity, idx) => ({
+            ...activity,
+            id: `${dateKey}-morning-${idx}-${Date.now()}-${Math.random()}`,
+          }))
+        } : undefined,
+        Lunch: newDayData.Lunch ? {
+          ...newDayData.Lunch,
+          Activity: newDayData.Lunch.Activity ? {
+            ...newDayData.Lunch.Activity,
+            id: `${dateKey}-lunch-${Date.now()}-${Math.random()}`,
+          } : undefined
+        } : undefined,
+        Afternoon: newDayData.Afternoon ? {
+          ...newDayData.Afternoon,
+          Activities: (newDayData.Afternoon.Activities || []).map((activity, idx) => ({
+            ...activity,
+            id: `${dateKey}-afternoon-${idx}-${Date.now()}-${Math.random()}`,
+          }))
+        } : undefined,
+        Evening: newDayData.Evening ? {
+          ...newDayData.Evening,
+          Activities: (newDayData.Evening.Activities || []).map((activity, idx) => ({
+            ...activity,
+            id: `${dateKey}-evening-${idx}-${Date.now()}-${Math.random()}`,
+          }))
+        } : undefined,
+      }
 
       const updatedTripData = {
         ...tripData,
@@ -271,10 +324,7 @@ function EditTrip() {
           ...tripData.tripData,
           Itinerary: {
             ...tripData.tripData.Itinerary,
-            [dateKey]: {
-              ...newDayData,
-              Activities: activitiesWithIds,
-            },
+            [dateKey]: dayDataWithIds,
           },
         },
       }
@@ -316,9 +366,37 @@ function EditTrip() {
   }
 
   const handleRemoveActivity = (dateKey, activityId) => {
-    const updatedActivities = tripData.tripData.Itinerary[dateKey].Activities.filter(
-      a => a.id !== activityId
-    )
+    const dayData = tripData.tripData.Itinerary[dateKey]
+    const newDayData = { ...dayData }
+
+    // Remove from Morning
+    if (dayData.Morning?.Activities) {
+      const filtered = dayData.Morning.Activities.filter(a => a.id !== activityId)
+      if (filtered.length !== dayData.Morning.Activities.length) {
+        newDayData.Morning = { ...dayData.Morning, Activities: filtered }
+      }
+    }
+
+    // Remove from Lunch
+    if (dayData.Lunch?.Activity?.id === activityId) {
+      newDayData.Lunch = { ...dayData.Lunch, Activity: undefined }
+    }
+
+    // Remove from Afternoon
+    if (dayData.Afternoon?.Activities) {
+      const filtered = dayData.Afternoon.Activities.filter(a => a.id !== activityId)
+      if (filtered.length !== dayData.Afternoon.Activities.length) {
+        newDayData.Afternoon = { ...dayData.Afternoon, Activities: filtered }
+      }
+    }
+
+    // Remove from Evening
+    if (dayData.Evening?.Activities) {
+      const filtered = dayData.Evening.Activities.filter(a => a.id !== activityId)
+      if (filtered.length !== dayData.Evening.Activities.length) {
+        newDayData.Evening = { ...dayData.Evening, Activities: filtered }
+      }
+    }
 
     const updatedTripData = {
       ...tripData,
@@ -326,10 +404,7 @@ function EditTrip() {
         ...tripData.tripData,
         Itinerary: {
           ...tripData.tripData.Itinerary,
-          [dateKey]: {
-            ...tripData.tripData.Itinerary[dateKey],
-            Activities: updatedActivities,
-          },
+          [dateKey]: newDayData,
         },
       },
     }
@@ -351,8 +426,17 @@ function EditTrip() {
       return
     }
 
+    // Check for empty days based on time slot structure
     const emptyDays = Object.entries(tripData.tripData.Itinerary)
-      .filter(([_, dayData]) => dayData.Activities.length === 0)
+      .filter(([_, dayData]) => {
+        const morningCount = dayData.Morning?.Activities?.length || 0
+        const lunchCount = dayData.Lunch?.Activity ? 1 : 0
+        const afternoonCount = dayData.Afternoon?.Activities?.length || 0
+        const eveningCount = dayData.Evening?.Activities?.length || 0
+        
+        const totalActivities = morningCount + lunchCount + afternoonCount + eveningCount
+        return totalActivities === 0
+      })
       .map(([dateKey]) => format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'MMMM d'))
 
     if (emptyDays.length > 0) {
@@ -367,11 +451,27 @@ function EditTrip() {
       const isRealId = rawTripData?.id && !existingTripId.startsWith('temp_')
       const docId = isRealId ? rawTripData.id : Date.now().toString()
 
+      // Remove IDs from all activities in time slots
       const itineraryWithoutIds = {}
       Object.entries(tripData.tripData.Itinerary).forEach(([dateKey, dayData]) => {
         itineraryWithoutIds[dateKey] = {
           ...dayData,
-          Activities: (dayData.Activities || []).map(({ id, ...activity }) => activity),
+          Morning: dayData.Morning ? {
+            ...dayData.Morning,
+            Activities: (dayData.Morning.Activities || []).map(({ id, ...activity }) => activity),
+          } : undefined,
+          Lunch: dayData.Lunch ? {
+            ...dayData.Lunch,
+            Activity: dayData.Lunch.Activity ? (({ id, ...activity }) => activity)(dayData.Lunch.Activity) : undefined,
+          } : undefined,
+          Afternoon: dayData.Afternoon ? {
+            ...dayData.Afternoon,
+            Activities: (dayData.Afternoon.Activities || []).map(({ id, ...activity }) => activity),
+          } : undefined,
+          Evening: dayData.Evening ? {
+            ...dayData.Evening,
+            Activities: (dayData.Evening.Activities || []).map(({ id, ...activity }) => activity),
+          } : undefined,
         }
       })
 
@@ -424,10 +524,17 @@ function EditTrip() {
     })
   }
 
+  // Calculate all activity IDs from time slots
   const dateKeys = Object.keys(tripData.tripData.Itinerary).sort()
-  const allActivityIds = dateKeys.flatMap(dateKey => 
-    tripData.tripData.Itinerary[dateKey].Activities.map(a => a.id)
-  )
+  const allActivityIds = dateKeys.flatMap(dateKey => {
+    const dayData = tripData.tripData.Itinerary[dateKey]
+    return [
+      ...(dayData.Morning?.Activities?.map(a => a.id) || []),
+      ...(dayData.Lunch?.Activity ? [dayData.Lunch.Activity.id] : []),
+      ...(dayData.Afternoon?.Activities?.map(a => a.id) || []),
+      ...(dayData.Evening?.Activities?.map(a => a.id) || []),
+    ]
+  })
 
   return (
     <div className='p-10 md:px-20 lg:px-44 xl:px-56'>
@@ -480,7 +587,7 @@ function EditTrip() {
         onHotelClick={handleHotelClick}
       />
 
-      {/* Itinerary Section - NEW: Per-day regeneration */}
+      {/* Itinerary Section */}
       <ItinerarySection
         dateKeys={dateKeys}
         itinerary={tripData.tripData.Itinerary}

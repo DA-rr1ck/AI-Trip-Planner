@@ -4,9 +4,8 @@ import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/input'
-import { Sparkles, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
+import { Sparkles, Loader2, ChevronUp } from 'lucide-react'
 import DayCard from './DayCard'
-import ActivityCard from './ActivityCard'
 
 function ItinerarySection({ 
   dateKeys,
@@ -60,9 +59,10 @@ function ItinerarySection({
               dateKey={dateKey}
               dayData={itinerary[dateKey]}
               onRemoveDay={onRemoveDay}
-              // REMOVED: Don't pass children here
+              onActivityClick={onActivityClick}
+              onRemoveActivity={onRemoveActivity}
             >
-              {/* Per-Day Regeneration Section */}
+              {/* Per-Day Regeneration Section - passed as first child */}
               <div className='mb-4'>
                 <button
                   onClick={() => setExpandedDay(expandedDay === dateKey ? null : dateKey)}
@@ -118,16 +118,6 @@ function ItinerarySection({
                   </div>
                 )}
               </div>
-
-              {/* Activities List - Pass as separate children */}
-              {itinerary[dateKey].Activities.map((activity) => (
-                <ActivityCard
-                  key={activity.id}
-                  activity={activity}
-                  onClick={() => onActivityClick(activity)}
-                  onRemove={() => onRemoveActivity(dateKey, activity.id)}
-                />
-              ))}
             </DayCard>
           ))}
         </SortableContext>

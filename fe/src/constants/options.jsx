@@ -57,7 +57,8 @@ export const REGION_OPTIONS = [
 ];
 
 
-export const AI_PROMPT = `Generate Travel Plan for Location: {location}, for {totalDays} Days for {adults} Adults and {children} Children with a budget range of {budgetMin} to {budgetMax} per person.
+
+export const AI_PROMPT = `Generate Travel Plan for Location: {location}, for {totalDays} Days for {adults} Adults and {children} Children (ages: {childrenAges}) with a budget range of {budgetMin} to {budgetMax} per person.
 
 You MUST respond with ONLY valid JSON in this EXACT format with NO additional text or explanations:
 
@@ -67,7 +68,7 @@ You MUST respond with ONLY valid JSON in this EXACT format with NO additional te
             "Location": "{location}",
             "Duration": "{totalDays} Days",
             "Budget": "{budgetMin} - {budgetMax} per person",
-            "Travelers": "{adults} Adults, {children} Children",
+            "Travelers": "{adults} Adults, {children} Children (ages: {childrenAges})",
             "TotalTravelers": {adults} + {children},
             "Hotels": [
                 {
@@ -80,26 +81,83 @@ You MUST respond with ONLY valid JSON in this EXACT format with NO additional te
                         "Longitude": number
                     },
                     "Rating": "string",
-                    "Description": "string (mention if family-friendly when children > 0)"
+                    "Description": "string (mention if family-friendly when children > 0, consider children's ages)"
                 }
             ],
             "Itinerary": {
                 "Day1": {
                     "Theme": "string",
                     "BestTimeToVisit": "string",
-                    "Activities": [
-                        {
-                            "PlaceName": "string",
-                            "PlaceDetails": "string (consider age-appropriate activities for children if present)",
+                    "Morning": {
+                        "StartTime": "8:00 AM",
+                        "EndTime": "12:00 PM",
+                        "Activities": [
+                            {
+                                "PlaceName": "string",
+                                "PlaceDetails": "string (consider age-appropriate activities based on children's ages)",
+                                "ImageUrl": "string",
+                                "GeoCoordinates": {
+                                    "Latitude": number,
+                                    "Longitude": number
+                                },
+                                "TicketPricing": "string (calculate for {adults} adults and {children} children)",
+                                "TimeSlot": "8:00 AM - 10:00 AM",
+                                "Duration": "2 hours"
+                            }
+                        ]
+                    },
+                    "Lunch": {
+                        "StartTime": "12:00 PM",
+                        "EndTime": "1:30 PM",
+                        "Activity": {
+                            "PlaceName": "string (restaurant name)",
+                            "PlaceDetails": "string",
                             "ImageUrl": "string",
                             "GeoCoordinates": {
                                 "Latitude": number,
                                 "Longitude": number
                             },
-                            "TicketPricing": "string (calculate for {adults} adults and {children} children)",
-                            "TimeTravel": "string"
+                            "TicketPricing": "string (meal cost for all travelers)",
+                            "TimeSlot": "12:00 PM - 1:30 PM",
+                            "Duration": "1.5 hours"
                         }
-                    ]
+                    },
+                    "Afternoon": {
+                        "StartTime": "1:30 PM",
+                        "EndTime": "6:00 PM",
+                        "Activities": [
+                            {
+                                "PlaceName": "string",
+                                "PlaceDetails": "string",
+                                "ImageUrl": "string",
+                                "GeoCoordinates": {
+                                    "Latitude": number,
+                                    "Longitude": number
+                                },
+                                "TicketPricing": "string",
+                                "TimeSlot": "1:30 PM - 4:00 PM",
+                                "Duration": "2.5 hours"
+                            }
+                        ]
+                    },
+                    "Evening": {
+                        "StartTime": "6:00 PM",
+                        "EndTime": "10:00 PM",
+                        "Activities": [
+                            {
+                                "PlaceName": "string",
+                                "PlaceDetails": "string",
+                                "ImageUrl": "string",
+                                "GeoCoordinates": {
+                                    "Latitude": number,
+                                    "Longitude": number
+                                },
+                                "TicketPricing": "string",
+                                "TimeSlot": "6:00 PM - 8:00 PM",
+                                "Duration": "2 hours"
+                            }
+                        ]
+                    }
                 }
             }
         }
@@ -110,10 +168,16 @@ Rules:
 - Provide 2-3 hotel options suitable for {adults} adults and {children} children
 - Hotel prices should accommodate the total number of travelers
 - If children > 0, prioritize family-friendly hotels and activities
+- Consider children's ages: infants (0-2), toddlers (3-5), kids (6-12), teens (13-17) need different activities
 - Create itinerary for EXACTLY {totalDays} days using Day1, Day2, Day3, etc.
-- Each activity's ticket pricing should reflect the total cost for all travelers
-- Activities should be age-appropriate when children are present
+- Each day MUST have 4 sections: Morning, Lunch, Afternoon, Evening
+- Morning should have 1-2 activities (8 AM - 12 PM)
+- Lunch is always a single restaurant/meal spot (12 PM - 1:30 PM)
+- Afternoon should have 1-2 activities (1:30 PM - 6 PM)
+- Evening should have 1-2 activities (6 PM - 10 PM)
+- Each activity MUST include: PlaceName, PlaceDetails, ImageUrl, GeoCoordinates, TicketPricing, TimeSlot, Duration
+- TimeSlots must be realistic and sequential (no overlaps)
+- Activities should be age-appropriate based on the children's ages
 - Budget range is per person: total trip budget = ({budgetMin} to {budgetMax}) × ({adults} + {children})
-- Each activity MUST include all fields: PlaceName, PlaceDetails, ImageUrl, GeoCoordinates, TicketPricing, TimeTravel
 - Use real image URLs from the internet, not placeholder URLs
 - Return ONLY the JSON array, no markdown code blocks, no explanations`;

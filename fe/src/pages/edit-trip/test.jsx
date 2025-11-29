@@ -24,7 +24,7 @@ import ItinerarySection from './components/ItinerarySection'
 
 // Import regeneration utilities
 import { regenerateHotels } from './utils/regenerateHotels'
-import { regenerateItinerary } from './utils/regenerateItinerary'
+import { regenerateSingleDay } from './utils/regenerateItinerary'
 import { generateTrip } from '@/service/AIModel'
 import { AI_PROMPT } from '@/constants/options'
 
@@ -52,36 +52,31 @@ function EditTrip() {
   // Component state
   const [saving, setSaving] = useState(false)
   const [regeneratingHotels, setRegeneratingHotels] = useState(false)
-  const [regeneratingItinerary, setRegeneratingItinerary] = useState(false)
   const [regeneratingAll, setRegeneratingAll] = useState(false)
   const [hotelPreference, setHotelPreference] = useState('')
-  const [itineraryPreference, setItineraryPreference] = useState('')
   const [isEditingSelection, setIsEditingSelection] = useState(false)
   const [editedSelection, setEditedSelection] = useState(null)
   
-  // NEW: Hotel selection state - initialize with all hotels selected
+  // Hotel selection state
   const [selectedHotels, setSelectedHotels] = useState([])
 
   // Initialize selected hotels when tripData loads
   useEffect(() => {
     if (tripData?.tripData?.Hotels) {
-      // If no previous selection, select all hotels by default
       if (selectedHotels.length === 0) {
         setSelectedHotels(tripData.tripData.Hotels)
       }
     }
   }, [tripData?.tripData?.Hotels])
 
-  // NEW: Handle hotel selection toggle
+  // Handle hotel selection toggle
   const handleToggleHotelSelection = (hotel) => {
     setSelectedHotels(prev => {
       const isSelected = prev.some(h => h.HotelName === hotel.HotelName)
       
       if (isSelected) {
-        // Deselect hotel
         return prev.filter(h => h.HotelName !== hotel.HotelName)
       } else {
-        // Select hotel
         return [...prev, hotel]
       }
     })
@@ -209,7 +204,6 @@ function EditTrip() {
       }
 
       updateTripData(updatedTripData)
-      // Reset selected hotels to all new hotels
       setSelectedHotels(travelPlan.Hotels || [])
       toast.success('Trip regenerated successfully! Remember to save.')
       setIsEditingSelection(false)
@@ -241,7 +235,6 @@ function EditTrip() {
       }
       
       updateTripData(updatedTripData)
-      // Reset selected hotels to all new hotels
       setSelectedHotels(newHotels)
       toast.success('Hotels regenerated successfully! Remember to save.')
       setHotelPreference('')
@@ -253,45 +246,45 @@ function EditTrip() {
     }
   }
 
-  const handleRegenerateItinerary = async () => {
-    if (!itineraryPreference.trim()) {
-      toast.error('Please enter your itinerary preferences')
-      return
-    }
-
-    setRegeneratingItinerary(true)
+  // NEW: Handle per-day regeneration
+  const handleRegenerateSingleDay = async (dateKey, preference) => {
     try {
-      const dayCount = Object.keys(tripData.tripData.Itinerary).length
-      const itineraryWithIds = await regenerateItinerary(
-        tripData.tripData, 
-        itineraryPreference, 
-        dayCount
+      const dayNumber = Object.keys(tripData.tripData.Itinerary).sort().indexOf(dateKey) + 1
+      const currentDayData = tripData.tripData.Itinerary[dateKey]
+      
+      const newDayData = await regenerateSingleDay(
+        tripData.tripData,
+        currentDayData.Theme,
+        preference,
+        dayNumber
       )
 
-      const startDate = parse(tripData.userSelection.startDate, 'yyyy-MM-dd', new Date())
-      const itineraryWithDates = {}
-      Object.entries(itineraryWithIds).forEach(([dayKey, dayData], index) => {
-        const actualDate = addDays(startDate, index)
-        const dateKey = format(actualDate, 'yyyy-MM-dd')
-        itineraryWithDates[dateKey] = dayData
-      })
+      // Add date-specific IDs to activities
+      const activitiesWithIds = newDayData.Activities.map((activity, idx) => ({
+        ...activity,
+        id: `${dateKey}-activity-${idx}-${Date.now()}-${Math.random()}`,
+      }))
 
       const updatedTripData = {
         ...tripData,
         tripData: {
           ...tripData.tripData,
-          Itinerary: itineraryWithDates,
+          Itinerary: {
+            ...tripData.tripData.Itinerary,
+            [dateKey]: {
+              ...newDayData,
+              Activities: activitiesWithIds,
+            },
+          },
         },
       }
 
       updateTripData(updatedTripData)
-      toast.success('Itinerary regenerated successfully! Remember to save.')
-      setItineraryPreference('')
+      toast.success('Day updated successfully! Remember to save.')
     } catch (error) {
-      console.error('Error regenerating itinerary:', error)
-      toast.error('Failed to regenerate itinerary. Please try again.')
-    } finally {
-      setRegeneratingItinerary(false)
+      console.error('Error regenerating day:', error)
+      toast.error('Failed to update day. Please try again.')
+      throw error
     }
   }
 
@@ -351,7 +344,6 @@ function EditTrip() {
       return
     }
 
-    // NEW: Validate hotel selection
     if (selectedHotels.length === 0) {
       toast.error('Please select at least one hotel before saving', {
         duration: 3000
@@ -383,12 +375,11 @@ function EditTrip() {
         }
       })
 
-      // NEW: Save only selected hotels
       await setDoc(doc(db, 'AITrips', docId), {
         userSelection: tripData.userSelection,
         tripData: {
           ...tripData.tripData,
-          Hotels: selectedHotels, // Only save selected hotels
+          Hotels: selectedHotels,
           Itinerary: itineraryWithoutIds,
         },
         userEmail: user.email,
@@ -489,15 +480,12 @@ function EditTrip() {
         onHotelClick={handleHotelClick}
       />
 
-      {/* Itinerary Section */}
+      {/* Itinerary Section - NEW: Per-day regeneration */}
       <ItinerarySection
         dateKeys={dateKeys}
         itinerary={tripData.tripData.Itinerary}
         allActivityIds={allActivityIds}
-        itineraryPreference={itineraryPreference}
-        setItineraryPreference={setItineraryPreference}
-        regeneratingItinerary={regeneratingItinerary}
-        onRegenerateItinerary={handleRegenerateItinerary}
+        onRegenerateSingleDay={handleRegenerateSingleDay}
         onRemoveDay={handleRemoveDay}
         onActivityClick={handleActivityClick}
         onRemoveActivity={handleRemoveActivity}
