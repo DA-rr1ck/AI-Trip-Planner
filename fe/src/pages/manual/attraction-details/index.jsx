@@ -22,134 +22,203 @@ import PhotoCarousel from '@/components/custom/PhotoCarousel'
 
 /**
  * Data layer for attraction details.
- * Later you just replace internals with real SerpAPI + Google data
- * without touching UI components.
+ * Fetches real data from SerpAPI via backend.
  */
-function useAttractionDetails(initialActivity) {
-    const placeholderAttraction = {
-        // PlaceName: 'Attraction Name (placeholder)',
-        PlaceDetails:
-            'Attraction description and highlights will be loaded from APIs. This is placeholder text for now.',
-        Address: 'Attraction address from Google / SerpAPI will appear here.',
-        OperatingHours: {
-            open: '09:00',
-            close: '18:00',
-        },
-        RecommendedVisit: 'Recommended visit: 2–3 hours',
-        Contacts: {
-            phone: '+00 000 000 000',
-            email: 'info@attraction.com',
-            website: 'https://attraction-website.com',
-        },
-        Rating: 4.5,
-        Photos: ['/placeholder.jpg', '/landing2.jpg', '/landing3.jpg'],
+function useAttractionDetails(initialActivity, tripContext) {
+    const [apiData, setApiData] = useState(null)
+    const [isLoading, setIsLoading] = useState(true)
+    const [error, setError] = useState(null)
+
+    const placeName = initialActivity?.PlaceName || initialActivity?.name || null
+
+    useEffect(() => {
+        if (!placeName) {
+            setIsLoading(false)
+            return
+        }
+
+        const controller = new AbortController()
+
+        async function fetchPlaceDetails() {
+            try {
+                setIsLoading(true)
+                setError(null)
+
+                const params = new URLSearchParams()
+                params.set('q', placeName)
+                params.set('hl', 'en')
+                params.set('gl', 'vn')
+
+                const res = await fetch(
+                    `/api/serp/place/details?${params.toString()}`,
+                    { signal: controller.signal }
+                )
+
+                if (!res.ok) {
+                    const text = await res.text()
+                    throw new Error(text || `Request failed with status ${res.status}`)
+                }
+
+                const json = await res.json()
+                setApiData(json)
+            } catch (err) {
+                if (err.name === 'AbortError') return
+                console.error('Failed to load place details', err)
+                setError(err.message || 'Failed to load place details')
+            } finally {
+                setIsLoading(false)
+            }
+        }
+
+        fetchPlaceDetails()
+
+        return () => controller.abort()
+    }, [placeName])
+
+    // Debug logging
+    useEffect(() => {
+        console.log('useAttractionDetails - apiData:', apiData)
+    }, [apiData])
+
+    // Format operating hours from API
+    const formatOperatingHours = (hours) => {
+        if (!hours) return null
+        if (typeof hours === 'string') return hours
+        if (Array.isArray(hours)) {
+            // Find today's hours or return first available
+            const today = new Date().toLocaleDateString('en-US', { weekday: 'long' })
+            const todayHours = hours.find(h => 
+                h.day?.toLowerCase() === today.toLowerCase() ||
+                h.name?.toLowerCase() === today.toLowerCase()
+            )
+            if (todayHours) {
+                return todayHours.hours || todayHours.time || `${todayHours.open} - ${todayHours.close}`
+            }
+            // Return a summary
+            return hours.map(h => `${h.day || h.name}: ${h.hours || h.time || 'N/A'}`).join(', ')
+        }
+        if (hours.open && hours.close) {
+            return { open: hours.open, close: hours.close }
+        }
+        return null
     }
 
+    // Build photos array
+    const buildPhotos = () => {
+        const photos = []
+        if (initialActivity?.imageUrl) {
+            photos.push(initialActivity.imageUrl)
+        }
+        if (apiData?.images && Array.isArray(apiData.images)) {
+            apiData.images.forEach(url => {
+                if (url && !photos.includes(url)) {
+                    photos.push(url)
+                }
+            })
+        }
+        if (initialActivity?.Photos && Array.isArray(initialActivity.Photos)) {
+            initialActivity.Photos.forEach(url => {
+                if (url && !photos.includes(url)) {
+                    photos.push(url)
+                }
+            })
+        }
+        if (photos.length === 0) {
+            photos.push('/placeholder.jpg', '/landing2.jpg', '/landing3.jpg')
+        }
+        return photos
+    }
+
+    // Build attraction object from API + initial data
+    const attraction = {
+        PlaceName: initialActivity?.PlaceName || apiData?.title || null,
+        PlaceDetails: apiData?.description || initialActivity?.PlaceDetails || null,
+        Address: apiData?.address || initialActivity?.Address || 'Address not available',
+        OperatingHours: formatOperatingHours(apiData?.operatingHours) || initialActivity?.OperatingHours || null,
+        RecommendedVisit: initialActivity?.RecommendedVisit || 'Visit duration varies based on your interests',
+        Contacts: {
+            phone: apiData?.phone || initialActivity?.Contacts?.phone || null,
+            email: initialActivity?.Contacts?.email || null,
+            website: apiData?.website || initialActivity?.Contacts?.website || null,
+        },
+        Rating: apiData?.rating || initialActivity?.Rating || null,
+        Photos: buildPhotos(),
+        type: apiData?.type || initialActivity?.type || null,
+        priceLevel: apiData?.priceLevel || null,
+        gpsCoordinates: apiData?.gpsCoordinates || {
+            latitude: initialActivity?.lat,
+            longitude: initialActivity?.lon,
+        },
+    }
+
+    // Tickets - use from initial activity if available, otherwise placeholder
     const placeholderTickets = [
         {
             id: 'general',
             name: 'General Admission',
-            price: '$25',
-            description: 'Includes entry during opening hours for one adult.',
+            price: apiData?.priceLevel || 'Price varies',
+            description: 'Standard entry ticket for one adult.',
             details: [
                 'Valid for 1 day',
-                'Free for children under 6',
-                'Non-refundable',
-            ],
-        },
-        {
-            id: 'vip',
-            name: 'VIP Fast-Track Pass',
-            price: '$45',
-            description: 'Skip the line and get faster access to all main areas.',
-            details: [
-                'Dedicated VIP entrance',
-                'Recommended during peak hours',
+                'Check official website for current pricing',
             ],
         },
     ]
-
-    const placeholderNearby = {
-        hotels: [
-            { id: 'h1', name: 'Nearby Hotel 1', distance: '300m', photo: '/placeholder.jpg' },
-            { id: 'h2', name: 'Nearby Hotel 2', distance: '800m', photo: '/placeholder.jpg' },
-        ],
-        attractions: [
-            { id: 'a1', name: 'Attraction A', distance: '500m', photo: '/placeholder.jpg' },
-            { id: 'a2', name: 'Attraction B', distance: '1.1km', photo: '/placeholder.jpg' },
-        ],
-        restaurants: [
-            { id: 'r1', name: 'Restaurant 1', distance: '200m', photo: '/placeholder.jpg' },
-            { id: 'r2', name: 'Restaurant 2', distance: '600m', photo: '/placeholder.jpg' },
-        ],
-    }
 
     const activityTickets = []
     if (initialActivity?.TicketPricing) {
         activityTickets.push({
             id: 'itinerary-ticket',
-            name: 'Ticket / Pricing from itinerary',
+            name: 'Estimated Ticket Price',
             price: initialActivity.TicketPricing,
-            description: 'Imported from your trip itinerary. Exact ticket info will be refined from APIs later.',
+            description: 'Price estimate from your trip itinerary.',
             details: [
                 'Price is indicative',
-                'Will be updated with official data',
+                'Verify on official website',
             ],
         })
     }
 
-    const attraction = {
-        ...placeholderAttraction,
-        ...initialActivity,
-        OperatingHours: initialActivity?.OperatingHours || placeholderAttraction.OperatingHours,
-        Contacts: initialActivity?.Contacts || placeholderAttraction.Contacts,
-        Photos: initialActivity?.Photos || placeholderAttraction.Photos,
-        Address: initialActivity?.Address || placeholderAttraction.Address,
-        RecommendedVisit: initialActivity?.RecommendedVisit || placeholderAttraction.RecommendedVisit,
-    }
-
-    // If we have an imageUrl passed from search, use it as the first photo
-    if (initialActivity?.imageUrl && !initialActivity.Photos) {
-        // Remove placeholder if we have a real image
-        const otherPhotos = placeholderAttraction.Photos.filter(p => p !== '/placeholder.jpg')
-        attraction.Photos = [initialActivity.imageUrl, ...otherPhotos]
-    }
-
     const tickets = activityTickets.length > 0 ? activityTickets : placeholderTickets
-    const nearby = placeholderNearby
 
-    const rating = attraction.Rating
-    const ratingCount = initialActivity?.RatingCount ?? 284
-    const ratingBreakdown =
-        initialActivity?.RatingBreakdown || {
-            5: 190,
-            4: 60,
-            3: 20,
-            2: 8,
-            1: 6,
+    // Nearby places - keep as placeholder for now
+    const nearby = {
+        hotels: [],
+        attractions: [],
+        restaurants: [],
+    }
+
+    // Rating data
+    const rating = apiData?.rating || attraction.Rating
+    const ratingCount = apiData?.reviewsCount || initialActivity?.RatingCount || null
+    
+    // Rating breakdown - use API data or generate estimate based on rating
+    let ratingBreakdown = apiData?.ratingBreakdown || {}
+    if (Object.keys(ratingBreakdown).length === 0 && rating && ratingCount) {
+        // Generate estimated breakdown based on overall rating
+        const total = ratingCount
+        const avgRating = parseFloat(rating)
+        if (avgRating >= 4) {
+            ratingBreakdown = {
+                5: Math.round(total * 0.6),
+                4: Math.round(total * 0.25),
+                3: Math.round(total * 0.1),
+                2: Math.round(total * 0.03),
+                1: Math.round(total * 0.02),
+            }
+        } else if (avgRating >= 3) {
+            ratingBreakdown = {
+                5: Math.round(total * 0.3),
+                4: Math.round(total * 0.35),
+                3: Math.round(total * 0.2),
+                2: Math.round(total * 0.1),
+                1: Math.round(total * 0.05),
+            }
         }
+    }
 
-    const reviews =
-        initialActivity?.Reviews || [
-            {
-                user: 'Traveler A',
-                date: '2 days ago',
-                rating: 5,
-                text: 'Real user comments from Google / SerpAPI will appear here later.',
-            },
-            {
-                user: 'Traveler B',
-                date: '1 week ago',
-                rating: 4,
-                text: 'Nice place overall. Crowded during peak hours, but worth visiting.',
-            },
-            {
-                user: 'Traveler C',
-                date: '2 weeks ago',
-                rating: 4.5,
-                text: 'Beautiful atmosphere and friendly staff. Tickets were easy to buy.',
-            },
-        ]
+    // Reviews - limit to 2 as requested
+    const reviews = (apiData?.userReviews || []).slice(0, 2)
 
     return {
         attraction,
@@ -159,8 +228,8 @@ function useAttractionDetails(initialActivity) {
         ratingCount,
         ratingBreakdown,
         reviews,
-        isLoading: false,
-        error: null,
+        isLoading,
+        error,
     }
 }
 
@@ -349,7 +418,7 @@ function AttractionReviewsSection({
         return Number.isFinite(num) ? num : 0
     })()
 
-    // If caller doesn’t give ratingCount, try reviews length, else 0
+    // If caller doesn't give ratingCount, try reviews length, else 0
     const totalReviews =
         ratingCount ??
         (Array.isArray(reviews) ? reviews.length : 0) ??
@@ -705,9 +774,10 @@ function AttractionMapSection({
 }
 
 /**
- * MAIN PAGE
+ * MAIN PAGE - Manual Attraction Details
+ * For manual trip creation flow
  */
-export default function AttractionDetailsPage() {
+export default function ManualAttractionDetailsPage() {
     const navigate = useNavigate()
     const location = useLocation()
     const { slug } = useParams() 
@@ -726,7 +796,16 @@ export default function AttractionDetailsPage() {
         reviews,
         isLoading,
         error,
-    } = useAttractionDetails(activityFromState)
+    } = useAttractionDetails(activityFromState, tripContext)
+
+    // Debug logging
+    useEffect(() => {
+        console.log('ManualAttractionDetailsPage - activityFromState:', activityFromState)
+        console.log('ManualAttractionDetailsPage - tripContext:', tripContext)
+        console.log('ManualAttractionDetailsPage - attraction:', attraction)
+        console.log('ManualAttractionDetailsPage - isLoading:', isLoading)
+        console.log('ManualAttractionDetailsPage - error:', error)
+    }, [activityFromState, tripContext, attraction, isLoading, error])
 
     const fallbackAttractionName = slugToTitle(slug) || 'attraction'
     const displayAttractionName = attraction.PlaceName || fallbackAttractionName
@@ -753,13 +832,13 @@ export default function AttractionDetailsPage() {
 
     const handleOpenHotel = (hotel) => {
         const slug = encodeURIComponent(hotel.name || 'hotel')
-        window.open(`/hotel/${slug}`, '_blank')
+        window.open(`/manual/hotel/${slug}`, '_blank')
         console.log('Open nearby hotel in new tab (placeholder)', { hotel, tripContext })
     }
 
     const handleOpenAttraction = (place) => {
         const slug = encodeURIComponent(place.name || 'attraction')
-        window.open(`/attraction/${slug}`, '_blank')
+        window.open(`/manual/attraction/${slug}`, '_blank')
         console.log('Open nearby attraction in new tab (placeholder)', { place, tripContext })
     }
 
@@ -781,14 +860,24 @@ export default function AttractionDetailsPage() {
                 >
                     <ArrowLeft className='h-4 w-4' /> Back
                 </Button>
-                <p className='text-red-500 text-sm'>Failed to load attraction details.</p>
+                <p className='text-red-500 text-sm'>Failed to load attraction details: {error}</p>
             </div>
         )
     }
 
-    if (isLoading) {
+    // Show basic info while loading API data (don't block the whole page)
+    // Only show full loading screen if we don't have any activity info at all
+    if (isLoading && !activityFromState) {
         return (
             <div className='p-6 mx-auto md:px-20 lg:w-7xl'>
+                <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => navigate(-1)}
+                    className='mb-4 flex items-center gap-2'
+                >
+                    <ArrowLeft className='h-4 w-4' /> Back to trip
+                </Button>
                 <p className='text-gray-500 text-sm'>Loading attraction details...</p>
             </div>
         )

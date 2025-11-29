@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import Select from 'react-select'
 
-function DestinationSelector({ label = 'What is your destination?', onLocationSelected }) {
+function DestinationSelector({ label = 'What is your destination?', onLocationSelected, value }) {
   const [options, setOptions] = useState([])
-  const [place, setPlace] = useState(null)
   const [inputValue, setInputValue] = useState('')
 
   // Debounced place search using OpenStreetMap Nominatim
@@ -29,10 +28,9 @@ function DestinationSelector({ label = 'What is your destination?', onLocationSe
       )}
       <Select
         options={options}
-        value={place}
+        value={value}
         onChange={(v) => {
-          setPlace(v)
-          onLocationSelected?.(v?.label, v?.value)
+          onLocationSelected?.(v?.label, v)
         }}
         onInputChange={setInputValue}
         placeholder='Search for a location...'
