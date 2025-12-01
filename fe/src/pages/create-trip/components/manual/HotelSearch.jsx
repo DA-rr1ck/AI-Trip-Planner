@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AiOutlineLoading3Quarters } from 'react-icons/ai'
 import Button from '@/components/ui/Button'
@@ -70,7 +70,41 @@ function HotelSearch({
   const [nearbyData, setNearbyData] = useState({})
   const [loadingNearby, setLoadingNearby] = useState(false)
   const [hotelImage, setHotelImage] = useState(null)
+  const [hotelPrices, setHotelPrices] = useState({}) // { hotelId: { price: '$XX', loading: bool } }
+  const [isInputFocused, setIsInputFocused] = useState(false)
+  const [hasSearchedDefault, setHasSearchedDefault] = useState(!!confirmedHotel) // If hotel already confirmed, don't auto-search
+  const initialConfirmedHotelIdRef = useRef(confirmedHotel?.id) // Track initial hotel to avoid clearing on mount
+  const hasMountedRef = useRef(false) // Track if component has mounted to avoid overwriting session
   const navigate = useNavigate()
+
+  // Mark component as mounted after initial render (with delay to let all effects settle)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      hasMountedRef.current = true
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [])
+
+  // Reset hasSearchedDefault when location changes (but not if hotel already confirmed)
+  useEffect(() => {
+    if (!confirmedHotel) {
+      setHasSearchedDefault(false)
+    }
+  }, [location])
+
+  // Clear search state only when a NEW hotel is confirmed (not when restored from session)
+  useEffect(() => {
+    // Skip if this is the initial hotel from session
+    if (!hasMountedRef.current) return
+    if (confirmedHotel && confirmedHotel.id !== initialConfirmedHotelIdRef.current) {
+      setHotelResults([])
+      setHotelSearchQuery('')
+      setSelectedHotel(null)
+      setHoveredHotel(null)
+      // Update ref so subsequent confirms of the same hotel don't clear
+      initialConfirmedHotelIdRef.current = confirmedHotel.id
+    }
+  }, [confirmedHotel])
 
   // Fetch hotel image when confirmedHotel changes
   useEffect(() => {
@@ -81,39 +115,90 @@ function HotelSearch({
     }
   }, [confirmedHotel])
 
-  // Sync state changes to parent
+  // Sync state changes to parent - only after component has fully mounted to avoid overwriting restored session
   useEffect(() => {
+    if (!hasMountedRef.current) return
     onSearchStateChange?.(hotelSearchQuery, hotelResults)
   }, [hotelSearchQuery, hotelResults])
 
-  // Calculate estimated price for a hotel
-  const getEstimatedPrice = (hotelId) => {
-    if (!startDate || !endDate) return null
-    
+  // Fetch actual hotel price from SerpAPI
+  const fetchHotelPrice = async (hotel) => {
+    if (!hotel || !startDate || !endDate) return
+    if (hotelPrices[hotel.id]?.price || hotelPrices[hotel.id]?.loading) return
+
+    // Mark as loading
+    setHotelPrices(prev => ({
+      ...prev,
+      [hotel.id]: { loading: true, price: null }
+    }))
+
     try {
-      const days = differenceInDays(endDate, startDate) + 1
-      const travelers = (adults || 1) + (children || 0)
+      const params = new URLSearchParams()
+      params.set('q', hotel.name)
+      params.set('check_in_date', format(startDate, 'yyyy-MM-dd'))
+      params.set('check_out_date', format(endDate, 'yyyy-MM-dd'))
+      params.set('adults', String(adults || 1))
+      if (children) params.set('children', String(children))
+      params.set('gl', 'us')
+      params.set('hl', 'en')
+      params.set('currency', 'USD')
+
+      const response = await fetch(`/api/serp/hotel/rooms?${params.toString()}`)
       
-      // Generate a deterministic factor based on hotel ID (0.8 to 1.2)
-      // Ensure hotelId is a string to prevent split errors
-      const idStr = String(hotelId)
-      const idSum = idStr.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
-      const factor = 0.8 + (idSum % 40) / 100
+      if (!response.ok) {
+        throw new Error('Failed to fetch price')
+      }
+
+      const data = await response.json()
       
-      // Base calculation: Average budget per person * travelers * 40% allocation for hotel
-      // This scales with budget and travelers
-      const avgBudget = (Number(budgetMin) + Number(budgetMax)) / 2
-      const baseTotal = avgBudget * travelers * 0.4
-      
-      // Adjust by factor
-      const estimatedTotal = baseTotal * factor
-      
-      return Math.round(estimatedTotal / 10) * 10 // Round to nearest 10
+      // Find the cheapest room price per night
+      let cheapestPrice = null
+      if (Array.isArray(data.rooms) && data.rooms.length > 0) {
+        data.rooms.forEach(room => {
+          if (room.price) {
+            // Extract numeric value from price string (e.g., "$123" -> 123)
+            const priceMatch = room.price.match(/[\d,]+/)
+            if (priceMatch) {
+              const numericPrice = parseInt(priceMatch[0].replace(/,/g, ''), 10)
+              if (!cheapestPrice || numericPrice < cheapestPrice.numeric) {
+                cheapestPrice = {
+                  display: room.price,
+                  numeric: numericPrice
+                }
+              }
+            }
+          }
+        })
+      }
+
+      setHotelPrices(prev => ({
+        ...prev,
+        [hotel.id]: {
+          loading: false,
+          price: cheapestPrice?.display || null
+        }
+      }))
     } catch (error) {
-      console.error('Error calculating price:', error)
-      return null
+      console.error('Error fetching hotel price:', error)
+      setHotelPrices(prev => ({
+        ...prev,
+        [hotel.id]: { loading: false, price: null }
+      }))
     }
   }
+
+  // Fetch price when hovering or when confirmed hotel changes
+  useEffect(() => {
+    if (hoveredHotel && startDate && endDate) {
+      fetchHotelPrice(hoveredHotel)
+    }
+  }, [hoveredHotel?.id, startDate, endDate])
+
+  useEffect(() => {
+    if (confirmedHotel && startDate && endDate) {
+      fetchHotelPrice(confirmedHotel)
+    }
+  }, [confirmedHotel?.id, startDate, endDate])
 
   // Fetch nearby amenities using Overpass API
   useEffect(() => {
@@ -126,16 +211,35 @@ function HotelSearch({
     const fetchNearby = async () => {
       setLoadingNearby(true)
       try {
+        // Same query as embedded map in hotel-details for consistency
         const query = `
           [out:json][timeout:25];
           (
-            node["tourism"~"attraction|museum|viewpoint|theme_park|zoo|aquarium"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            // Transit
             node["highway"="bus_stop"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
             node["public_transport"="platform"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
-            node["amenity"="fuel"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            node["railway"="station"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            node["railway"="subway_entrance"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            // Restaurants & Cafes
+            node["amenity"="restaurant"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            node["amenity"="cafe"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            node["amenity"="fast_food"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            // Convenience stores
             node["shop"="convenience"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
-            node["amenity"="pharmacy"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            node["shop"="supermarket"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            // Gas stations
+            node["amenity"="fuel"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            // ATM & Banks
             node["amenity"="atm"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            node["amenity"="bank"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            // Shopping
+            node["shop"="mall"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            node["shop"="department_store"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            // POI / Attractions
+            node["tourism"~"attraction|museum|viewpoint|artwork"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            node["historic"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            node["leisure"="park"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
+            node["amenity"="place_of_worship"](around:1000, ${targetHotel.lat}, ${targetHotel.lon});
           );
           out body;
         `
@@ -145,55 +249,71 @@ function HotelSearch({
         })
         const data = await response.json()
         
-        // Process data
+        // Process data - count by category (matching embedded map categories)
+        // Embedded map limits to 5 per category, so we do the same
+        const maxPerCategory = 5
         const attractions = []
         const seenAttractions = new Set()
+        const seenNames = new Set() // Track all seen names for deduplication
         const counts = {
-          bus_stop: 0,
-          gas_station: 0,
-          conbini: 0,
-          drug_store: 0,
-          atm: 0
+          transit: 0,
+          restaurant: 0,
+          convenience: 0,
+          gas: 0,
+          atm: 0,
+          shopping: 0,
+          poi: 0
         }
 
         data.elements.forEach(el => {
-          if (el.tags.tourism) {
-            const name = el.tags['name:en'] || el.tags.name
-            
-            // Filter out low quality results (normalize data)
-            if (!name) return
-            if (seenAttractions.has(name.toLowerCase())) return
-            if (['viewpoint', 'attraction', 'museum'].includes(name.toLowerCase())) return
-            
-            seenAttractions.add(name.toLowerCase())
-
-            // Calculate distance
-            const R = 6371e3 // metres
-            const φ1 = targetHotel.lat * Math.PI/180
-            const φ2 = el.lat * Math.PI/180
-            const Δφ = (el.lat - targetHotel.lat) * Math.PI/180
-            const Δλ = (el.lon - targetHotel.lon) * Math.PI/180
-
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ/2) * Math.sin(Δλ/2)
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
-            const d = R * c // in metres
-
-            attractions.push({
-              name: name,
-              distance: Math.round(d)
-            })
-          } else if (el.tags.highway === 'bus_stop' || el.tags.public_transport === 'platform') {
-            counts.bus_stop++
+          const name = el.tags?.['name:en'] || el.tags?.name
+          
+          // Only count places with names (matching embedded map behavior)
+          if (!name) return
+          
+          // Skip duplicates
+          const nameKey = name.toLowerCase()
+          if (seenNames.has(nameKey)) return
+          seenNames.add(nameKey)
+          
+          // Categorize and count (with max limit per category like embedded map)
+          if (el.tags.highway === 'bus_stop' || el.tags.public_transport === 'platform' || 
+              el.tags.railway === 'station' || el.tags.railway === 'subway_entrance') {
+            if (counts.transit < maxPerCategory) counts.transit++
+          } else if (el.tags.amenity === 'restaurant' || el.tags.amenity === 'cafe' || el.tags.amenity === 'fast_food') {
+            if (counts.restaurant < maxPerCategory) counts.restaurant++
+          } else if (el.tags.shop === 'convenience' || el.tags.shop === 'supermarket') {
+            if (counts.convenience < maxPerCategory) counts.convenience++
           } else if (el.tags.amenity === 'fuel') {
-            counts.gas_station++
-          } else if (el.tags.shop === 'convenience') {
-            counts.conbini++
-          } else if (el.tags.amenity === 'pharmacy') {
-            counts.drug_store++
-          } else if (el.tags.amenity === 'atm') {
-            counts.atm++
+            if (counts.gas < maxPerCategory) counts.gas++
+          } else if (el.tags.amenity === 'atm' || el.tags.amenity === 'bank') {
+            if (counts.atm < maxPerCategory) counts.atm++
+          } else if (el.tags.shop === 'mall' || el.tags.shop === 'department_store') {
+            if (counts.shopping < maxPerCategory) counts.shopping++
+          } else if (el.tags.tourism || el.tags.historic || el.tags.leisure === 'park' || el.tags.amenity === 'place_of_worship') {
+            if (counts.poi < maxPerCategory) counts.poi++
+            // POI / Attractions - also collect names for display
+            if (!seenAttractions.has(nameKey) && !['viewpoint', 'attraction', 'museum'].includes(nameKey)) {
+              seenAttractions.add(nameKey)
+              
+              // Calculate distance
+              const R = 6371e3 // metres
+              const φ1 = targetHotel.lat * Math.PI/180
+              const φ2 = el.lat * Math.PI/180
+              const Δφ = (el.lat - targetHotel.lat) * Math.PI/180
+              const Δλ = (el.lon - targetHotel.lon) * Math.PI/180
+
+              const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                        Math.cos(φ1) * Math.cos(φ2) *
+                        Math.sin(Δλ/2) * Math.sin(Δλ/2)
+              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+              const d = R * c // in metres
+
+              attractions.push({
+                name: name,
+                distance: Math.round(d)
+              })
+            }
           }
         })
 
@@ -223,18 +343,82 @@ function HotelSearch({
     setHoveredHotel(null)
   }, [hotelResults])
 
-  // Debounced hotel search
+  // Debounced hotel search - skip if hotel already confirmed
   useEffect(() => {
+    // Don't search if hotel is already confirmed
+    if (confirmedHotel) return
+
     const debounceTimer = setTimeout(() => {
       if (hotelSearchQuery && hotelSearchQuery.length >= 2) {
         searchHotels(hotelSearchQuery)
-      } else {
-        setHotelResults([])
+      } else if (isInputFocused && !hotelSearchQuery && !hasSearchedDefault) {
+        // When input is focused but empty, search for hotels in destination
+        searchHotelsInDestination()
       }
     }, 600)
 
     return () => clearTimeout(debounceTimer)
-  }, [hotelSearchQuery, location])
+  }, [hotelSearchQuery, location, isInputFocused, confirmedHotel, hasSearchedDefault])
+
+  // Search for hotels in the destination (used when input is focused without query)
+  const searchHotelsInDestination = async () => {
+    if (!location || hasSearchedDefault) return
+    
+    setSearchingHotels(true)
+    setHasSearchedDefault(true)
+    
+    try {
+      const searchQuery = `hotel ${location}`
+      
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=30&addressdetails=1`
+      )
+      const data = await response.json()
+      
+      const hotels = data
+        .filter(item => {
+          const displayName = item.display_name.toLowerCase()
+          const itemType = (item.type || '').toLowerCase()
+          
+          const validTypes = [
+            'hotel', 
+            'motel', 
+            'guest_house', 
+            'hostel', 
+            'apartment', 
+            'chalet', 
+            'resort', 
+            'inn'
+          ]
+          
+          const isHotel = validTypes.includes(itemType)
+          const isInLocation = displayName.includes(location.toLowerCase().split(',')[0])
+          
+          return isHotel && isInLocation
+        })
+        .map(item => ({
+          id: item.place_id,
+          name: item.display_name.split(',')[0].trim(),
+          address: item.display_name,
+          lat: item.lat,
+          lon: item.lon,
+          type: item.type || 'hotel',
+          city: item.address?.city || item.address?.town || '',
+          country: item.address?.country || ''
+        }))
+        .filter((hotel, index, self) => 
+          index === self.findIndex(h => h.name.toLowerCase() === hotel.name.toLowerCase())
+        )
+        .slice(0, 15)
+      
+      setHotelResults(hotels)
+    } catch (error) {
+      console.error('Error searching hotels in destination:', error)
+      setHotelResults([])
+    } finally {
+      setSearchingHotels(false)
+    }
+  }
 
   const searchHotels = async (query) => {
     if (!query || query.length < 2) {
@@ -308,8 +492,12 @@ function HotelSearch({
     if (selectedHotel) {
       onHotelConfirm(selectedHotel)
       toast.success(`Hotel "${selectedHotel.name}" added to your trip!`)
+      // Clear all search state after confirming
       setHotelResults([])
       setHotelSearchQuery('')
+      setSelectedHotel(null)
+      setHoveredHotel(null)
+      setHasSearchedDefault(true) // Prevent auto-search from running again
     }
   }
 
@@ -410,40 +598,26 @@ function HotelSearch({
               <span className='min-w-[20px]'>📍</span>
               <p>{confirmedHotel.address}</p>
             </div>
-            {confirmedHotel.city && (
-              <div className='flex items-center gap-2 text-sm text-blue-700'>
-                <span className='min-w-[20px]'>🏙️</span>
-                <p>{confirmedHotel.city}, {confirmedHotel.country}</p>
-              </div>
-            )}
-            <div className='flex items-center gap-2 text-sm text-blue-700'>
-              <span className='min-w-[20px]'>🌍</span>
-              <p>{parseFloat(confirmedHotel.lat).toFixed(4)}, {parseFloat(confirmedHotel.lon).toFixed(4)}</p>
-            </div>
-            
-            <a 
-              href={`https://www.google.com/maps/search/?api=1&query=${confirmedHotel.lat},${confirmedHotel.lon}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className='flex items-center gap-2 text-xs text-blue-600 hover:text-blue-800 hover:underline mt-1 ml-7'
-            >
-              Open in Google Maps
-              <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14' />
-              </svg>
-            </a>
 
-            {startDate && endDate && getEstimatedPrice(confirmedHotel.id) !== null && (
+            {startDate && endDate && (
               <div className='mt-3 pt-3 border-t border-blue-200'>
                 <div className='flex items-center justify-between'>
-                  <span className='text-sm font-medium text-blue-800'>Est. Total Cost:</span>
-                  <span className='text-lg font-bold text-blue-900'>
-                    ${getEstimatedPrice(confirmedHotel.id).toLocaleString()}
-                  </span>
+                  <span className='text-sm font-medium text-blue-800'>Price per night:</span>
+                  {hotelPrices[confirmedHotel.id]?.loading ? (
+                    <AiOutlineLoading3Quarters className='h-4 w-4 animate-spin text-blue-600' />
+                  ) : hotelPrices[confirmedHotel.id]?.price ? (
+                    <span className='text-lg font-bold text-blue-900'>
+                      {hotelPrices[confirmedHotel.id].price}
+                    </span>
+                  ) : (
+                    <span className='text-sm text-blue-600 italic'>Price unavailable</span>
+                  )}
                 </div>
-                <p className='text-xs text-blue-600 mt-1'>
-                  For {(adults || 1) + (children || 0)} travelers, {differenceInDays(endDate, startDate) + 1} days
-                </p>
+                {hotelPrices[confirmedHotel.id]?.price && (
+                  <p className='text-xs text-blue-600 mt-1'>
+                    Cheapest room for {(adults || 1) + (children || 0)} guest{(adults || 1) + (children || 0) > 1 ? 's' : ''}
+                  </p>
+                )}
               </div>
             )}
 
@@ -465,26 +639,30 @@ function HotelSearch({
                 )}
 
                 {/* Amenities Counts */}
-                <div className='grid grid-cols-5 gap-2'>
+                <div className='grid grid-cols-6 gap-2'>
                   <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
-                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>Bus</span>
-                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.bus_stop}</span>
+                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>Transit</span>
+                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.transit}</span>
                   </div>
                   <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
-                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>Gas</span>
-                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.gas_station}</span>
+                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>Food</span>
+                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.restaurant}</span>
                   </div>
                   <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
                     <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>Store</span>
-                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.conbini}</span>
+                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.convenience}</span>
                   </div>
                   <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
-                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>Pharm</span>
-                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.drug_store}</span>
+                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>Gas</span>
+                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.gas}</span>
                   </div>
                   <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
                     <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>ATM</span>
                     <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.atm}</span>
+                  </div>
+                  <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
+                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>POI</span>
+                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.poi}</span>
                   </div>
                 </div>
               </div>
@@ -518,6 +696,16 @@ function HotelSearch({
               placeholder='Search for hotels...'
               value={hotelSearchQuery}
               onChange={(e) => setHotelSearchQuery(e.target.value)}
+              onFocus={() => {
+                setIsInputFocused(true)
+                if (!hotelSearchQuery && !hasSearchedDefault) {
+                  searchHotelsInDestination()
+                }
+              }}
+              onBlur={() => {
+                // Delay to allow clicking on results
+                setTimeout(() => setIsInputFocused(false), 200)
+              }}
               className='w-full px-4 py-3 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none'
             />
             <svg 
@@ -587,7 +775,7 @@ function HotelSearch({
                             e.stopPropagation()
                             const slug = encodeURIComponent(hotel.name)
                             
-                            navigate(`/hotel/${slug}`, { 
+                            navigate(`/manual/hotel/${slug}`, { 
                               state: { 
                                 hotel: {
                                   ...hotel,
@@ -683,31 +871,28 @@ function HotelSearch({
               <span className='min-w-[20px]'>📍</span>
               <p>{hoveredHotel.address}</p>
             </div>
-            {hoveredHotel.city && (
-              <div className='flex items-center gap-2 text-sm text-gray-600'>
-                <span className='min-w-[20px]'>🏙️</span>
-                <p>{hoveredHotel.city}, {hoveredHotel.country}</p>
-              </div>
-            )}
-            <div className='flex items-center gap-2 text-sm text-gray-600'>
-              <span className='min-w-[20px]'>🌍</span>
-              <p>{parseFloat(hoveredHotel.lat).toFixed(4)}, {parseFloat(hoveredHotel.lon).toFixed(4)}</p>
-            </div>
+            
             
             {startDate && endDate ? (
-              getEstimatedPrice(hoveredHotel.id) !== null && (
-                <div className='mt-3 pt-3 border-t border-gray-100'>
-                  <div className='flex items-center justify-between'>
-                    <span className='text-sm font-medium text-gray-600'>Est. Total Cost:</span>
+              <div className='mt-3 pt-3 border-t border-gray-100'>
+                <div className='flex items-center justify-between'>
+                  <span className='text-sm font-medium text-gray-600'>Price per night:</span>
+                  {hotelPrices[hoveredHotel.id]?.loading ? (
+                    <AiOutlineLoading3Quarters className='h-4 w-4 animate-spin text-gray-400' />
+                  ) : hotelPrices[hoveredHotel.id]?.price ? (
                     <span className='text-lg font-bold text-green-600'>
-                      ${getEstimatedPrice(hoveredHotel.id).toLocaleString()}
+                      {hotelPrices[hoveredHotel.id].price}
                     </span>
-                  </div>
-                  <p className='text-xs text-gray-400 mt-1'>
-                    For {(adults || 1) + (children || 0)} travelers, {differenceInDays(endDate, startDate) + 1} days
-                  </p>
+                  ) : (
+                    <span className='text-sm text-gray-400 italic'>Price unavailable</span>
+                  )}
                 </div>
-              )
+                {hotelPrices[hoveredHotel.id]?.price && (
+                  <p className='text-xs text-gray-400 mt-1'>
+                    Cheapest room for {(adults || 1) + (children || 0)} guest{(adults || 1) + (children || 0) > 1 ? 's' : ''}
+                  </p>
+                )}
+              </div>
             ) : (
               <div className='mt-3 pt-3 border-t border-gray-100'>
                 <p className='text-xs text-gray-500 italic flex items-center gap-1'>
@@ -738,26 +923,30 @@ function HotelSearch({
                 )}
 
                 {/* Amenities Counts */}
-                <div className='grid grid-cols-5 gap-1.5'>
-                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Bus Stops">
-                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Bus</span>
-                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredHotel.id].counts.bus_stop}</span>
+                <div className='grid grid-cols-6 gap-1.5'>
+                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Transit Stops">
+                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Transit</span>
+                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredHotel.id].counts.transit}</span>
                   </div>
-                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Gas Stations">
-                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Gas</span>
-                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredHotel.id].counts.gas_station}</span>
+                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Restaurants & Cafes">
+                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Food</span>
+                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredHotel.id].counts.restaurant}</span>
                   </div>
                   <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Convenience Stores">
                     <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Store</span>
-                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredHotel.id].counts.conbini}</span>
+                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredHotel.id].counts.convenience}</span>
                   </div>
-                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Pharmacies">
-                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Pharm</span>
-                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredHotel.id].counts.drug_store}</span>
+                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Gas Stations">
+                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Gas</span>
+                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredHotel.id].counts.gas}</span>
                   </div>
-                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="ATMs">
+                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="ATMs & Banks">
                     <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>ATM</span>
                     <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredHotel.id].counts.atm}</span>
+                  </div>
+                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Points of Interest">
+                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>POI</span>
+                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredHotel.id].counts.poi}</span>
                   </div>
                 </div>
               </div>

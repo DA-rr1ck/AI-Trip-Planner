@@ -51,8 +51,39 @@ function extractPlaceDetails(data) {
     // Type/Category
     const type = place.type || place.types?.[0] || knowledgeGraph.type || null;
 
-    // Price level
+    // Price level ($ to $$$$)
     const priceLevel = place.price || place.price_level || null;
+
+    // Service options / amenities that might indicate pricing
+    const serviceOptions = place.service_options || place.amenities || null;
+
+    // Ticket/admission info - extract from various possible fields
+    const ticketInfo = {
+        // Check for explicit ticket prices
+        ticketPrices: place.ticket_prices || place.admission || knowledgeGraph.ticket_prices || null,
+        // Check for service options that might include entry fees
+        entryFee: place.entry_fee || place.admission_fee || knowledgeGraph.entry_fee || null,
+        // Popular times (useful for planning visits)
+        popularTimes: place.popular_times || null,
+        // Reserve/book link if available
+        reservationLink: place.reservations || place.order_online || place.book_online || null,
+        // Any attributes related to pricing
+        attributes: place.attributes || [],
+    };
+
+    // Extract price-related attributes
+    const priceAttributes = [];
+    if (Array.isArray(place.attributes)) {
+        place.attributes.forEach(attr => {
+            const attrLower = (typeof attr === 'string' ? attr : attr.name || '').toLowerCase();
+            if (attrLower.includes('free') || attrLower.includes('price') || 
+                attrLower.includes('ticket') || attrLower.includes('admission') ||
+                attrLower.includes('fee') || attrLower.includes('cost')) {
+                priceAttributes.push(attr);
+            }
+        });
+    }
+    ticketInfo.priceAttributes = priceAttributes;
 
     // Thumbnail/images
     const images = [];
@@ -123,6 +154,8 @@ function extractPlaceDetails(data) {
         website,
         type,
         priceLevel,
+        serviceOptions,
+        ticketInfo,
         images,
         userReviews,
         ratingBreakdown,

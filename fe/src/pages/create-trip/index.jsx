@@ -53,23 +53,24 @@ function CreateTrip() {
 
   // Load session data on mount
   useEffect(() => {
-    // Check if this is a hard reload (F5/Ctrl+R) using sessionStorage flag
-    const wasPageReloaded = sessionStorage.getItem('createTripPageLoaded') === 'true'
-
-    if (wasPageReloaded) {
-      // This is a reload - check navigation type
-      const navEntry = performance.getEntriesByType("navigation")[0];
-      if (navEntry && navEntry.type === 'reload') {
-        sessionStorage.removeItem('createTripSession');
-        sessionStorage.removeItem('createTripPageLoaded');
-        setIsLoaded(true);
-        return;
-      }
+    // Check if this is a hard reload (F5/Ctrl+R) vs returning from another page
+    // We use performance.navigation.type for older browsers and performance.getEntriesByType for newer ones
+    const navEntry = performance.getEntriesByType("navigation")[0];
+    const isHardReload = navEntry && navEntry.type === 'reload';
+    
+    // Also check the deprecated but more reliable performance.navigation for reload detection
+    const isLegacyReload = performance.navigation && performance.navigation.type === 1; // 1 = TYPE_RELOAD
+    
+    if (isHardReload || isLegacyReload) {
+      // This is a hard reload - clear the session and start fresh
+      console.log('Hard reload detected - clearing session')
+      sessionStorage.removeItem('createTripSession');
+      sessionStorage.removeItem('createTripPageLoaded');
+      setIsLoaded(true);
+      return;
     }
 
-    // Mark that this page has been loaded (for detecting future reloads)
-    sessionStorage.setItem('createTripPageLoaded', 'true')
-
+    // For normal navigation (including back/forward), restore the session
     const savedSession = sessionStorage.getItem('createTripSession')
     if (savedSession) {
       try {
@@ -590,7 +591,7 @@ function CreateTrip() {
                 <div className='flex items-center justify-between'>
                   <button
                     type='button'
-                    onClick={() => handleInputChange('children', Math.max(0, formData.children - 1))}
+                    onClick={() => handleChildrenChange(Math.max(0, formData.children - 1))}
                     className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
                     disabled={formData.children === 0}
                   >
@@ -601,7 +602,7 @@ function CreateTrip() {
 
                   <button
                     type='button'
-                    onClick={() => handleInputChange('children', Math.min(10, formData.children + 1))}
+                    onClick={() => handleChildrenChange(Math.min(10, formData.children + 1))}
                     className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
                     disabled={formData.children === 10}
                   >
@@ -610,6 +611,40 @@ function CreateTrip() {
                 </div>
               </div>
             </div>
+
+            {/* Children Ages Selection */}
+            {formData.children > 0 && (
+              <div className='mt-6 p-6 border rounded-lg bg-gradient-to-br from-purple-50 to-pink-50'>
+                <h3 className='font-semibold text-lg mb-4 flex items-center gap-2'>
+                  <span>👶</span>
+                  Ages of Children
+                </h3>
+                <p className='text-xs text-gray-600 mb-4'>
+                  Please select the age of each child at the time of travel (0-17 years)
+                </p>
+
+                <div className='grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4'>
+                  {Array.from({ length: formData.children }).map((_, index) => (
+                    <div key={index} className='bg-white p-4 rounded-lg border border-purple-200'>
+                      <label className='block text-sm font-medium text-gray-700 mb-2'>
+                        Child {index + 1}
+                      </label>
+                      <select
+                        value={formData.childrenAges[index] ?? 5}
+                        onChange={(e) => handleChildAgeChange(index, Number(e.target.value))}
+                        className='w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500'
+                      >
+                        {Array.from({ length: 18 }, (_, i) => i).map((age) => (
+                          <option key={age} value={age}>
+                            {age} {age === 0 ? 'year (infant)' : age === 1 ? 'year' : 'years'}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Total Travelers Summary */}
             <div className='mt-4 p-3 bg-purple-50 border border-purple-200 rounded-lg'>

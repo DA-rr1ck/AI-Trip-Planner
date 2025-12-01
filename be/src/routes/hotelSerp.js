@@ -7,6 +7,25 @@ const SERPAPI_KEY = process.env.SERPAPI_KEY;
 const SERPAPI_ENDPOINT = 'https://serpapi.com/search';
 
 /**
+ * Helper to format date to YYYY-MM-DD
+ */
+function formatDateToYYYYMMDD(dateStr) {
+    if (!dateStr) return null;
+    // If already in YYYY-MM-DD format, return as is
+    if (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        return dateStr;
+    }
+    // Try to parse the date string
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    // Format as YYYY-MM-DD
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+/**
  * Build base params from query.
  */
 function buildBaseParams(query) {
@@ -22,14 +41,18 @@ function buildBaseParams(query) {
         gl,
     } = query;
 
+    // Format dates to YYYY-MM-DD (handles various input formats)
+    const formattedCheckIn = formatDateToYYYYMMDD(check_in_date);
+    const formattedCheckOut = formatDateToYYYYMMDD(check_out_date);
+
     const params = {
         api_key: SERPAPI_KEY,
         engine: 'google_hotels',
     };
 
     if (q) params.q = q;
-    if (check_in_date) params.check_in_date = check_in_date;
-    if (check_out_date) params.check_out_date = check_out_date;
+    if (formattedCheckIn) params.check_in_date = formattedCheckIn;
+    if (formattedCheckOut) params.check_out_date = formattedCheckOut;
     if (adults) params.adults = adults;
     if (children) params.children = children;
 
@@ -154,14 +177,36 @@ function extractHotelDetails(data) {
 
     // Reviews breakdown by star (if available)
     const ratingBreakdown = {};
-    if (data.reviews_breakdown && Array.isArray(data.reviews_breakdown)) {
-        data.reviews_breakdown.forEach((item) => {
-            // item looks like { stars: 5, count: 123 } or { name: "5", count: 123 }
-            const stars = item.stars || parseInt(item.name, 10);
-            if (stars >= 1 && stars <= 5) {
-                ratingBreakdown[stars] = item.count || 0;
-            }
-        });
+    
+    // Try multiple sources for review breakdown
+    const breakdownSources = [
+        data.reviews_breakdown,
+        data.rating_breakdown,
+        data.ratings_breakdown,
+        data.star_breakdown,
+    ].filter(Boolean);
+    
+    for (const source of breakdownSources) {
+        if (Array.isArray(source) && source.length > 0) {
+            source.forEach((item) => {
+                // Handle various formats: { stars: 5, count: 123 } or { name: "5", count: 123 } or { rating: 5, total: 123 }
+                const stars = item.stars || item.rating || parseInt(item.name, 10);
+                const count = item.count || item.total || item.reviews || 0;
+                if (stars >= 1 && stars <= 5) {
+                    ratingBreakdown[stars] = count;
+                }
+            });
+            break; // Use first valid source
+        } else if (typeof source === 'object' && source !== null && !Array.isArray(source)) {
+            // Handle object format: { "5": 70, "4": 30, ... }
+            Object.entries(source).forEach(([key, value]) => {
+                const stars = parseInt(key, 10);
+                if (stars >= 1 && stars <= 5 && typeof value === 'number') {
+                    ratingBreakdown[stars] = value;
+                }
+            });
+            if (Object.keys(ratingBreakdown).length > 0) break;
+        }
     }
 
     // Typical prices
@@ -194,16 +239,19 @@ function extractHotelDetails(data) {
         data.featured_reviews,
         data.reviews_by_category?.all,
         data.extracted_reviews,
+        data.reviews_list,
+        data.user_reviews,
+        data.top_reviews,
     ].filter(Boolean);
 
     for (const source of reviewSources) {
         if (Array.isArray(source)) {
             source.forEach((r) => {
                 userReviews.push({
-                    user: r.author || r.user || r.username || 'Anonymous',
-                    date: r.date || r.published_date || r.time || null,
-                    rating: r.rating || null,
-                    text: r.snippet || r.text || r.description || r.content || '',
+                    user: r.author || r.user || r.username || r.reviewer || r.name || 'Anonymous',
+                    date: r.date || r.published_date || r.time || r.review_date || null,
+                    rating: r.rating || r.stars || r.score || null,
+                    text: r.snippet || r.text || r.description || r.content || r.review || r.comment || '',
                     source: r.source || 'Google',
                 });
             });
@@ -247,8 +295,67 @@ function extractHotelDetails(data) {
                 policies.paymentMethods = content;
             } else if (title.includes('deposit')) {
                 policies.depositPolicy = content;
+            } else if (title.includes('crib') || title.includes('extra bed')) {
+                policies.cribsAndExtraBeds = content;
+            } else if (title.includes('age')) {
+                policies.ageRequirements = content;
+            } else if (title.includes('service animal')) {
+                policies.serviceAnimals = content;
             }
         });
+    }
+
+    // Extract nearby places from SerpAPI response
+    const nearbyPlaces = [];
+    
+    // Try multiple possible sources for nearby places data
+    const nearbySourcesArray = [
+        data.nearby_places,
+        data.nearby_attractions,
+        data.places_nearby,
+        data.points_of_interest,
+    ].filter(Boolean);
+    
+    for (const source of nearbySourcesArray) {
+        if (Array.isArray(source)) {
+            source.forEach((place) => {
+                nearbyPlaces.push({
+                    name: place.name || place.title || 'Unknown Place',
+                    type: place.type || place.category || 'poi',
+                    distance: place.distance || place.walking_distance || null,
+                    duration: place.duration || place.walking_time || null,
+                    transportations: place.transportations || [],
+                    gps: place.gps_coordinates || place.coordinates || null,
+                });
+            });
+        }
+    }
+    
+    // Also check for nested structure like { transit: [...], restaurants: [...] }
+    const nestedSources = [
+        { key: 'transit', data: data.nearby_places?.transit || data.transit_nearby },
+        { key: 'restaurant', data: data.nearby_places?.restaurants || data.restaurants_nearby },
+        { key: 'attraction', data: data.nearby_places?.attractions || data.attractions_nearby },
+        { key: 'gas', data: data.nearby_places?.gas || data.nearby_places?.gas_stations },
+        { key: 'conbini', data: data.nearby_places?.conbini || data.nearby_places?.convenience_stores || data.nearby_places?.convenience },
+        { key: 'atm', data: data.nearby_places?.atm || data.nearby_places?.atms || data.nearby_places?.banks },
+        { key: 'parking', data: data.nearby_places?.parking || data.nearby_places?.car_parks },
+        { key: 'pharmacy', data: data.nearby_places?.pharmacy || data.nearby_places?.pharmacies },
+    ];
+    
+    for (const { key, data: sourceData } of nestedSources) {
+        if (Array.isArray(sourceData)) {
+            sourceData.forEach((place) => {
+                nearbyPlaces.push({
+                    name: place.name || place.title || 'Unknown Place',
+                    type: key,
+                    distance: place.distance || place.walking_distance || null,
+                    duration: place.duration || place.walking_time || null,
+                    transportations: place.transportations || [],
+                    gps: place.gps_coordinates || place.coordinates || null,
+                });
+            });
+        }
     }
 
     return {
@@ -266,6 +373,7 @@ function extractHotelDetails(data) {
         phone,
         userReviews,
         policies,
+        nearbyPlaces,
     };
 }
 
