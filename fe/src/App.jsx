@@ -5,10 +5,13 @@ import { Toaster } from '@/components/ui/sonner.jsx'
 
 // Layout bits
 import Header from '@/components/custom/Header.jsx'
+import ScrollToTop from '@/components/custom/ScrollToTop.jsx'
+import MobileBottomNav from '@/components/custom/MobileBottomNav.jsx'
 
-// Auth
+// Context
 import { AuthProvider } from '@/context/AuthContext.jsx'
 import ProtectedRoute from '@/components/ProtectedRoute/ProtectedRoute.jsx'
+import { LocaleProvider } from '@/context/LocaleContext.jsx'
 
 // Pages
 import Hero from '@/components/custom/Hero.jsx'                 // Landing content
@@ -30,6 +33,7 @@ function RootLayout() {
       <Header />
       <Outlet />
       <Toaster />
+      <MobileBottomNav />
     </>
   )
 }
@@ -39,94 +43,97 @@ export default function App() {
     <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_AUTH_CLIENT_ID}>
       <BrowserRouter>
         <AuthProvider>
-          <Routes>
-            <Route element={<RootLayout />}>
-              <Route index
-                element={<Hero />}
-              />
+          <LocaleProvider>
+            <ScrollToTop />
+            <Routes>
+              <Route element={<RootLayout />}>
+                <Route index
+                  element={<Hero />}
+                />
 
-              <Route
-                path="create-trip"
-                element={<CreateTrip />}
-              />
+                <Route
+                  path="create-trip"
+                  element={<CreateTrip />}
+                />
 
-              <Route
-                path="view-trip/:tripId"
-                element={
-                  <ProtectedRoute>
-                    <ViewTrip />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="view-trip/:tripId"
+                  element={
+                    <ProtectedRoute>
+                      <ViewTrip />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route
-                path="edit-trip"
-                element={
-                  <ProtectedRoute>
-                    <EditTrip />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="edit-trip"
+                  element={
+                    <ProtectedRoute>
+                      <EditTrip />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route
-                path="my-trips"
-                element={
-                  <ProtectedRoute>
-                    <MyTrips />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="my-trips"
+                  element={
+                    <ProtectedRoute>
+                      <MyTrips />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route
-                path="hotel/:slug"
-                element={
-                  <ProtectedRoute>
-                    <HotelDetails />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="hotel/:slug"
+                  element={
+                    <ProtectedRoute>
+                      <HotelDetails />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route
-                path="attraction/:slug"
-                element={
-                  <ProtectedRoute>
-                    <AttractionDetails />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="attraction/:slug"
+                  element={
+                    <ProtectedRoute>
+                      <AttractionDetails />
+                    </ProtectedRoute>
+                  }
+                />
 
-              {/* Manual trip creation detail pages */}
-              <Route
-                path="manual/hotel/:slug"
-                element={
-                  <ProtectedRoute>
-                    <ManualHotelDetails />
-                  </ProtectedRoute>
-                }
-              />
+                {/* Manual trip creation detail pages */}
+                <Route
+                  path="manual/hotel/:slug"
+                  element={
+                    <ProtectedRoute>
+                      <ManualHotelDetails />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route
-                path="manual/attraction/:slug"
-                element={
-                  <ProtectedRoute>
-                    <ManualAttractionDetails />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="manual/attraction/:slug"
+                  element={
+                    <ProtectedRoute>
+                      <ManualAttractionDetails />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route
-                path="/profile"
-                element={
-                  <ProtectedRoute>
-                    <ProfilePage />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="/profile"
+                  element={
+                    <ProtectedRoute>
+                      <ProfilePage />
+                    </ProtectedRoute>
+                  }
+                />
 
-              {/* Fallback */}
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Route>
-          </Routes>
+                {/* Fallback */}
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Route>
+            </Routes>
+          </LocaleProvider>
         </AuthProvider>
       </BrowserRouter>
     </GoogleOAuthProvider>

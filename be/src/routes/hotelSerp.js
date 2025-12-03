@@ -4,12 +4,12 @@ const axios = require('axios');
 const router = express.Router();
 
 const SERPAPI_KEY = process.env.SERPAPI_KEY;
-const SERPAPI_ENDPOINT = 'https://serpapi.com/search';
+const SERPAPI_BASE_URL = 'https://serpapi.com/search';
 
 /**
  * Build base params from query.
  */
-function buildBaseParams(query) {
+function buildParamsHotelDetails(query) {
     const {
         q,
         check_in_date,
@@ -17,22 +17,23 @@ function buildBaseParams(query) {
         adults,
         children,
         children_ages,
-        currency,
         hl,
-        gl,
+        currency,
     } = query;
 
     const params = {
         api_key: SERPAPI_KEY,
         engine: 'google_hotels',
+        q: q,
+        check_in_date: check_in_date,
+        check_out_date: check_out_date,
+        gl: 'vn',
+        hl: 'en',
+        currency: 'USD',
     };
 
-    if (q) params.q = q;
-    if (check_in_date) params.check_in_date = check_in_date;
-    if (check_out_date) params.check_out_date = check_out_date;
     if (adults) params.adults = adults;
     if (children) params.children = children;
-
     if (children_ages) {
         let value = children_ages;
         if (Array.isArray(value)) {
@@ -43,11 +44,86 @@ function buildBaseParams(query) {
         }
     }
 
-    if (currency) params.currency = currency;
     if (hl) params.hl = hl;
-    if (gl) params.gl = gl;
+    if (currency) params.currency = currency;
 
     return params;
+}
+
+/**
+ * HEADER: { extracted_hotel_class, address, images[] (original_image only) }
+ */
+function extractHeaderFromHotelDetails(data) {
+    const imagesArray = Array.isArray(data.images) ? data.images : [];
+    const originalImages = imagesArray
+        .map((img) => img.original_image)
+
+    return {
+        hotel_class: data.extracted_hotel_class || null,
+        name: data.name || null,
+        address: data.address || null,
+        images: originalImages,
+    };
+}
+
+/**
+ * AMENITIES: { amenities_detailed }
+ */
+function extractAmenitiesFromHotelDetails(data) {
+    return data.amenities_detailed || null;
+}
+
+/**
+ * Helper: extract policy info for a given amenities_detailed group title.
+ *
+ * Rules:
+ * - status:
+ *    - if any item.available === true -> "allowed"
+ *    - else if group exists but no item available -> "prohibited"
+ *    - else (group not found) -> null
+ */
+function extractGroupPolicy(groups, title) {
+    const group = groups.find((g) => g.title === title);
+    if (!group || !Array.isArray(group.list)) {
+        return null;
+    }
+
+    const anyAvailable = group.list.some((item) => item.available === true);
+    return anyAvailable ? 'allowed' : 'prohibited';
+}
+
+/**
+ * POLICIES:
+ * {
+ *   check_in_time,
+ *   check_out_time,
+ *   children: { status: "allowed" | "prohibited" | null },
+ *   pets: { status: "allowed" | "prohibited" | null }
+ * }
+ */
+function extractPoliciesFromHotelDetails(data) {
+    const amenitiesDetailed = data.amenities_detailed || {};
+    const groups = Array.isArray(amenitiesDetailed.groups)
+        ? amenitiesDetailed.groups
+        : [];
+
+    return {
+        check_in_time: data.check_in_time || null,
+        check_out_time: data.check_out_time || null,
+        children: extractGroupPolicy(groups, 'Children'),
+        pets: extractGroupPolicy(groups, 'Pets'),
+    };
+}
+
+/**
+ * DESCRIPTION: { phone, link, description }
+ */
+function extractDescriptionFromHotelDetails(data) {
+    return {
+        phone: data.phone || null,
+        link: data.link || null,
+        description: data.description || null,
+    };
 }
 
 /**
@@ -136,151 +212,246 @@ function extractRoomsFromHotelDetails(data) {
 }
 
 /**
- * Extract hotel details (amenities, description, policies, reviews) from SerpAPI response.
+ * RATINGS-REVIEWS: { overall_rating, reviews, ratings, other_reviews }
  */
-function extractHotelDetails(data) {
-    // amenities: array of strings like ["Free Wi-Fi", "Pool", ...]
-    const amenities = Array.isArray(data.amenities) ? data.amenities : [];
-
-    // Description paragraphs
-    const descriptionParagraphs = [];
-    if (data.description) {
-        descriptionParagraphs.push(data.description);
-    }
-
-    // Essential info (overall_rating, reviews count, etc.)
-    const overallRating = data.overall_rating || null;
-    const reviewsCount = data.reviews || null;
-
-    // Reviews breakdown by star (if available)
-    const ratingBreakdown = {};
-    if (data.reviews_breakdown && Array.isArray(data.reviews_breakdown)) {
-        data.reviews_breakdown.forEach((item) => {
-            // item looks like { stars: 5, count: 123 } or { name: "5", count: 123 }
-            const stars = item.stars || parseInt(item.name, 10);
-            if (stars >= 1 && stars <= 5) {
-                ratingBreakdown[stars] = item.count || 0;
-            }
-        });
-    }
-
-    // Typical prices
-    const typicalPrices = data.typical_prices || null;
-
-    // Location details
-    const locationInfo = {
-        address: data.address || null,
-        gpsCoordinates: data.gps_coordinates || null,
-        link: data.link || null,
-    };
-
-    // Hotel class (stars)
-    const hotelClass = data.hotel_class || null;
-
-    // Check-in/Check-out times
-    const checkInTime = data.check_in_time || null;
-    const checkOutTime = data.check_out_time || null;
-
-    // Number of rooms
-    const numberOfRooms = data.rooms || null;
-
-    // Phone
-    const phone = data.phone || null;
-
-    // Extract user reviews from Google hotel search
-    // These come from featured_reviews or reviews array
-    const userReviews = [];
-    const reviewSources = [
-        data.featured_reviews,
-        data.reviews_by_category?.all,
-        data.extracted_reviews,
-    ].filter(Boolean);
-
-    for (const source of reviewSources) {
-        if (Array.isArray(source)) {
-            source.forEach((r) => {
-                userReviews.push({
-                    user: r.author || r.user || r.username || 'Anonymous',
-                    date: r.date || r.published_date || r.time || null,
-                    rating: r.rating || null,
-                    text: r.snippet || r.text || r.description || r.content || '',
-                    source: r.source || 'Google',
-                });
-            });
-        }
-        // Limit to avoid too many
-        if (userReviews.length >= 10) break;
-    }
-
-    // Property policies: try to extract from structured data if available
-    const policies = {
-        checkInOut: checkInTime && checkOutTime 
-            ? `Check-in: ${checkInTime}, Check-out: ${checkOutTime}`
-            : checkInTime 
-                ? `Check-in: ${checkInTime}`
-                : checkOutTime 
-                    ? `Check-out: ${checkOutTime}`
-                    : null,
-        childPolicies: null,
-        cribsAndExtraBeds: null,
-        breakfast: null,
-        depositPolicy: null,
-        pets: null,
-        serviceAnimals: null,
-        ageRequirements: null,
-        paymentMethods: null,
-    };
-
-    // Try to extract policies from data if they exist in other keys
-    if (data.about && Array.isArray(data.about)) {
-        data.about.forEach((item) => {
-            const title = (item.title || '').toLowerCase();
-            const content = item.contents || item.content || null;
-            
-            if (title.includes('child') || title.includes('kid')) {
-                policies.childPolicies = content;
-            } else if (title.includes('pet')) {
-                policies.pets = content;
-            } else if (title.includes('breakfast') || title.includes('meal')) {
-                policies.breakfast = content;
-            } else if (title.includes('payment') || title.includes('card')) {
-                policies.paymentMethods = content;
-            } else if (title.includes('deposit')) {
-                policies.depositPolicy = content;
-            }
-        });
-    }
-
+function extractRatingsReviewsFromHotelDetails(data) {
     return {
-        amenities,
-        descriptionParagraphs,
-        overallRating,
-        reviewsCount,
-        ratingBreakdown,
-        typicalPrices,
-        locationInfo,
-        hotelClass,
-        checkInTime,
-        checkOutTime,
-        numberOfRooms,
-        phone,
-        userReviews,
-        policies,
+        overall_rating: data.overall_rating ?? null,
+        reviews: data.reviews ?? null,
+        ratings: Array.isArray(data.ratings) ? data.ratings : [],
+        user_reviews: Array.isArray(data.other_reviews) ? data.other_reviews : [],
     };
 }
 
 /**
+ * NEARBY HIGHLIGHTS + HOTEL GPS COORDINATES
+ */
+function extractNearbyHighlightsFromHotelDetails(data) {
+    const nearbyPlaces = Array.isArray(data.nearby_places)
+        ? data.nearby_places
+        : [];
+
+    const hotelGps = data.gps_coordinates || null;
+
+    const result = {
+        hotel_coordinates: hotelGps,
+        transport: [],
+        pois: [],
+        dining: [],
+    };
+
+    const pushNormalized = (targetArray, place) => {
+        const normalized = {
+            category: place.category || null,
+            name: place.name || null,
+            thumbnail: place.thumbnail || null,
+            rating: place.rating ?? null,
+            reviews: place.reviews ?? null,
+            gps_coordinates: place.gps_coordinates || null,
+            transportations: Array.isArray(place.transportations)
+                ? place.transportations
+                : [],
+        };
+
+        targetArray.push(normalized);
+    };
+
+    for (const place of nearbyPlaces) {
+        if (!place) continue;
+
+        const category = (place.category || '').toLowerCase();
+
+        // --- Transport ---
+        if (
+            category.includes('airport') || category.includes('sân bay') ||
+            category.includes('train station') || category.includes('ga tàu') || category.includes('nhà ga') ||
+            category.includes('bus station') || category.includes('trạm xe buýt')
+        ) {
+            pushNormalized(result.transport, place);
+            continue;
+        }
+
+        // --- POIs ---
+        if (category.includes('point of interest') || category.includes('điểm quan tâm')) {
+            pushNormalized(result.pois, place);
+            continue;
+        }
+
+        // --- Dining ---
+        if (category.includes('restaurant') || category.includes('nhà hàng')) {
+            pushNormalized(result.dining, place);
+            continue;
+        }
+
+        // --- Others: ignore for now ---
+    }
+
+    return result;
+}
+
+/**
+ * NEARBY HOTELS
+ *
+ * Uses SerpApi again with query:
+ *   hotels near "<data.name>"
+ *
+ * All other params are taken from data.search_parameters.
+ *
+ * Returns an array of up to 12 nearby hotels:
+ */
+async function extractNearbyHotelsFromHotelDetails(data) {
+    const searchParams = data.search_parameters || {};
+    const hotelName = data.name || searchParams.q || null;
+
+    if (!hotelName) {
+        return [];
+    }
+
+    // Identify current hotel token / name so we can exclude it
+    const currentPropertyToken =
+        searchParams.property_token || data.property_token || null;
+    const normalizeName = (str) =>
+        String(str || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    const normalizedCurrentName = normalizeName(hotelName);
+
+    // Build params for the "nearby hotels" search:
+    // - Start from search_parameters
+    // - Override q
+    // - Remove property_token / type so it's a normal search, not property_details
+    const baseFromSearchParams = { ...searchParams };
+
+    delete baseFromSearchParams.property_token;
+    delete baseFromSearchParams.type;
+
+    const params = {
+        api_key: SERPAPI_KEY,
+        engine: baseFromSearchParams.engine || 'google_hotels',
+        ...baseFromSearchParams,
+        q: `Hotels near "${hotelName}"`,
+    };
+
+    try {
+        const resp = await axios.get(SERPAPI_BASE_URL, { params });
+        const resData = resp.data || {};
+        const properties = Array.isArray(resData.properties)
+            ? resData.properties
+            : [];
+
+        const nearby = [];
+
+        for (const prop of properties) {
+            if (!prop || prop.type !== 'hotel') continue;
+            if (nearby.length >= 12) break;
+
+            // Exclude the current hotel (by token or by name)
+            const propToken =
+                prop.property_token || prop.token || null;
+            if (
+                currentPropertyToken &&
+                propToken &&
+                propToken === currentPropertyToken
+            ) {
+                continue;
+            }
+
+            const normalizedPropName = normalizeName(prop.name);
+            if (
+                normalizedCurrentName &&
+                normalizedPropName &&
+                normalizedPropName === normalizedCurrentName
+            ) {
+                continue;
+            }
+
+            const gps = prop.gps_coordinates || {};
+            const normalizedHotel = {
+                property_token: propToken,
+                name: prop.name || null,
+                thumbnail:
+                    (Array.isArray(prop.images) &&
+                        prop.images.length > 0 &&
+                        prop.images[0].thumbnail) ||
+                    null,
+                hotel_class: prop.extracted_hotel_class || null,
+                overall_rating:
+                    prop.overall_rating != null
+                        ? Number(prop.overall_rating)
+                        : null,
+                reviews:
+                    prop.reviews != null ? Number(prop.reviews) : null,
+                price:
+                    prop.rate_per_night?.lowest ||
+                    prop.price ||
+                    null,
+            };
+
+            nearby.push(normalizedHotel);
+        }
+
+        return nearby;
+    } catch (err) {
+        console.error(
+            'Error fetching nearby hotels from SerpApi:',
+            err?.response?.data || err.message
+        );
+        // On failure, just return empty list and let the main route continue
+        return [];
+    }
+}
+
+/**
+ * Pick the best matching property based on the hotel name.
+ *
+ * Rules:
+ * - If hotelNameRaw is provided:
+ *   - Check the first 5 properties.
+ *   - Return the first property whose name "contains/matches" the hotel name (case-insensitive).
+ *   - Matching rule: normalized propertyName includes hotelName OR hotelName includes propertyName.
+ * - If none match, or no hotelName, fall back to properties[0].
+ */
+function pickBestPropertyByName(properties, hotelNameRaw) {
+    if (!Array.isArray(properties) || properties.length === 0) {
+        return null;
+    }
+
+    if (!hotelNameRaw) {
+        return properties[0];
+    }
+
+    const normalize = (str) =>
+        String(str)
+            .toLowerCase()
+            .normalize('NFD') // remove diacritics
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+    const hotelName = normalize(hotelNameRaw);
+    const limit = Math.min(5, properties.length);
+
+    for (let i = 0; i < limit; i++) {
+        const p = properties[i];
+        if (!p || !p.name) continue;
+
+        const propName = normalize(p.name);
+
+        // "contains/matches" in both directions:
+        if (propName.includes(hotelName) || hotelName.includes(propName)) {
+            return p;
+        }
+    }
+
+    // No match in the first 5 → fallback to the first property
+    return properties[0];
+}
+
+/**
  * GET /api/serp/hotel/details
- *
- * Query params:
- *  - q               : search query (hotel name + city, etc.)  [REQUIRED]
- *  - check_in_date   : YYYY-MM-DD [REQUIRED]
- *  - check_out_date  : YYYY-MM-DD [REQUIRED]
- *  - gl              : country, e.g. "vn"
- *  - hl              : language, e.g. "en"
- *  - currency        : e.g. "USD"
- *
- * Returns: hotel details including amenities, description, policies, reviews
  */
 router.get('/hotel/details', async (req, res) => {
     if (!SERPAPI_KEY) {
@@ -296,19 +467,35 @@ router.get('/hotel/details', async (req, res) => {
     }
 
     try {
-        const baseParams = buildBaseParams(req.query);
+        const token = req.cookies?.token;
+        if (!token) return res.status(401).json({ message: 'Unauthorized' });
 
-        // First call: search to get property token
-        const initialResp = await axios.get(SERPAPI_ENDPOINT, {
+        const baseParams = buildParamsHotelDetails(req.query);
+
+        // ----- First call: search -----
+        const initialResp = await axios.get(SERPAPI_BASE_URL, {
             params: baseParams,
         });
         let data = initialResp.data || {};
 
-        // If we have properties[], do second call using property_token
+        // If have properties[], do second call using property_token
         if (Array.isArray(data.properties) && data.properties.length > 0) {
-            const firstProperty = data.properties[0];
-            const propertyToken =
-                firstProperty.property_token || firstProperty.token || null;
+            // Prefer property that matches hotel name (within first 5),
+            // then fallback to the very first property.
+            const hotelNameHint = req.query.q;
+            const bestProperty = pickBestPropertyByName(
+                data.properties,
+                hotelNameHint
+            );
+
+            let propertyToken = bestProperty?.property_token || null;
+
+            // Extra safety: if bestProperty has no token, fallback to first property
+            if (!propertyToken) {
+                const firstProperty = data.properties[0];
+                propertyToken =
+                    firstProperty.property_token || firstProperty.token || null;
+            }
 
             if (propertyToken) {
                 const detailsParams = {
@@ -317,22 +504,36 @@ router.get('/hotel/details', async (req, res) => {
                     type: 'property_details',
                 };
 
-                const detailsResp = await axios.get(SERPAPI_ENDPOINT, {
+                const detailsResp = await axios.get(SERPAPI_BASE_URL, {
                     params: detailsParams,
                 });
                 data = detailsResp.data || {};
             }
+            // If no propertyToken found at all, just fall back to initial `data` below.
         }
 
-        // Extract details from the response
-        const hotelDetails = extractHotelDetails(data);
+        // Extract data
+        const header = extractHeaderFromHotelDetails(data);
+        const amenities = extractAmenitiesFromHotelDetails(data);
+        const policies = extractPoliciesFromHotelDetails(data);
+        const description = extractDescriptionFromHotelDetails(data);
+        const rooms = extractRoomsFromHotelDetails(data);
+        const ratings_reviews = extractRatingsReviewsFromHotelDetails(data);
+        const nearby_highlights = extractNearbyHighlightsFromHotelDetails(data);
+        const nearby_hotels = await extractNearbyHotelsFromHotelDetails(data);
 
-        // Also include some raw data for debugging
         return res.json({
-            query: { ...req.query },
-            ...hotelDetails,
-            // Include images if available
-            images: data.images || [],
+            query: {
+                ...req.query,
+            },
+            header,
+            amenities,
+            policies,
+            description,
+            rooms,
+            ratings_reviews,
+            nearby_highlights,
+            nearby_hotels,
         });
     } catch (err) {
         console.error(
@@ -343,98 +544,6 @@ router.get('/hotel/details', async (req, res) => {
         const status = err.response?.status || 500;
         return res.status(status).json({
             error: 'Failed to fetch hotel details from SerpApi',
-            details:
-                err.response?.data?.error ||
-                err.response?.data?.error_message ||
-                err.message,
-        });
-    }
-});
-
-/**
- * GET /api/serp/hotel/rooms
- *
- * Query params:
- *  - q               : search query (hotel name + city, etc.)  [REQUIRED]
- *  - check_in_date   : YYYY-MM-DD [REQUIRED]
- *  - check_out_date  : YYYY-MM-DD [REQUIRED]
- *  - adults          : number of adults
- *  - children        : number of children
- *  - children_ages   : "3,7" or repeated param children_ages=3&children_ages=7
- *  - gl              : country, e.g. "vn"
- *  - hl              : language, e.g. "en"
- *  - currency        : e.g. "USD"
- *
- * Logic:
- *  - First call SerpApi without property_token.
- *  - If response has properties[]:
- *      -> grab first.properties[0].property_token
- *      -> call SerpApi again with same params + property_token (+ type=property_details)
- *      -> then run room selection logic.
- *  - If no properties[]:
- *      -> directly run room selection logic on this response.
- */
-router.get('/hotel/rooms', async (req, res) => {
-    if (!SERPAPI_KEY) {
-        return res
-            .status(500)
-            .json({ error: 'Missing SERPAPI_KEY in environment variables' });
-    }
-
-    if (!req.query.q) {
-        return res
-            .status(400)
-            .json({ error: 'Query parameter "q" (search query) is required' });
-    }
-
-    try {
-        const baseParams = buildBaseParams(req.query);
-
-        // ----- First call: search -----
-        const initialResp = await axios.get(SERPAPI_ENDPOINT, {
-            params: baseParams,
-        });
-        let data = initialResp.data || {};
-
-        // If we have properties[], do second call using property_token
-        if (Array.isArray(data.properties) && data.properties.length > 0) {
-            const firstProperty = data.properties[0];
-            const propertyToken =
-                firstProperty.property_token || firstProperty.token || null;
-
-            if (propertyToken) {
-                const detailsParams = {
-                    ...baseParams,
-                    property_token: propertyToken,
-                    type: 'property_details',
-                };
-
-                const detailsResp = await axios.get(SERPAPI_ENDPOINT, {
-                    params: detailsParams,
-                });
-                data = detailsResp.data || {};
-            }
-            // If no propertyToken found, we just fall back to initial `data` below.
-        }
-
-        // At this point, `data` should look like your mock (property-details).
-        const rooms = extractRoomsFromHotelDetails(data);
-
-        return res.json({
-            query: {
-                ...req.query,
-            },
-            rooms,
-        });
-    } catch (err) {
-        console.error(
-            'Error fetching hotel rooms from SerpApi:',
-            err?.response?.data || err.message
-        );
-
-        const status = err.response?.status || 500;
-        return res.status(status).json({
-            error: 'Failed to fetch hotel rooms from SerpApi',
             details:
                 err.response?.data?.error ||
                 err.response?.data?.error_message ||
