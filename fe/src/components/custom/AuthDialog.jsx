@@ -61,6 +61,7 @@ export default function AuthDialog({ open, onOpenChange, onSuccess }) {
         setForm({ password: "" });
         setShowPassword(false);
         setTouched(false);
+        setErr(null);
     };
 
     const selectedRegion = useMemo(
