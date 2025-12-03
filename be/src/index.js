@@ -9,6 +9,7 @@ const { ALLOWED_ORIGINS } = require('./utils/clientOriginConfig');
 const authRoutes = require('./routes/auth');
 const profileRoutes = require('./routes/profile');
 const serpHotelRoutes = require('./routes/hotelSerp');
+const placesRoutes = require('./routes/placesSerp');
 const serpAttractionRoutes = require('./routes/attractionSerp');
 const imagesRoutes = require('./routes/images');
 
@@ -43,6 +44,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/serp', serpHotelRoutes);
 app.use('/api/serp', serpAttractionRoutes);
+app.use('/api/serp', placesRoutes);
 app.use('/api/serp', imagesRoutes);
 
 // Start

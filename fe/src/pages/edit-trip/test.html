@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Leaflet Multi-Transport Routing</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
+  <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
+
+  <style>
+    body { font-family: Arial; margin: 0; padding: 0; }
+    #map { height: 600px; }
+    .buttons { padding: 10px; background: #f5f5f5; }
+    .buttons button {
+      padding: 10px 20px;
+      margin-right: 10px;
+      cursor: pointer;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+  </style>
+</head>
+<body>
+
+<div class="buttons">
+  <button onclick="route('car')">🚗 Car</button>
+  <button onclick="route('bike')">🚴 Bicycle</button>
+  <button onclick="route('walk')">🚶 Walking</button>
+</div>
+
+<div id="map"></div>
+
+<script>
+  // Coordinates for Hanoi → Ho Chi Minh City
+  const start = L.latLng(21.028511, 105.804817);
+  const end   = L.latLng(21.0580708, 105.8032223);
+
+  // Create the map
+  const map = L.map("map").setView([16, 108], 5);
+
+  // Add base layer
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+  }).addTo(map);
+
+  let routingControl = null;
+
+  function route(mode) {
+    // Remove previous route
+    if (routingControl) {
+      map.removeControl(routingControl);
+    }
+
+    let serviceUrl = "";
+
+    if (mode === 'car') {
+      serviceUrl = "https://router.project-osrm.org/route/v1";
+    } 
+    else if (mode === 'bike') {
+      serviceUrl = "https://routing.openstreetmap.de/routed-bike/route/v1";
+    } 
+    else if (mode === 'walk') {
+      serviceUrl = "https://routing.openstreetmap.de/routed-foot/route/v1";
+    }
+
+    routingControl = L.Routing.control({
+      waypoints: [start, end],
+      router: L.Routing.osrmv1({
+        serviceUrl: serviceUrl,
+      }),
+      routeWhileDragging: false
+    }).addTo(map);
+  }
+
+  // Default: Car route
+  route("car");
+</script>
+
+</body>
+</html>

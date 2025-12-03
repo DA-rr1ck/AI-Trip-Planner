@@ -2183,12 +2183,24 @@ export default function HotelDetailsPage() {
     }
 
     const handleSelectHotelForTrip = () => {
-        // TODO: implement logic:
-        // - navigate back to EditTrip with selected hotel info in state
-        console.log('Select hotel for trip (placeholder):', {
-            hotelFromState,
-            tripContext,
-        })
+        try {
+            const savedSession = sessionStorage.getItem('createTripSession')
+            if (savedSession) {
+                const parsed = JSON.parse(savedSession)
+                // Update confirmedHotel
+                // We use hotelFromState because it contains the original search result data (lat, lon, id)
+                // which is needed for the map and other logic in CreateTrip
+                parsed.confirmedHotel = hotelFromState
+                sessionStorage.setItem('createTripSession', JSON.stringify(parsed))
+                navigate('/create-trip')
+            } else {
+                // If no session, maybe just go back?
+                navigate(-1)
+            }
+        } catch (e) {
+            console.error('Error updating session:', e)
+            navigate(-1)
+        }
     }
 
     if (isLoading) {
@@ -2220,16 +2232,16 @@ export default function HotelDetailsPage() {
     }
 
     return (
-        <div className="p-6 mx-auto pb-20 md:pb-0 md:px-20 lg:w-7xl space-y-4 md:space-y-6">
+        <div className='p-6 mx-auto md:px-20 lg:w-7xl space-y-6'>
             {/* Back button */}
             <div className="">
                 <Button
-                    variant="outline"
-                    size="sm"
+                    variant='outline'
+                    size='sm'
                     onClick={() => navigate(-1)}
-                    className="flex items-center gap-2"
+                    className='flex items-center gap-2'
                 >
-                    <ArrowLeft className="h-4 w-4" /> Back to trip
+                    <ArrowLeft className='h-4 w-4' /> Back to trip
                 </Button>
             </div>
 
