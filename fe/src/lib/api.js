@@ -1,2 +1,4 @@
 import axios from 'axios';
-export const api = axios.create({ baseURL: '/api', withCredentials: true });
+import { API_BASE_URL } from '@/service/apiBaseConfig';
+
+export const api = axios.create({ baseURL: `${API_BASE_URL}/api`, withCredentials: true });
