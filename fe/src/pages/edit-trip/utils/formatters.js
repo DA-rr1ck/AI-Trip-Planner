@@ -1,4 +1,3 @@
-// fe/src/pages/edit-trip/utils/formatters.js
 export const formatBudget = (min, max) => {
     return `$${min?.toLocaleString() || 0} - $${max?.toLocaleString() || 0}`
   }
