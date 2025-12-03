@@ -2224,8 +2224,8 @@ export default function HotelDetailsPage() {
                 >
                     <ArrowLeft className="h-4 w-4" /> Back
                 </Button>
-                <p className="text-red-500 text-sm">
-                    Failed to load hotel details.
+                <p className='text-red-500 text-sm text-center'>
+                    {error}
                 </p>
             </div>
         )
