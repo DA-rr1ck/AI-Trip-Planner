@@ -41,6 +41,9 @@ router.get('/images/search', async (req, res) => {
     }
 
     try {
+        const token = req.cookies?.token;
+        if (!token) return res.status(401).json({ message: 'Unauthorized' });
+
         const baseParams = buildBaseParams(req.query);
 
         const serpRes = await axios.get(SERPAPI_ENDPOINT, {
@@ -64,8 +67,11 @@ router.get('/images/search', async (req, res) => {
 
         const status = err.response?.status || 500;
         return res.status(status).json({
-            error: 'Failed to fetch images from SerpApi.',
-            detail: err?.response?.data || err.message,
+            error: 'Failed to fetch images from SerpApi',
+            details:
+                err.response?.data?.error ||
+                err.response?.data?.error_message ||
+                err.message,
         });
     }
 });
