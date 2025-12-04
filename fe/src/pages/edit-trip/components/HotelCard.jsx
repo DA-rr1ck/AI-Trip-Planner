@@ -1,4 +1,3 @@
-// fe/src/pages/edit-trip/components/HotelCard.jsx
 import React, { useState, useEffect } from 'react'
 import { Check } from 'lucide-react'
 import { getHotelImage } from '../utils/imageUtils'

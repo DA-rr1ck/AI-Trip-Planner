@@ -1,4 +1,3 @@
-// fe/src/pages/edit-trip/components/RouteSegment.jsx
 import React, { useState } from 'react'
 import { Navigation, Clock, ArrowDown, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 

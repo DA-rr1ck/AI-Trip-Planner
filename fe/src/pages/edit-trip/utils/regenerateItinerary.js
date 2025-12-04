@@ -1,4 +1,3 @@
-// fe/src/pages/edit-trip/utils/regenerateItinerary.js
 import { generateTrip } from '@/service/AIModel'
 
 // NEW: Regenerate single day with time slots

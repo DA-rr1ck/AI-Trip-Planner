@@ -1,4 +1,3 @@
-// fe/src/pages/edit-trip/utils/localStorage.js
 const TEMP_TRIP_KEY = 'temp_trip_changes'
 
 export const saveTempChanges = (tripId, updatedTripData) => {
