@@ -1,3 +1,4 @@
+// fe/src/pages/view-trip/[tripid]/index.jsx
 import React from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { doc, getDoc } from "firebase/firestore";
@@ -9,6 +10,7 @@ import Button from '@/components/ui/Button';
 import InfoSection from '../components/InfoSection';
 import Hotels from '../components/Hotels';
 import PlacesToVisit from '../components/PlacesToVisit';
+import MapRoute from '@/components/MapRoute';
 
 function ViewTrip() {
     const { tripId } = useParams();
@@ -34,16 +36,30 @@ function ViewTrip() {
     }
 
     const handleEditTrip = () => {
-        // navigate('/edit-trip', {
-        //     state: {
-        //         tripData: trip
-        //     }
-        // })
+        navigate(`/edit-trip/${tripId}`)
     }
 
     useEffect(() => {
         tripId && GetTripData();
     }, [tripId])
+
+    // Collect all activities from itinerary for the map
+    const getAllActivities = () => {
+        if (!trip?.tripData?.Itinerary) return []
+        
+        const itinerary = trip.tripData.Itinerary
+        const dateKeys = Object.keys(itinerary).sort()
+        
+        return dateKeys.flatMap(dateKey => {
+            const dayData = itinerary[dateKey]
+            return [
+                ...(dayData.Morning?.Activities || []),
+                ...(dayData.Lunch?.Activity ? [dayData.Lunch.Activity] : []),
+                ...(dayData.Afternoon?.Activities || []),
+                ...(dayData.Evening?.Activities || [])
+            ]
+        }).filter(activity => activity.GeoCoordinates)
+    }
 
     if (loading) {
         return (
@@ -61,6 +77,8 @@ function ViewTrip() {
             </div>
         )
     }
+
+    const allActivities = getAllActivities()
 
     return (
         <div className='p-10 md:px-20 lg:px-44 xl:px-56'>
@@ -81,6 +99,22 @@ function ViewTrip() {
             
             {/* Daily plan */}
             <PlacesToVisit trip={trip} />
+
+            {/* Map Section */}
+            {allActivities.length > 0 && (
+                <div className='mb-8'>
+                    <h2 className='font-bold text-2xl mb-4'>Complete Trip Route</h2>
+                    <p className='text-sm text-gray-600 mb-4'>
+                        🗺️ View all {allActivities.length} activities across your entire trip
+                    </p>
+                    <div className='bg-white rounded-xl p-4 shadow-md border border-gray-200'>
+                        <MapRoute
+                            activities={allActivities}
+                            locationName={trip?.tripData?.Location}
+                        />
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

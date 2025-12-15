@@ -17,12 +17,12 @@ import ViewTrip from '@/pages/view-trip/[tripId]/index.jsx'
 import EditTrip from '@/pages/edit-trip/index.jsx'
 import MyTrips from '@/pages/my-trips/index.jsx'
 import ProfilePage from '@/pages/profile/index.jsx'
-
+import SmartTripPage from './pages/smart-trip'
 import HotelDetails from '@/pages/hotel-details/index.jsx'
 import AttractionDetails from '@/pages/attraction-details/index.jsx'
 import ManualHotelDetails from '@/pages/manual/hotel-details/index.jsx'
 import ManualAttractionDetails from '@/pages/manual/attraction-details/index.jsx'
-
+import ViewSmartTrip from './pages/smart-trip/view'
 // Root layout INSIDE the router so any component can use <Link/>
 function RootLayout() {
   return (
@@ -58,6 +58,22 @@ export default function App() {
                   </ProtectedRoute>
                 }
               />
+
+              <Route path='/smart-trip' 
+                element={
+                  <ProtectedRoute>
+                <SmartTripPage />
+                  </ProtectedRoute>
+                }
+                 />
+
+              <Route path='/smart-trip/view/:tripId' 
+                element={
+                  <ProtectedRoute>
+                <ViewSmartTrip />
+                  </ProtectedRoute>
+                }
+                 />
 
               <Route
                 path="edit-trip"

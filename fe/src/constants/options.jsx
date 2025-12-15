@@ -1,47 +1,4 @@
-export const SelectTravelesList = [
-  {
-    id: 1,
-    title: 'Just Me',
-    desc: 'A sole traveles in exploration',
-    icon: '✈️',
-    people: '1'
-  },
-  {
-    id: 2,
-    title: 'A Couple',
-    desc: 'Two traveles in tandem',
-    icon: '💑',
-    people: '2 People'
-  },
-  {
-    id: 3,
-    title: 'Family',
-    desc: 'A group of fun loving adventure',
-    icon: '👨‍👩‍👧',
-    people: '3 to 5 People'
-  }
-];
 
-export const SelectBudgetOptions = [
-  {
-    id: 1,
-    title: 'Cheap',
-    desc: 'Stay conscious of costs',
-    icon: '💰',
-  },
-  {
-    id: 2,
-    title: 'Moderate',
-    desc: 'Keep cost on the average side',
-    icon: '💵',
-  },
-  {
-    id: 3,
-    title: 'Luxury',
-    desc: 'Dont worry about the cost',
-    icon: '✨',
-  }
-];
 
 export const REGION_OPTIONS = [
   { code: 'VN', cc: '84', label: '🇻🇳 Vietnam (+84)',    example: '912345678', min: 9,  max: 10 },
@@ -56,7 +13,42 @@ export const REGION_OPTIONS = [
   { code: 'AU', cc: '61', label: '🇦🇺 Australia (+61)',  example: '412345678',  min: 9,  max: 9  },
 ];
 
-
+export const VIETNAM_PROVINCES = [
+    'An Giang',
+    'Bac Ninh',
+    'Ca Mau',
+    'Cao Bang',
+    'Can Tho',
+    'Da Nang',
+    'Dak Lak',
+    'Dien Bien',
+    'Dong Nai',
+    'Dong Thap',
+    'Gia Lai',
+    'Hanoi',
+    'Ha Tinh',
+    'Hai Phong',
+    'Ho Chi Minh City',
+    'Hue',
+    'Hung Yen',
+    'Khanh Hoa',
+    'Lai Chau',
+    'Lam Dong',
+    'Lang Son',
+    'Lao Cai',
+    'Nghe An',
+    'Ninh Binh',
+    'Phu Tho',
+    'Quang Ngai',
+    'Quang Ninh',
+    'Quang Tri',
+    'Son La',
+    'Tay Ninh',
+    'Thai Nguyen',
+    'Thanh Hoa',
+    'Tuyen Quang',
+    'Vinh Long'
+  ].sort();
 
 export const AI_PROMPT = `Generate Travel Plan for Location: {location}, for {totalDays} Days for {adults} Adults and {children} Children (ages: {childrenAges}) with a budget range of {budgetMin} to {budgetMax} per person.
 
@@ -88,7 +80,6 @@ You MUST respond with ONLY valid JSON in this EXACT format with NO additional te
             "Itinerary": {
                 "Day1": {
                     "Theme": "Arrival & Check-in",
-                    "BestTimeToVisit": "Afternoon",
                     "Morning": null,
                     "Lunch": null,
                     "Afternoon": {
@@ -107,7 +98,8 @@ You MUST respond with ONLY valid JSON in this EXACT format with NO additional te
                                 },
                                 "TicketPricing": "Included",
                                 "TimeSlot": "2:00 PM - 3:00 PM",
-                                "Duration": "1 hour"
+                                "Duration": "1 hour",
+                                "BestTimeToVisit": "Afternoon"
                             },
                             {
                                 "ActivityId": "auto-generated",
@@ -121,7 +113,8 @@ You MUST respond with ONLY valid JSON in this EXACT format with NO additional te
                                 },
                                 "TicketPricing": "string",
                                 "TimeSlot": "3:30 PM - 5:30 PM",
-                                "Duration": "2 hours"
+                                "Duration": "2 hours",
+                                "BestTimeToVisit": "Afternoon"
                             }
                         ]
                     },
@@ -141,14 +134,14 @@ You MUST respond with ONLY valid JSON in this EXACT format with NO additional te
                                 },
                                 "TicketPricing": "string",
                                 "TimeSlot": "6:00 PM - 8:00 PM",
-                                "Duration": "2 hours"
+                                "Duration": "2 hours",
+                                "BestTimeToVisit": "Evening"
                             }
                         ]
                     }
                 },
                 "Day{totalDays}": {
                     "Theme": "Departure & Check-out",
-                    "BestTimeToVisit": "Morning",
                     "Morning": {
                         "StartTime": "8:00 AM",
                         "EndTime": "12:00 PM",
@@ -165,7 +158,8 @@ You MUST respond with ONLY valid JSON in this EXACT format with NO additional te
                                 },
                                 "TicketPricing": "string",
                                 "TimeSlot": "8:00 AM - 11:30 AM",
-                                "Duration": "3 hours"
+                                "Duration": "3 hours",
+                                "BestTimeToVisit": "Morning"
                             },
                             {
                                 "ActivityId": "auto-generated",
@@ -179,7 +173,8 @@ You MUST respond with ONLY valid JSON in this EXACT format with NO additional te
                                 },
                                 "TicketPricing": "Included",
                                 "TimeSlot": "11:30 AM - 12:00 PM",
-                                "Duration": "30 minutes"
+                                "Duration": "30 minutes",
+                                "BestTimeToVisit": "Morning"
                             }
                         ]
                     },
@@ -212,6 +207,7 @@ Rules:
 - Middle days (Day2 to Day{totalDays-1}):
   * Full schedule: Morning, Lunch, Afternoon, Evening
   * All activities have ActivityType: 'normal_attraction'
+  * All activities have the field BestTimeToVisit indicating the recommended time to visit
 - TimeSlots must be realistic and sequential (no overlaps)
 - Activities should be age-appropriate based on the children's ages
 - Budget range is per person: total trip budget = ({budgetMin} to {budgetMax}) × ({adults} + {children})

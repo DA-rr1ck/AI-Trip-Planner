@@ -10,7 +10,7 @@ const profileRoutes = require('./routes/profile');
 const serpRoutes = require('./routes/hotelSerp');
 const placesRoutes = require('./routes/placesSerp');
 const imagesRoutes = require('./routes/images');
-
+const smartTripRoutes = require('./routes/smartTripRoutes');
 const app = express();
 
 // Security & parsers
@@ -33,7 +33,7 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/serp', serpRoutes);
 app.use('/api/serp', placesRoutes);
 app.use('/api/serp', imagesRoutes);
-
+app.use('/api/smart-trip', smartTripRoutes);
 // Start
 app.listen(PORT, () => {
     console.log(`API listening on http://localhost:${PORT}`);

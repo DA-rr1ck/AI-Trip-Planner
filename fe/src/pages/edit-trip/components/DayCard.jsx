@@ -1,15 +1,12 @@
-import React, { useState } from 'react'
+// fe/src/pages/edit-trip/components/DayCard.jsx
+import React from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { format, parse } from 'date-fns'
 import { Trash2 } from 'lucide-react'
-import MapRoute from '@/components/MapRoute'
-import RouteSegment from './RouteSegment'
 import TimeSlotSection from './TimeSlotSection'
 
 function DayCard({ dateKey, dayData, onRemoveDay, onActivityClick, onRemoveActivity, children }) {
   const { setNodeRef } = useSortable({ id: dateKey })
-  const [routeSegments, setRouteSegments] = useState([])
-  const [detailedInstructions, setDetailedInstructions] = useState([])
 
   const displayDate = format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'EEEE, MMMM d, yyyy')
 
@@ -27,46 +24,14 @@ function DayCard({ dateKey, dayData, onRemoveDay, onActivityClick, onRemoveActiv
 
   const isEmpty = allActivities.length === 0
 
-  const handleRouteCalculated = (segments, instructions) => {
-    console.log('Route segments received:', segments)
-    console.log('Detailed instructions received:', instructions)
-    setRouteSegments(segments)
-    setDetailedInstructions(instructions)
-  }
-
-  // NEW: Get the global activity index (0-based across all activities)
-  const getGlobalActivityIndex = (slot, localIndex) => {
-    let globalIndex = 0
-    
-    // Add all activities from previous slots
-    if (slot !== 'Morning') {
-      globalIndex += dayData.Morning?.Activities?.length || 0
-    }
-    
-    if (slot === 'Afternoon' || slot === 'Evening') {
-      globalIndex += dayData.Lunch?.Activity ? 1 : 0
-    }
-    
-    if (slot === 'Evening') {
-      globalIndex += dayData.Afternoon?.Activities?.length || 0
-    }
-    
-    // Add the local index within the current slot
-    globalIndex += localIndex
-    
-    return globalIndex
-  }
-
   return (
     <div ref={setNodeRef} className='mb-6'>
-      {/* Day Header */}
+      {/* Day Header - REMOVED BestTimeToVisit */}
       <div className='bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-lg mb-3 border border-blue-200'>
         <div className='flex items-center gap-3'>
           <div className='flex-1'>
             <h3 className='font-bold text-xl text-blue-900'>{displayDate}</h3>
-            <p className='text-sm text-blue-700'>
-              {dayData.Theme} • Best time: {dayData.BestTimeToVisit}
-            </p>
+            <p className='text-sm text-blue-700'>{dayData.Theme}</p>
           </div>
           <button
             onClick={() => onRemoveDay(dateKey)}
@@ -90,65 +55,38 @@ function DayCard({ dateKey, dayData, onRemoveDay, onActivityClick, onRemoveActiv
           <>
             {/* Morning Section */}
             {dayData.Morning?.Activities && dayData.Morning.Activities.length > 0 && (
-              <>
-                <TimeSlotSection
-                  title="Morning"
-                  timeRange={`${dayData.Morning.StartTime} - ${dayData.Morning.EndTime}`}
-                  activities={dayData.Morning.Activities}
-                  dateKey={dateKey}
-                  onActivityClick={onActivityClick}
-                  onRemoveActivity={onRemoveActivity}
-                />
-                {/* Show route after last morning activity */}
-                {(dayData.Lunch?.Activity || dayData.Afternoon?.Activities?.length > 0 || dayData.Evening?.Activities?.length > 0) && (
-                  <RouteSegment
-                    segment={routeSegments[getGlobalActivityIndex('Morning', dayData.Morning.Activities.length - 1)]}
-                    detailedSteps={detailedInstructions[getGlobalActivityIndex('Morning', dayData.Morning.Activities.length - 1)]?.steps}
-                  />
-                )}
-              </>
+              <TimeSlotSection
+                title="Morning"
+                timeRange={`${dayData.Morning.StartTime} - ${dayData.Morning.EndTime}`}
+                activities={dayData.Morning.Activities}
+                dateKey={dateKey}
+                onActivityClick={onActivityClick}
+                onRemoveActivity={onRemoveActivity}
+              />
             )}
 
             {/* Lunch Section */}
             {dayData.Lunch?.Activity && (
-              <>
-                <TimeSlotSection
-                  title="Lunch"
-                  timeRange={`${dayData.Lunch.StartTime} - ${dayData.Lunch.EndTime}`}
-                  activities={[dayData.Lunch.Activity]}
-                  dateKey={dateKey}
-                  onActivityClick={onActivityClick}
-                  onRemoveActivity={onRemoveActivity}
-                />
-                {/* Show route after lunch */}
-                {(dayData.Afternoon?.Activities?.length > 0 || dayData.Evening?.Activities?.length > 0) && (
-                  <RouteSegment
-                    segment={routeSegments[getGlobalActivityIndex('Lunch', 0)]}
-                    detailedSteps={detailedInstructions[getGlobalActivityIndex('Lunch', 0)]?.steps}
-                  />
-                )}
-              </>
+              <TimeSlotSection
+                title="Lunch"
+                timeRange={`${dayData.Lunch.StartTime} - ${dayData.Lunch.EndTime}`}
+                activities={[dayData.Lunch.Activity]}
+                dateKey={dateKey}
+                onActivityClick={onActivityClick}
+                onRemoveActivity={onRemoveActivity}
+              />
             )}
 
             {/* Afternoon Section */}
             {dayData.Afternoon?.Activities && dayData.Afternoon.Activities.length > 0 && (
-              <>
-                <TimeSlotSection
-                  title="Afternoon"
-                  timeRange={`${dayData.Afternoon.StartTime} - ${dayData.Afternoon.EndTime}`}
-                  activities={dayData.Afternoon.Activities}
-                  dateKey={dateKey}
-                  onActivityClick={onActivityClick}
-                  onRemoveActivity={onRemoveActivity}
-                />
-                {/* Show route after last afternoon activity */}
-                {dayData.Evening?.Activities?.length > 0 && (
-                  <RouteSegment
-                    segment={routeSegments[getGlobalActivityIndex('Afternoon', dayData.Afternoon.Activities.length - 1)]}
-                    detailedSteps={detailedInstructions[getGlobalActivityIndex('Afternoon', dayData.Afternoon.Activities.length - 1)]?.steps}
-                  />
-                )}
-              </>
+              <TimeSlotSection
+                title="Afternoon"
+                timeRange={`${dayData.Afternoon.StartTime} - ${dayData.Afternoon.EndTime}`}
+                activities={dayData.Afternoon.Activities}
+                dateKey={dateKey}
+                onActivityClick={onActivityClick}
+                onRemoveActivity={onRemoveActivity}
+              />
             )}
 
             {/* Evening Section */}
@@ -161,18 +99,6 @@ function DayCard({ dateKey, dayData, onRemoveDay, onActivityClick, onRemoveActiv
                 onActivityClick={onActivityClick}
                 onRemoveActivity={onRemoveActivity}
               />
-              // No route segment after evening (it's the last slot)
-            )}
-
-            {/* Map at the bottom */}
-            {allActivities.length > 0 && (
-              <div className='mt-4'>
-                <MapRoute
-                  activities={allActivities}
-                  locationName={dayData.Theme}
-                  onRouteCalculated={handleRouteCalculated}
-                />
-              </div>
             )}
           </>
         )}
@@ -182,5 +108,3 @@ function DayCard({ dateKey, dayData, onRemoveDay, onActivityClick, onRemoveActiv
 }
 
 export default DayCard
-
-
