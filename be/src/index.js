@@ -4,11 +4,13 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 
-const { PORT = 8000, CLIENT_ORIGIN } = process.env;
+const { PORT = 8000 } = process.env;
+const { ALLOWED_ORIGINS } = require('./utils/clientOriginConfig');
 const authRoutes = require('./routes/auth');
 const profileRoutes = require('./routes/profile');
-const serpRoutes = require('./routes/hotelSerp');
+const serpHotelRoutes = require('./routes/hotelSerp');
 const placesRoutes = require('./routes/placesSerp');
+const serpAttractionRoutes = require('./routes/attractionSerp');
 const imagesRoutes = require('./routes/images');
 
 const app = express();
@@ -21,7 +23,17 @@ app.use(cookieParser());
 // CORS (allow FE to send/receive cookies)
 app.use(
     cors({
-        origin: CLIENT_ORIGIN,
+        origin(origin, cb) {
+            // Allow tools without an Origin header (Postman, curl, etc.)
+            if (!origin) return cb(null, true);
+
+            if (ALLOWED_ORIGINS.includes(origin)) {
+                return cb(null, true);
+            }
+
+            console.log('[CORS] Blocked origin:', origin);
+            return cb(new Error('Not allowed by CORS'));
+        },
         credentials: true,
     })
 );
@@ -30,7 +42,8 @@ app.use(
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
-app.use('/api/serp', serpRoutes);
+app.use('/api/serp', serpHotelRoutes);
+app.use('/api/serp', serpAttractionRoutes);
 app.use('/api/serp', placesRoutes);
 app.use('/api/serp', imagesRoutes);
 

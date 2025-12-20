@@ -24,7 +24,8 @@ import {
     Eye,
     EyeOff,
     Info,
-    SquarePen
+    SquarePen,
+    LogOut,
 } from 'lucide-react';
 import { REGION_OPTIONS } from "@/constants/options";
 import avatarFallback from "@/assets/avatar.png";
@@ -417,7 +418,8 @@ function PasswordUpdateDialog() {
 }
 
 export default function ProfilePage() {
-    const { user } = useAuth();
+    const { user, logout } = useAuth();
+
     const [profile, setProfile] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -489,7 +491,6 @@ export default function ProfilePage() {
             }
 
             const updatedUser = res.data.user;
-
             const updatedUsername = updatedUser?.username || newUsername;
 
             setProfile((prev) =>
@@ -502,16 +503,18 @@ export default function ProfilePage() {
             );
 
             toast.success("Your username was updated successfully!");
-
             setEditingUsername(false);
         } catch (err) {
             console.error(err);
             const msg = err?.message || "Could not update username. Please try again.";
-
             toast.error(msg);
         } finally {
             setSavingUsername(false);
         }
+    };
+
+    const handleMobileSignOut = () => {
+        logout();
     };
 
     return (
@@ -526,6 +529,7 @@ export default function ProfilePage() {
                     </div>
                 ) : (
                     <>
+                        {/* Left card: avatar + username */}
                         <div className="w-full md:w-xl md:h-60 rounded-2xl p-4 flex items-center md:items-start bg-white">
                             <div className="w-full h-full flex flex-col items-center justify-center gap-6">
                                 <img
@@ -581,7 +585,7 @@ export default function ProfilePage() {
                                                         className="rounded-full hover:bg-gray-100"
                                                         aria-label="Edit username"
                                                     >
-                                                        <SquarePen className="h-5 w-5 text-gray-600" />
+                                                        <SquarePen className="h-5 w-5 text-gray-600 cursor-pointer" />
                                                     </button>
                                                 </div>
                                             </>
@@ -592,14 +596,19 @@ export default function ProfilePage() {
                                         {user?.provider ? (
                                             <span className="inline-flex items-center gap-2">
                                                 <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-                                                {user.provider === "google" ? "Signed in with Google" : "Signed in with Email"}
+                                                {user.provider === "google"
+                                                    ? "Signed in with Google"
+                                                    : "Signed in with Email"}
                                             </span>
-                                        ) : "—"}
+                                        ) : (
+                                            "—"
+                                        )}
                                     </div>
                                 </div>
                             </div>
                         </div>
 
+                        {/* Right card: account security */}
                         <div className="w-full md:w-5xl">
                             <div className="rounded-2xl p-6 bg-white">
                                 <div className="mb-4 text-2xl font-semibold">
@@ -613,6 +622,7 @@ export default function ProfilePage() {
                                         </div>
                                         <div className="mt-1 font-medium">{profile?.email || "—"}</div>
                                     </div>
+
                                     <div className="rounded-lg p-4 flex flex-row items-center justify-between bg-slate-100">
                                         <div>
                                             <div className="text-sm uppercase text-muted-foreground flex items-center gap-2">
@@ -635,6 +645,7 @@ export default function ProfilePage() {
                                             }
                                         />
                                     </div>
+
                                     <div className="rounded-lg p-4 flex flex-row items-center justify-between bg-slate-100">
                                         <div>
                                             <div className="text-sm uppercase text-muted-foreground flex items-center gap-2">
@@ -643,12 +654,22 @@ export default function ProfilePage() {
                                             <div className="mt-1 font-medium">********</div>
                                         </div>
 
-                                        {user?.provider === 'email' ? (
-                                            <PasswordUpdateDialog />
-                                        ) : ''}
+                                        {user?.provider === "email" ? <PasswordUpdateDialog /> : ""}
                                     </div>
                                 </div>
                             </div>
+                        </div>
+
+                        {/* Mobile-only sign out button */}
+                        <div className="w-full md:hidden">
+                            <button
+                                type="button"
+                                onClick={handleMobileSignOut}
+                                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-600 active:bg-red-700"
+                            >
+                                <LogOut className="h-4 w-4" />
+                                <span>Sign out</span>
+                            </button>
                         </div>
                     </>
                 )}

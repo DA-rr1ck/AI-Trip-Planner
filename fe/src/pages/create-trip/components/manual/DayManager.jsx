@@ -22,6 +22,49 @@ import { CSS } from '@dnd-kit/utilities'
 import { GripVertical } from 'lucide-react'
 import MapRoute from '@/components/MapRoute'
 
+const TIME_SLOTS = [
+  { key: 'Morning', start: '8:00 AM', end: '12:00 PM', icon: '🌅', gradient: 'from-amber-50 to-yellow-50 border-amber-200' },
+  { key: 'Lunch', start: '12:00 PM', end: '1:30 PM', icon: '🍽️', gradient: 'from-green-50 to-emerald-50 border-green-200' },
+  { key: 'Afternoon', start: '1:30 PM', end: '6:00 PM', icon: '☀️', gradient: 'from-blue-50 to-cyan-50 border-blue-200' },
+  { key: 'Evening', start: '6:00 PM', end: '10:00 PM', icon: '🌆', gradient: 'from-purple-50 to-pink-50 border-purple-200' },
+]
+
+function createEmptySlots() {
+  return {
+    Morning: [],
+    Lunch: [],
+    Afternoon: [],
+    Evening: [],
+  }
+}
+
+function normalizeDaySlots(day) {
+  if (day?.slots) return day
+
+  const empty = createEmptySlots()
+  const existingPlaces = Array.isArray(day?.places) ? day.places : []
+
+  return {
+    ...day,
+    slots: {
+      ...empty,
+      Morning: existingPlaces,
+    },
+  }
+}
+
+function getAllPlacesForDay(day) {
+  if (day?.slots) {
+    const ordered = []
+    for (const slot of TIME_SLOTS) {
+      ordered.push(...(day.slots?.[slot.key] || []))
+    }
+    return ordered
+  }
+
+  return Array.isArray(day?.places) ? day.places : []
+}
+
 // Fallback to Pixabay if SerpAPI fails
 async function getImageFromPixabay(query) {
   const API_KEY = import.meta.env.VITE_PIXABAY_API_KEY;
@@ -93,12 +136,17 @@ function SortablePlace({ place, index, onRemove }) {
     navigate(`/manual/attraction/${slug}`, {
       state: {
         activity: {
+          // Keep both legacy/manual keys and AI-friendly keys for compatibility
+          name: place.name,
+          address: place.address,
+          lat: Number.isFinite(Number(place.lat)) ? Number(place.lat) : place.lat,
+          lon: Number.isFinite(Number(place.lon)) ? Number(place.lon) : place.lon,
           PlaceName: place.name,
           PlaceDetails: place.address,
           Address: place.address,
           GeoCoordinates: {
-              Latitude: place.lat,
-              Longitude: place.lon
+              Latitude: Number.isFinite(Number(place.lat)) ? Number(place.lat) : place.lat,
+              Longitude: Number.isFinite(Number(place.lon)) ? Number(place.lon) : place.lon
           },
           Rating: 4.5,
           imageUrl: imageUrl
@@ -177,9 +225,50 @@ function SortablePlace({ place, index, onRemove }) {
   )
 }
 
+function TimeSlotContainer({
+  day,
+  slot,
+  onRemovePlace,
+}) {
+  const slotId = `${day.id}::${slot.key}`
+  const { setNodeRef } = useSortable({ id: slotId })
+  const slotPlaces = day.slots?.[slot.key] || []
+
+  return (
+    <div ref={setNodeRef} className='rounded-lg border border-gray-200 bg-gray-50'>
+      <div className={`bg-gradient-to-r ${slot.gradient} border-l-4 px-4 py-2 rounded-lg mb-3`}>
+        <div className='flex items-center gap-2'>
+          <span className='text-xl'>{slot.icon}</span>
+          <h4 className='font-semibold text-lg'>{slot.key}</h4>
+          <span className='text-sm text-gray-600 ml-auto'>{slot.start} - {slot.end}</span>
+        </div>
+      </div>
+
+      <div className='space-y-2 px-4 pb-4'>
+        {slotPlaces.length === 0 ? (
+          <div className='text-center py-4 text-gray-500 text-sm'>
+            Drag a place here
+          </div>
+        ) : (
+          slotPlaces.map((place, index) => (
+            <SortablePlace
+              key={place.id}
+              place={place}
+              index={index}
+              onRemove={() => onRemovePlace(day.id, place.id)}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
 // Droppable Day Component
-function DroppableDay({ day, children, onRemoveDay, daySearchQuery, onSearchQueryChange, searching, searchResults, onAddPlace, onHoverPlace, onRemovePlace }) {
+function DroppableDay({ day, onRemoveDay, daySearchQuery, onSearchQueryChange, searching, searchResults, onAddPlace, onHoverPlace, onRemovePlace }) {
   const { setNodeRef } = useSortable({ id: day.id })
+
+  const allPlaces = getAllPlacesForDay(day)
 
   return (
     <div ref={setNodeRef} className='border-2 border-gray-200 rounded-xl p-6 bg-white shadow-sm'>
@@ -253,14 +342,22 @@ function DroppableDay({ day, children, onRemoveDay, daySearchQuery, onSearchQuer
         </div>
       )}
 
-      <div className='space-y-2 min-h-[50px]'>
-        {children}
+      {/* Time slots */}
+      <div className='space-y-4 min-h-[50px]'>
+        {TIME_SLOTS.map((slot) => (
+          <TimeSlotContainer
+            key={slot.key}
+            day={day}
+            slot={slot}
+            onRemovePlace={onRemovePlace}
+          />
+        ))}
       </div>
 
-      {day.places.length > 0 && (
+      {allPlaces.length > 0 && (
         <div className='mt-4'>
           <MapRoute 
-            activities={day.places.map(p => ({
+            activities={allPlaces.map(p => ({
               GeoCoordinates: {
                 Latitude: parseFloat(p.lat),
                 Longitude: parseFloat(p.lon)
@@ -275,7 +372,7 @@ function DroppableDay({ day, children, onRemoveDay, daySearchQuery, onSearchQuer
         </div>
       )}
 
-      {day.places.length === 0 && !daySearchQuery && (
+      {allPlaces.length === 0 && !daySearchQuery && (
         <div className='text-center py-6 text-gray-500 text-sm'>
           Search and add places to visit on this day
         </div>
@@ -285,6 +382,10 @@ function DroppableDay({ day, children, onRemoveDay, daySearchQuery, onSearchQuer
 }
 
 function DayManager({ location, tripDays, onDaysChange }) {
+  // Hover preview feature (hover popup + hover-triggered nearby fetch)
+  // Keep the implementation, but disable for now.
+  const ENABLE_HOVER_PREVIEW = false
+
   const [daySearchQueries, setDaySearchQueries] = useState({})
   const [dayPlaceResults, setDayPlaceResults] = useState({})
   const [searchingDayPlaces, setSearchingDayPlaces] = useState({})
@@ -302,6 +403,16 @@ function DayManager({ location, tripDays, onDaysChange }) {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   )
+
+  // Backward-compat: older sessions had only day.places; normalize into day.slots once.
+  useEffect(() => {
+    const needsNormalize = Array.isArray(tripDays) && tripDays.some(d => !d?.slots && Array.isArray(d?.places))
+    if (!needsNormalize) return
+
+    const normalized = tripDays.map(normalizeDaySlots)
+    onDaysChange(normalized)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripDays])
 
   const handleMouseMove = (e) => {
     const popupHeight = 400 
@@ -324,6 +435,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
 
   // Fetch nearby amenities using Overpass API
   useEffect(() => {
+    if (!ENABLE_HOVER_PREVIEW) return
     if (!hoveredPlace) return
     if (nearbyData[hoveredPlace.id]) return
 
@@ -453,11 +565,11 @@ function DayManager({ location, tripDays, onDaysChange }) {
 
     const timer = setTimeout(fetchNearby, 500)
     return () => clearTimeout(timer)
-  }, [hoveredPlace])
+  }, [ENABLE_HOVER_PREVIEW, hoveredPlace])
 
   const addNewDay = () => {
     const dayNumber = tripDays.length + 1
-    onDaysChange([...tripDays, { id: Date.now(), dayNumber, places: [] }])
+    onDaysChange([...tripDays, { id: Date.now(), dayNumber, places: [], slots: createEmptySlots() }])
   }
 
   const removeDay = (dayId) => {
@@ -523,8 +635,10 @@ function DayManager({ location, tripDays, onDaysChange }) {
   const addPlaceToDay = (dayId, place) => {
     const updated = tripDays.map(day => {
       if (day.id === dayId) {
+        const normalizedDay = normalizeDaySlots(day)
         // Check for duplicates using original ID if available, or just ID
-        if (day.places.find(p => (p.originalId || p.id) === place.id)) {
+        const allPlaces = getAllPlacesForDay(normalizedDay)
+        if (allPlaces.find(p => (p.originalId || p.id) === place.id)) {
           toast.info('This place is already in this day')
           return day
         }
@@ -534,8 +648,16 @@ function DayManager({ location, tripDays, onDaysChange }) {
           originalId: place.id,
           id: `place-${Date.now()}-${Math.random()}` 
         }
-        
-        return { ...day, places: [...day.places, newPlace] }
+
+        const nextSlots = {
+          ...(normalizedDay.slots || createEmptySlots()),
+          Morning: [...(normalizedDay.slots?.Morning || []), newPlace],
+        }
+
+        const nextDay = { ...normalizedDay, slots: nextSlots }
+        // Keep `places` in sync for compatibility with older code paths.
+        nextDay.places = getAllPlacesForDay(nextDay)
+        return nextDay
       }
       return day
     })
@@ -551,7 +673,14 @@ function DayManager({ location, tripDays, onDaysChange }) {
   const removePlaceFromDay = (dayId, placeId) => {
     const updated = tripDays.map(day => {
       if (day.id === dayId) {
-        return { ...day, places: day.places.filter(p => p.id !== placeId) }
+        const normalizedDay = normalizeDaySlots(day)
+        const nextSlots = {}
+        for (const slot of TIME_SLOTS) {
+          nextSlots[slot.key] = (normalizedDay.slots?.[slot.key] || []).filter(p => p.id !== placeId)
+        }
+        const nextDay = { ...normalizedDay, slots: nextSlots }
+        nextDay.places = getAllPlacesForDay(nextDay)
+        return nextDay
       }
       return day
     })
@@ -568,72 +697,97 @@ function DayManager({ location, tripDays, onDaysChange }) {
 
     if (!over || active.id === over.id) return
 
-    const findDayForPlace = (placeId) => {
+    const dayIds = new Set(tripDays.map(d => d.id))
+
+    const parseSlotId = (id) => {
+      if (typeof id !== 'string') return null
+      const parts = id.split('::')
+      if (parts.length !== 2) return null
+      return { dayId: Number(parts[0]) || parts[0], slotKey: parts[1] }
+    }
+
+    const findPlaceLocation = (placeId) => {
       for (const day of tripDays) {
-        if (day.places.find(p => p.id === placeId)) {
-          return day.id
+        const normalizedDay = normalizeDaySlots(day)
+        for (const slot of TIME_SLOTS) {
+          const idx = (normalizedDay.slots?.[slot.key] || []).findIndex(p => p.id === placeId)
+          if (idx !== -1) {
+            return { dayId: day.id, slotKey: slot.key, index: idx }
+          }
         }
       }
       return null
     }
 
-    const activeDayId = findDayForPlace(active.id)
-    let overDayId = findDayForPlace(over.id)
+    const activeLoc = findPlaceLocation(active.id)
+    if (!activeLoc) return
 
-    if (!overDayId) {
-        // Check if over.id is a day id
-        const overDay = tripDays.find(d => d.id === over.id)
-        if (overDay) {
-            overDayId = overDay.id
-        }
-    }
+    let target = null
 
-    if (!activeDayId || !overDayId) return
-
-    if (activeDayId === overDayId) {
-        // Reorder within same day
-        const dayIndex = tripDays.findIndex(d => d.id === activeDayId)
-        const day = tripDays[dayIndex]
-        const oldIndex = day.places.findIndex(p => p.id === active.id)
-        const newIndex = day.places.findIndex(p => p.id === over.id)
-
-        if (oldIndex !== -1 && newIndex !== -1) {
-            const newPlaces = arrayMove(day.places, oldIndex, newIndex)
-            const newTripDays = [...tripDays]
-            newTripDays[dayIndex] = { ...day, places: newPlaces }
-            onDaysChange(newTripDays)
-        }
+    // Over another place
+    const overPlaceLoc = findPlaceLocation(over.id)
+    if (overPlaceLoc) {
+      target = { ...overPlaceLoc }
     } else {
-        // Move to different day
-        const sourceDayIndex = tripDays.findIndex(d => d.id === activeDayId)
-        const targetDayIndex = tripDays.findIndex(d => d.id === overDayId)
-        
-        const sourceDay = tripDays[sourceDayIndex]
-        const targetDay = tripDays[targetDayIndex]
-
-        const sourcePlaces = [...sourceDay.places]
-        const targetPlaces = [...targetDay.places]
-
-        const activeIndex = sourcePlaces.findIndex(p => p.id === active.id)
-        if (activeIndex !== -1) {
-            const [movedPlace] = sourcePlaces.splice(activeIndex, 1)
-            
-            const overIndex = targetPlaces.findIndex(p => p.id === over.id)
-            if (overIndex !== -1) {
-                targetPlaces.splice(overIndex, 0, movedPlace)
-            } else {
-                targetPlaces.push(movedPlace)
-            }
-
-            const newTripDays = [...tripDays]
-            newTripDays[sourceDayIndex] = { ...sourceDay, places: sourcePlaces }
-            newTripDays[targetDayIndex] = { ...targetDay, places: targetPlaces }
-            onDaysChange(newTripDays)
-        }
+      // Over a slot container
+      const slotTarget = parseSlotId(over.id)
+      if (slotTarget) {
+        target = { dayId: slotTarget.dayId, slotKey: slotTarget.slotKey, index: -1 }
+      } else if (dayIds.has(over.id)) {
+        // Over a day container: default to Morning
+        target = { dayId: over.id, slotKey: 'Morning', index: -1 }
+      }
     }
+
+    if (!target) return
+
+    // Enforce AI-like lunch behavior: at most 1 lunch item.
+    if (target.slotKey === 'Lunch' && !(activeLoc.dayId === target.dayId && activeLoc.slotKey === 'Lunch')) {
+      const targetDay = normalizeDaySlots(tripDays.find(d => d.id === target.dayId))
+      const lunchCount = (targetDay?.slots?.Lunch || []).length
+      if (lunchCount >= 1) {
+        toast.info('Lunch can have only one place')
+        return
+      }
+    }
+
+    const newTripDays = tripDays.map(d => normalizeDaySlots(d))
+
+    const sourceDayIndex = newTripDays.findIndex(d => d.id === activeLoc.dayId)
+    const targetDayIndex = newTripDays.findIndex(d => d.id === target.dayId)
+    if (sourceDayIndex === -1 || targetDayIndex === -1) return
+
+    const sourceDay = { ...newTripDays[sourceDayIndex] }
+    const targetDayObj = sourceDayIndex === targetDayIndex ? sourceDay : { ...newTripDays[targetDayIndex] }
+
+    const sourceArr = [...(sourceDay.slots?.[activeLoc.slotKey] || [])]
+    const [moved] = sourceArr.splice(activeLoc.index, 1)
+    sourceDay.slots = { ...(sourceDay.slots || createEmptySlots()), [activeLoc.slotKey]: sourceArr }
+
+    const targetArr = [...(targetDayObj.slots?.[target.slotKey] || [])]
+    let insertIndex = target.index
+    if (insertIndex < 0 || insertIndex > targetArr.length) insertIndex = targetArr.length
+
+    // If moving within same slot and over a place, dnd-kit gives indices in the original array;
+    // after removal, adjust insertion index.
+    if (sourceDayIndex === targetDayIndex && activeLoc.slotKey === target.slotKey && target.index > activeLoc.index) {
+      insertIndex = Math.max(0, insertIndex - 1)
+    }
+
+    targetArr.splice(insertIndex, 0, moved)
+    targetDayObj.slots = { ...(targetDayObj.slots || createEmptySlots()), [target.slotKey]: targetArr }
+
+    // Sync flat `places` for compatibility.
+    sourceDay.places = getAllPlacesForDay(sourceDay)
+    targetDayObj.places = getAllPlacesForDay(targetDayObj)
+
+    newTripDays[sourceDayIndex] = sourceDay
+    newTripDays[targetDayIndex] = targetDayObj
+    onDaysChange(newTripDays)
   }
 
-  const allPlaceIds = tripDays.flatMap(day => day.places.map(p => p.id))
+  const allPlaceIds = tripDays.flatMap(day => getAllPlacesForDay(day).map(p => p.id))
+  const allSlotIds = tripDays.flatMap(day => TIME_SLOTS.map(slot => `${day.id}::${slot.key}`))
 
   return (
     <div className='mt-10'>
@@ -664,12 +818,12 @@ function DayManager({ location, tripDays, onDaysChange }) {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          <SortableContext items={[...allPlaceIds, ...tripDays.map(d => d.id)]} strategy={verticalListSortingStrategy}>
+          <SortableContext items={[...allPlaceIds, ...tripDays.map(d => d.id), ...allSlotIds]} strategy={verticalListSortingStrategy}>
             <div className='space-y-6'>
               {tripDays.map((day) => (
                 <DroppableDay
                   key={day.id}
-                  day={day}
+                  day={normalizeDaySlots(day)}
                   onRemoveDay={removeDay}
                   daySearchQuery={daySearchQueries[day.id]}
                   onSearchQueryChange={(val) => setDaySearchQueries({ ...daySearchQueries, [day.id]: val })}
@@ -677,6 +831,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
                   searchResults={dayPlaceResults[day.id]}
                   onAddPlace={addPlaceToDay}
                   onHoverPlace={(e, place, dayId, isMove) => {
+                    if (!ENABLE_HOVER_PREVIEW) return
                     if (isMove) {
                       handleMouseMove(e)
                     } else if (place) {
@@ -687,16 +842,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
                     }
                   }}
                   onRemovePlace={removePlaceFromDay}
-                >
-                  {day.places.map((place, index) => (
-                    <SortablePlace
-                      key={place.id}
-                      place={place}
-                      index={index}
-                      onRemove={() => removePlaceFromDay(day.id, place.id)}
-                    />
-                  ))}
-                </DroppableDay>
+                />
               ))}
             </div>
           </SortableContext>
@@ -704,7 +850,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
       )}
 
       {/* Hover Popup */}
-      {hoveredPlace && (
+      {ENABLE_HOVER_PREVIEW && hoveredPlace && (
         <div 
           className='fixed z-50 w-80 bg-white rounded-xl shadow-2xl border border-blue-100 p-5 animate-in fade-in zoom-in-95 duration-200 hidden xl:block'
           style={{ top: popupPosition.top, left: popupPosition.left }}

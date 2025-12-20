@@ -61,6 +61,14 @@ function HotelSearch({
   savedResults = [],
   onSearchStateChange
 }) {
+  // Hover preview feature (hover popup + hover-triggered price/nearby fetch)
+  // Keep the implementation, but disable for now.
+  const ENABLE_HOVER_PREVIEW = false
+
+  // Hotel card nearby highlights (manual trip creation UI)
+  // Keep the implementation, but disable for now.
+  const ENABLE_HOTEL_CARD_NEARBY = false
+
   const [hotelSearchQuery, setHotelSearchQuery] = useState(savedQuery)
   const [hotelResults, setHotelResults] = useState(savedResults)
   const [searchingHotels, setSearchingHotels] = useState(false)
@@ -189,10 +197,11 @@ function HotelSearch({
 
   // Fetch price when hovering or when confirmed hotel changes
   useEffect(() => {
+    if (!ENABLE_HOVER_PREVIEW) return
     if (hoveredHotel && startDate && endDate) {
       fetchHotelPrice(hoveredHotel)
     }
-  }, [hoveredHotel?.id, startDate, endDate])
+  }, [ENABLE_HOVER_PREVIEW, hoveredHotel?.id, startDate, endDate])
 
   useEffect(() => {
     if (confirmedHotel && startDate && endDate) {
@@ -202,7 +211,9 @@ function HotelSearch({
 
   // Fetch nearby amenities using Overpass API
   useEffect(() => {
-    const targetHotel = hoveredHotel || confirmedHotel
+    const targetHotel = ENABLE_HOVER_PREVIEW
+      ? (hoveredHotel || confirmedHotel)
+      : (ENABLE_HOTEL_CARD_NEARBY ? confirmedHotel : null)
     if (!targetHotel) return
 
     // If we already have data for this hotel, don't fetch again
@@ -336,7 +347,7 @@ function HotelSearch({
 
     const timer = setTimeout(fetchNearby, 500)
     return () => clearTimeout(timer)
-  }, [hoveredHotel, confirmedHotel])
+  }, [ENABLE_HOVER_PREVIEW, ENABLE_HOTEL_CARD_NEARBY, hoveredHotel, confirmedHotel])
 
   // Clear hovered hotel when results change
   useEffect(() => {
@@ -525,9 +536,43 @@ function HotelSearch({
   }
 
   if (confirmedHotel) {
+    const openHotelDetails = () => {
+      const slug = encodeURIComponent(confirmedHotel.name)
+      navigate(`/manual/hotel/${slug}`, {
+        state: {
+          hotel: {
+            // Keep both legacy/manual keys and AI keys for compatibility
+            id: confirmedHotel.id,
+            name: confirmedHotel.name,
+            address: confirmedHotel.address,
+            HotelName: confirmedHotel.name,
+            HotelAddress: confirmedHotel.address,
+            Rating: 4.5,
+            lat: Number.isFinite(Number(confirmedHotel.lat)) ? Number(confirmedHotel.lat) : confirmedHotel.lat,
+            lon: Number.isFinite(Number(confirmedHotel.lon)) ? Number(confirmedHotel.lon) : confirmedHotel.lon,
+            imageUrl: hotelImage
+          },
+          tripContext: {
+            userSelection: {
+              startDate: startDate ? format(startDate, 'yyyy-MM-dd') : undefined,
+              endDate: endDate ? format(endDate, 'yyyy-MM-dd') : undefined,
+              adults: adults || 1,
+              children: children || 0
+            }
+          }
+        }
+      })
+    }
+
+    const openHotelOnGoogleMaps = () => {
+      const lat = Number.isFinite(Number(confirmedHotel.lat)) ? Number(confirmedHotel.lat) : confirmedHotel.lat
+      const lon = Number.isFinite(Number(confirmedHotel.lon)) ? Number(confirmedHotel.lon) : confirmedHotel.lon
+      window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lon}`, '_blank', 'noopener,noreferrer')
+    }
+
     return (
       <div className='border-2 border-gray-200 rounded-xl p-6 bg-white shadow-sm'>
-        <div className='p-4 bg-blue-50 border-2 border-blue-300 rounded-lg'>
+        <div className='p-4 bg-white border border-gray-200 rounded-lg'>
           {hotelImage && (
             <div className="mb-4 rounded-lg overflow-hidden h-48 w-full shadow-sm">
               <img 
@@ -538,53 +583,22 @@ function HotelSearch({
             </div>
           )}
           <div className='flex items-start justify-between mb-3'>
-            <div 
-              className="cursor-pointer hover:opacity-80 transition-opacity group"
-              onClick={() => {
-                const slug = encodeURIComponent(confirmedHotel.name)
-                navigate(`/manual/hotel/${slug}`, {
-                  state: {
-                    hotel: {
-                      HotelName: confirmedHotel.name,
-                      HotelAddress: confirmedHotel.address,
-                      Rating: 4.5,
-                      lat: confirmedHotel.lat,
-                      lon: confirmedHotel.lon,
-                      imageUrl: hotelImage
-                    },
-                    tripContext: {
-                      userSelection: {
-                        startDate: startDate ? format(startDate, 'yyyy-MM-dd') : undefined,
-                        endDate: endDate ? format(endDate, 'yyyy-MM-dd') : undefined,
-                        adults,
-                        children
-                      }
-                    }
-                  }
-                })
-              }}
-            >
+            <div className='group'>
               <div className='flex items-center gap-2 mb-1'>
-                <p className='text-sm font-semibold text-blue-900'>
+                <p className='text-sm font-semibold text-gray-900'>
                   ✓ Selected
                 </p>
-                <span className='bg-blue-200 text-blue-800 text-[10px] px-2 py-0.5 rounded-full capitalize'>
+                <span className='bg-gray-100 text-gray-700 text-[10px] px-2 py-0.5 rounded-full capitalize'>
                   {confirmedHotel.type}
                 </span>
               </div>
-              <p className='font-medium text-blue-800 text-lg group-hover:underline decoration-blue-800 underline-offset-2'>
+              <p className='font-medium text-gray-900 text-lg'>
                 {confirmedHotel.name}
-              </p>
-              <p className='text-[10px] text-blue-600 mt-0.5 flex items-center gap-1'>
-                Click to view details
-                <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' />
-                </svg>
               </p>
             </div>
             <button
               onClick={onRemoveHotel}
-              className='text-blue-600 hover:text-blue-800 p-1 hover:bg-blue-100 rounded-full transition-colors'
+              className='text-red-600 hover:text-red-800 p-1 hover:bg-red-50 rounded-full transition-colors'
               title="Remove hotel"
             >
               <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
@@ -594,77 +608,53 @@ function HotelSearch({
           </div>
 
           <div className='space-y-2 pl-1'>
-            <div className='flex items-start gap-2 text-sm text-blue-700'>
+            <div className='flex items-start gap-2 text-sm text-gray-600'>
               <span className='min-w-[20px]'>📍</span>
               <p>{confirmedHotel.address}</p>
             </div>
 
+            <div className='flex items-center gap-3 mt-1.5'>
+              <button
+                type='button'
+                onClick={openHotelDetails}
+                className='flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800 hover:underline font-medium'
+              >
+                View Details
+                <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' />
+                </svg>
+              </button>
+              <button
+                type='button'
+                onClick={openHotelOnGoogleMaps}
+                className='flex items-center gap-1 text-[10px] text-green-600 hover:text-green-800 hover:underline'
+              >
+                Google Maps
+                <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14' />
+                </svg>
+              </button>
+            </div>
+
             {startDate && endDate && (
-              <div className='mt-3 pt-3 border-t border-blue-200'>
+              <div className='mt-3 pt-3 border-t border-gray-100'>
                 <div className='flex items-center justify-between'>
-                  <span className='text-sm font-medium text-blue-800'>Price per night:</span>
+                  <span className='text-sm font-medium text-gray-600'>Price per night:</span>
                   {hotelPrices[confirmedHotel.id]?.loading ? (
-                    <AiOutlineLoading3Quarters className='h-4 w-4 animate-spin text-blue-600' />
+                    <AiOutlineLoading3Quarters className='h-4 w-4 animate-spin text-gray-400' />
                   ) : hotelPrices[confirmedHotel.id]?.price ? (
-                    <span className='text-lg font-bold text-blue-900'>
+                    <span className='text-lg font-bold text-green-600'>
                       {hotelPrices[confirmedHotel.id].price}
                     </span>
                   ) : (
-                    <span className='text-sm text-blue-600 italic'>Price unavailable</span>
+                    <span className='text-sm text-gray-400 italic'>Price unavailable</span>
                   )}
                 </div>
                 {hotelPrices[confirmedHotel.id]?.price && (
-                  <p className='text-xs text-blue-600 mt-1'>
+                  <p className='text-xs text-gray-400 mt-1'>
                     Cheapest room for {(adults || 1) + (children || 0)} guest{(adults || 1) + (children || 0) > 1 ? 's' : ''}
                   </p>
                 )}
-              </div>
-            )}
-
-            {/* Nearby Amenities for Confirmed Hotel */}
-            {nearbyData[confirmedHotel.id] && (
-              <div className='mt-3 pt-3 border-t border-blue-200'>
-                <p className='text-xs font-semibold text-blue-800 mb-2'>Nearby Highlights (1km radius)</p>
-                
-                {/* Featured Attractions */}
-                {nearbyData[confirmedHotel.id].attractions.length > 0 && (
-                  <div className='grid grid-cols-2 gap-2 mb-3'>
-                    {nearbyData[confirmedHotel.id].attractions.map((attr, idx) => (
-                      <div key={idx} className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm text-center'>
-                        <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>{attr.distance}m</span>
-                        <span className='text-sm font-bold text-blue-900 line-clamp-1 w-full px-1' title={attr.name}>{attr.name}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Amenities Counts */}
-                <div className='grid grid-cols-6 gap-2'>
-                  <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
-                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>Transit</span>
-                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.transit}</span>
-                  </div>
-                  <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
-                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>Food</span>
-                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.restaurant}</span>
-                  </div>
-                  <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
-                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>Store</span>
-                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.convenience}</span>
-                  </div>
-                  <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
-                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>Gas</span>
-                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.gas}</span>
-                  </div>
-                  <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
-                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>ATM</span>
-                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.atm}</span>
-                  </div>
-                  <div className='flex flex-col items-center justify-center p-2 bg-white/60 rounded-lg border border-blue-200 shadow-sm'>
-                    <span className='text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-0.5'>POI</span>
-                    <span className='text-sm font-bold text-blue-900'>{nearbyData[confirmedHotel.id].counts.poi}</span>
-                  </div>
-                </div>
               </div>
             )}
           </div>
@@ -754,11 +744,18 @@ function HotelSearch({
                     key={hotel.id}
                     onClick={() => handleHotelSelect(hotel)}
                     onMouseEnter={(e) => {
+                      if (!ENABLE_HOVER_PREVIEW) return
                       handleMouseMove(e)
                       setHoveredHotel(hotel)
                     }}
-                    onMouseMove={handleMouseMove}
-                    onMouseLeave={() => setHoveredHotel(null)}
+                    onMouseMove={(e) => {
+                      if (!ENABLE_HOVER_PREVIEW) return
+                      handleMouseMove(e)
+                    }}
+                    onMouseLeave={() => {
+                      if (!ENABLE_HOVER_PREVIEW) return
+                      setHoveredHotel(null)
+                    }}
                     className={`p-4 border rounded-lg cursor-pointer transition-all hover:shadow-md ${
                       isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
                     }`}
@@ -780,13 +777,18 @@ function HotelSearch({
                                 hotel: {
                                   ...hotel,
                                   HotelName: hotel.name,
-                                  HotelAddress: hotel.address
+                                  HotelAddress: hotel.address,
+                                  // Ensure AI page always has these fields
+                                  name: hotel.name,
+                                  address: hotel.address,
+                                  lat: Number.isFinite(Number(hotel.lat)) ? Number(hotel.lat) : hotel.lat,
+                                  lon: Number.isFinite(Number(hotel.lon)) ? Number(hotel.lon) : hotel.lon
                                 },
                                 tripContext: {
                                   userSelection: {
                                     location,
-                                    startDate,
-                                    endDate,
+                                    startDate: startDate ? format(startDate, 'yyyy-MM-dd') : undefined,
+                                    endDate: endDate ? format(endDate, 'yyyy-MM-dd') : undefined,
                                     budget: { min: budgetMin, max: budgetMax },
                                     adults: adults || 1,
                                     children: children || 0,
@@ -803,6 +805,19 @@ function HotelSearch({
                             <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14' />
                           </svg>
                         </button>
+
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${hotel.lat},${hotel.lon}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className='text-xs text-green-600 hover:text-green-800 hover:underline mt-1 inline-flex items-center gap-1 ml-3'
+                        >
+                          Google Maps
+                          <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14' />
+                          </svg>
+                        </a>
                       </div>
                       {isSelected && (
                         <svg className='w-5 h-5 text-blue-500' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
@@ -854,7 +869,7 @@ function HotelSearch({
       </div>
 
       {/* Hover Popup - Dynamic Position */}
-      {hoveredHotel && (
+      {ENABLE_HOVER_PREVIEW && hoveredHotel && (
         <div 
           className='fixed z-50 w-80 bg-white rounded-xl shadow-2xl border border-blue-100 p-5 animate-in fade-in zoom-in-95 duration-200 hidden xl:block'
           style={{ top: popupPosition.top, left: popupPosition.left }}

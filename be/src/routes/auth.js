@@ -67,7 +67,7 @@ function getCookieExpires() {
 const cookieExpires = getCookieExpires();
 
 function cookieOptions() {
-    const prod = process.env.NODE_ENV === 'production';
+    const prod = process.env.BE_ENV === 'production';
     return {
         httpOnly: true,
         sameSite: prod ? 'strict' : 'lax',

@@ -61,17 +61,18 @@ function CreateTrip() {
     // Also check the deprecated but more reliable performance.navigation for reload detection
     const isLegacyReload = performance.navigation && performance.navigation.type === 1; // 1 = TYPE_RELOAD
     
-    if (isHardReload || isLegacyReload) {
-      // This is a hard reload - clear the session and start fresh
-      console.log('Hard reload detected - clearing session')
-      sessionStorage.removeItem('createTripSession');
+    // Restore session whenever it exists (including after hard reload).
+    // This prevents losing in-progress trip state when changing locale/currency.
+    const savedSession = sessionStorage.getItem('createTripSession')
+
+    if ((isHardReload || isLegacyReload) && !savedSession) {
+      // Hard reload with no existing session: start fresh.
       sessionStorage.removeItem('createTripPageLoaded');
       setIsLoaded(true);
       return;
     }
 
     // For normal navigation (including back/forward), restore the session
-    const savedSession = sessionStorage.getItem('createTripSession')
     if (savedSession) {
       try {
         const parsed = JSON.parse(savedSession)
@@ -173,16 +174,44 @@ function CreateTrip() {
 
     setTripDays(prev => {
       if (prev.length === n) {
-        return prev.map((day, index) => ({ ...day, dayNumber: index + 1 }))
+        return prev.map((day, index) => ({
+          ...day,
+          dayNumber: index + 1,
+          slots: day.slots || {
+            Morning: Array.isArray(day.places) ? day.places : [],
+            Lunch: [],
+            Afternoon: [],
+            Evening: [],
+          },
+        }))
       }
 
       const next = []
       for (let i = 0; i < n; i++) {
         const existing = prev[i]
         if (existing) {
-          next.push({ ...existing, dayNumber: i + 1 })
+          next.push({
+            ...existing,
+            dayNumber: i + 1,
+            slots: existing.slots || {
+              Morning: Array.isArray(existing.places) ? existing.places : [],
+              Lunch: [],
+              Afternoon: [],
+              Evening: [],
+            },
+          })
         } else {
-          next.push({ id: Date.now() + i, dayNumber: i + 1, places: [] })
+          next.push({
+            id: Date.now() + i,
+            dayNumber: i + 1,
+            places: [],
+            slots: {
+              Morning: [],
+              Lunch: [],
+              Afternoon: [],
+              Evening: [],
+            },
+          })
         }
       }
       return next
