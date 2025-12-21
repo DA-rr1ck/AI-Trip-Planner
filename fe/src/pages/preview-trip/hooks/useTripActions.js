@@ -1,17 +1,14 @@
-// fe/src/pages/edit-trip/hooks/useTripActions.js
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { doc, setDoc } from 'firebase/firestore'
-import { db } from '@/service/firebaseConfig'
 import { toast } from 'sonner'
 import { format, parse, differenceInDays, addDays } from 'date-fns'
-import { addScheduleToItinerary } from '@/utils/dateTimeUtils'
 import { clearTempChanges, clearTempTripId } from '../utils/localStorage'
 import { formatBudget, formatTravelers } from '../utils/formatters'
 import { regenerateHotels } from '../utils/regenerateHotels'
 import { regenerateSingleDay } from '../utils/regenerateItinerary'
 import { generateTrip } from '@/service/AIModel'
 import { AI_PROMPT } from '@/constants/options'
+import { saveTripToFirestore } from '@/service/tripService'
 
 export function useTripActions(tripData, updateTripData, existingTripId, rawTripData, user) {
   const navigate = useNavigate()
@@ -55,8 +52,8 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
     }
 
     const totalDays = differenceInDays(editedSelection.endDate, editedSelection.startDate) + 1
-    if (totalDays < 1 || totalDays > 5) {
-      toast.error('Please select a trip between 1-5 days')
+    if (totalDays < 1 || totalDays > 30) {
+      toast.error('Please select a trip between 1-30 days')
       return
     }
 
@@ -364,79 +361,40 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
   
     setSaving(true)
     try {
-      const isRealId = rawTripData?.id && !existingTripId.startsWith('temp_')
-      const docId = isRealId ? rawTripData.id : Date.now().toString()
-  
-      const timezone = tripData.tripData.Timezone || 'Asia/Ho_Chi_Minh'
-      const itineraryWithSchedules = addScheduleToItinerary(tripData.tripData.Itinerary, timezone)
-  
-      const itineraryWithoutIds = {}
-      Object.entries(itineraryWithSchedules).forEach(([dateKey, dayData]) => {
-        const cleanedDay = {
-          Theme: dayData.Theme,
-         // BestTimeToVisit: dayData.BestTimeToVisit
-        }
-        
-        if (dayData.Morning?.Activities && dayData.Morning.Activities.length > 0) {
-          cleanedDay.Morning = {
-            StartTime: dayData.Morning.StartTime,
-            EndTime: dayData.Morning.EndTime,
-            Activities: dayData.Morning.Activities.map(({ id, ...activity }) => activity)
-          }
-        }
-        
-        if (dayData.Lunch?.Activity) {
-          cleanedDay.Lunch = {
-            StartTime: dayData.Lunch.StartTime,
-            EndTime: dayData.Lunch.EndTime,
-            Activity: (({ id, ...activity }) => activity)(dayData.Lunch.Activity)
-          }
-        }
-        
-        if (dayData.Afternoon?.Activities && dayData.Afternoon.Activities.length > 0) {
-          cleanedDay.Afternoon = {
-            StartTime: dayData.Afternoon.StartTime,
-            EndTime: dayData.Afternoon.EndTime,
-            Activities: dayData.Afternoon.Activities.map(({ id, ...activity }) => activity)
-          }
-        }
-        
-        if (dayData.Evening?.Activities && dayData.Evening.Activities.length > 0) {
-          cleanedDay.Evening = {
-            StartTime: dayData.Evening.StartTime,
-            EndTime: dayData.Evening.EndTime,
-            Activities: dayData.Evening.Activities.map(({ id, ...activity }) => activity)
-          }
-        }
-        
-        itineraryWithoutIds[dateKey] = cleanedDay
-      })
-  
-      await setDoc(doc(db, 'AITrips', docId), {
-        userSelection: tripData.userSelection,
-        tripData: {
-          Location: tripData.tripData.Location,
-          Duration: tripData.tripData.Duration,
-          Budget: tripData.tripData.Budget,
-          Travelers: tripData.tripData.Travelers,
-          TotalTravelers: tripData.tripData.TotalTravelers,
-          Timezone: timezone,
-          Hotels: selectedHotels,
-          Itinerary: itineraryWithoutIds,
-        },
+      // Determine tripId to send to backend
+      // If existingTripId starts with 'temp_', it's a new trip, send null
+      // Otherwise, it's an existing trip, send the ID
+      const tripIdToSave = existingTripId.startsWith('temp_') ? null : existingTripId;
+      
+      console.log('=== handleSaveTrip Debug ===');
+      console.log('existingTripId:', existingTripId);
+      console.log('tripIdToSave:', tripIdToSave);
+      console.log('rawTripData:', rawTripData);
+      console.log('rawTripData?.id:', rawTripData?.id);
+
+      // Call backend API to save trip
+      const result = await saveTripToFirestore({
+        tripId: tripIdToSave,
         userEmail: user.email,
-        id: docId,
+        userSelection: tripData.userSelection,
+        tripData: tripData.tripData,
+        selectedHotels
       })
-  
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to save trip')
+      }
+
+      // Clear temporary data
       clearTempChanges(existingTripId)
       clearTempTripId()
       setHasUnsavedChanges(false)
   
-      toast.success(isRealId ? 'Trip updated successfully!' : 'Trip saved successfully!')
-      navigate(`/view-trip/${docId}`)
+      toast.success(result.message)
+      navigate(`/view-trip/${result.tripId}`)
     } catch (error) {
       console.error('Error saving trip:', error)
-      toast.error('Failed to save trip')
+      toast.error(error.message || 'Failed to save trip')
     } finally {
       setSaving(false)
     }

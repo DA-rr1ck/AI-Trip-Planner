@@ -1,43 +1,44 @@
-
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Select from 'react-select'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
-import { differenceInDays, format, addDays } from 'date-fns'
+import { differenceInDays, format } from 'date-fns'
 import { AiOutlineLoading3Quarters } from 'react-icons/ai'
 import AuthDialog from '@/components/custom/AuthDialog'
 import Button from '@/components/ui/Button'
 import { toast } from 'sonner'
-import { AI_PROMPT } from '@/constants/options'
-import { generateTrip } from '@/service/AIModel'
 import { useAuth } from '@/context/AuthContext'
+import { doc, setDoc } from 'firebase/firestore'
+import { db } from '@/service/firebaseConfig'
 import { Minus, Plus, DollarSign } from 'lucide-react'
 import DestinationSelector from './components/DestinationSelector'
 import ModeSwitch from './components/ModeSwitch'
 import HotelSearch from './components/manual/HotelSearch'
 import DayManager from './components/manual/DayManager'
-import { saveManualTrip } from './utils/manual/tripSaver'
+import { generateAITrip } from '@/service/tripService'
 
 function CreateTrip() {
   const [place, setPlace] = useState(null)
   const [aiFormData, setAiFormData] = useState({
+    location: '',
     startDate: null,
     endDate: null,
     budgetMin: 500,
     budgetMax: 2000,
     adults: 2,
     children: 0,
-    childrenAges: [], // Array to store ages of each child
+    childrenAges: [],
   })
   const [manualFormData, setManualFormData] = useState({
+    location: '',
     startDate: null,
     endDate: null,
     budgetMin: 500,
     budgetMax: 2000,
     adults: 2,
     children: 0,
-    childrenAges: [], // Array to store ages of each child
+    childrenAges: [],
   })
   const [options, setOptions] = useState([])
   const [inputValue, setInputValue] = useState('')
@@ -53,11 +54,9 @@ function CreateTrip() {
 
   // Load session data on mount
   useEffect(() => {
-    // Check if this is a hard reload (F5/Ctrl+R) using sessionStorage flag
     const wasPageReloaded = sessionStorage.getItem('createTripPageLoaded') === 'true'
 
     if (wasPageReloaded) {
-      // This is a reload - check navigation type
       const navEntry = performance.getEntriesByType("navigation")[0];
       if (navEntry && navEntry.type === 'reload') {
         sessionStorage.removeItem('createTripSession');
@@ -67,14 +66,12 @@ function CreateTrip() {
       }
     }
 
-    // Mark that this page has been loaded (for detecting future reloads)
     sessionStorage.setItem('createTripPageLoaded', 'true')
 
     const savedSession = sessionStorage.getItem('createTripSession')
     if (savedSession) {
       try {
         const parsed = JSON.parse(savedSession)
-        // Restore dates from strings
         if (parsed.aiFormData) {
           if (parsed.aiFormData.startDate) parsed.aiFormData.startDate = new Date(parsed.aiFormData.startDate)
           if (parsed.aiFormData.endDate) parsed.aiFormData.endDate = new Date(parsed.aiFormData.endDate)
@@ -134,7 +131,7 @@ function CreateTrip() {
     if (newCount > currentCount) {
       newAges = [...currentAges]
       for (let i = currentCount; i < newCount; i++) {
-        newAges.push(5) // default age
+        newAges.push(5)
       }
     } else {
       newAges = currentAges.slice(0, newCount)
@@ -158,55 +155,15 @@ function CreateTrip() {
     })
   }
 
-  useEffect(() => {
-    if (!isManualMode) return
-
-    // Auto-calculate days from date range if dates are selected
-    const totalDays = getTotalDays()
-    if (totalDays > 0) {
-      setManualFormData(prev => ({ ...prev, noOfdays: totalDays.toString() }))
-    }
-
-    const n = parseInt(formData.noOfdays, 10)
-    if (!Number.isFinite(n) || n <= 0) return
-
-    setTripDays(prev => {
-      if (prev.length === n) {
-        return prev.map((day, index) => ({ ...day, dayNumber: index + 1 }))
-      }
-
-      const next = []
-      for (let i = 0; i < n; i++) {
-        const existing = prev[i]
-        if (existing) {
-          next.push({ ...existing, dayNumber: i + 1 })
-        } else {
-          next.push({ id: Date.now() + i, dayNumber: i + 1, places: [] })
-        }
-      }
-      return next
-    })
-  }, [formData.noOfdays, formData.startDate, formData.endDate, isManualMode])
-
-  useEffect(() => {
-    if (!isManualMode) return
-    if (!formData.noOfdays) {
-      setTripDays([])
-    }
-  }, [formData.noOfdays, isManualMode])
-
-  // Calculate number of days
   const getTotalDays = () => {
     if (!formData.startDate || !formData.endDate) return 0
     return differenceInDays(formData.endDate, formData.startDate) + 1
   }
 
-  // Format budget range
   const formatBudget = (min, max) => {
     return `$${min.toLocaleString()} - $${max.toLocaleString()}`
   }
 
-  // Format travelers
   const formatTravelers = () => {
     const parts = []
     if (formData.adults > 0) parts.push(`${formData.adults} ${formData.adults === 1 ? 'Adult' : 'Adults'}`)
@@ -218,6 +175,7 @@ function CreateTrip() {
     return parts.join(', ') || '0 Travelers'
   }
 
+  // AI Trip Generation - Uses backend API
   const onGenerateTrip = async () => {
     if (!isAuthenticated) {
       setOpenDialog(true)
@@ -226,8 +184,8 @@ function CreateTrip() {
     }
 
     const totalDays = getTotalDays()
-    if (totalDays < 1 || totalDays > 5) {
-      toast.error('Please select a trip between 1-5 days.', { duration: 1200 })
+    if (totalDays < 1 || totalDays > 30) {
+      toast.error('Please select a trip between 1-30 days.', { duration: 1200 })
       return
     }
 
@@ -241,7 +199,6 @@ function CreateTrip() {
       return
     }
 
-    // NEW: Validate that all children have ages set
     if (formData.children > 0 && formData.childrenAges.length !== formData.children) {
       toast.error('Please set ages for all children.', { duration: 1200 })
       return
@@ -249,59 +206,35 @@ function CreateTrip() {
 
     setLoading(true)
 
-    const FINAL_PROMPT = AI_PROMPT
-      .replace('{location}', formData?.location)
-      .replace('{totalDays}', totalDays)
-      .replace('{adults}', formData.adults)
-      .replace('{children}', formData.children)
-      .replace('{childrenAges}', formData.childrenAges.join(', '))
-      .replace('{budgetMin}', formData.budgetMin)
-      .replace('{budgetMax}', formData.budgetMax)
-
     try {
-      const result = await generateTrip(FINAL_PROMPT)
-      console.log('Raw result:', result)
-
-      let tripData
-      if (typeof result === 'string') {
-        tripData = JSON.parse(result)
-      } else if (typeof result === 'object') {
-        tripData = result
-      } else {
-        throw new Error('Invalid trip data format')
-      }
-
-      // Extract TravelPlan
-      const travelPlan = tripData[0]?.TravelPlan || tripData.TravelPlan || tripData
-
-      const itineraryWithDates = {}
-      Object.entries(travelPlan.Itinerary || {}).forEach(([, dayData], index) => {
-        const actualDate = addDays(formData.startDate, index)
-        const dateKey = format(actualDate, 'yyyy-MM-dd')
-        itineraryWithDates[dateKey] = dayData
+      // Call backend API
+      const result = await generateAITrip({
+        location: formData.location,
+        startDate: formData.startDate.toISOString(),
+        endDate: formData.endDate.toISOString(),
+        budgetMin: formData.budgetMin,
+        budgetMax: formData.budgetMax,
+        adults: formData.adults,
+        children: formData.children,
+        childrenAges: formData.childrenAges
       })
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to generate trip')
+      }
 
       // Clear session on success
       sessionStorage.removeItem('createTripSession')
 
-      navigate('/edit-trip', {
+      // Navigate to edit page with trip data
+      navigate('/preview-trip', {
         state: {
-          tripData: {
-            userSelection: {
-              ...formData,
-              location: formData.location,
-              startDate: format(formData.startDate, 'yyyy-MM-dd'),
-              endDate: format(formData.endDate, 'yyyy-MM-dd'),
-              budget: formatBudget(formData.budgetMin, formData.budgetMax),
-              traveler: formatTravelers(),
-            },
-            tripData: {
-              ...travelPlan,
-              Itinerary: itineraryWithDates
-            }
-          }
+          tripData: result.tripData
         }
       })
+
+      toast.success('Trip generated successfully!')
+
     } catch (error) {
       console.error('Error generating trip:', error)
       toast.error(error.message || 'Failed to generate trip. Please try again.', { duration: 2000 })
@@ -310,9 +243,89 @@ function CreateTrip() {
     }
   }
 
+  // Manual Trip Save - OLD WAY (saves directly to Firestore)
+  const onSaveManualTrip = async () => {
+    if (!user) {
+      setOpenDialog(true)
+      return
+    }
+
+    if (!formData.location || !formData.startDate || !formData.endDate) {
+      toast.error('Please fill all required fields.')
+      return
+    }
+
+    if (tripDays.length === 0) {
+      toast.error('Please add at least one day to your trip.')
+      return
+    }
+
+    setLoading(true)
+
+    try {
+      const docId = Date.now().toString()
+
+      // Build itinerary from tripDays
+      const itinerary = {}
+      const start = new Date(formData.startDate)
+
+      tripDays.forEach((day, index) => {
+        const dayDate = new Date(start)
+        dayDate.setDate(start.getDate() + index)
+        const dateKey = format(dayDate, 'yyyy-MM-dd')
+
+        itinerary[dateKey] = {
+          DayNumber: day.dayNumber,
+          Activities: day.places || []
+        }
+      })
+
+      const tripDocument = {
+        id: docId,
+        userEmail: user.email,
+        userSelection: {
+          location: formData.location,
+          startDate: format(formData.startDate, 'yyyy-MM-dd'),
+          endDate: format(formData.endDate, 'yyyy-MM-dd'),
+          budget: formatBudget(formData.budgetMin, formData.budgetMax),
+          traveler: formatTravelers(),
+          budgetMin: formData.budgetMin,
+          budgetMax: formData.budgetMax,
+          adults: formData.adults,
+          children: formData.children,
+          childrenAges: formData.childrenAges
+        },
+        tripData: {
+          Location: formData.location,
+          Hotels: confirmedHotel ? [confirmedHotel] : [],
+          Itinerary: itinerary
+        },
+        createdAt: new Date().toISOString(),
+        generationMethod: 'manual'
+      }
+
+      // Save to Firestore directly
+      await setDoc(doc(db, 'AITrips', docId), tripDocument)
+
+      toast.success('Trip saved successfully!')
+
+      // Clear session on success
+      sessionStorage.removeItem('createTripSession')
+
+      // Navigate to view trip
+      navigate(`/view-trip/${docId}`)
+
+    } catch (error) {
+      console.error('Error saving manual trip:', error)
+      toast.error('Failed to save trip. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Location search
   useEffect(() => {
     if (isManualMode) {
-      // Do not clear place here as it is used in Manual Mode too
       setOptions([])
       setInputValue('')
       return
@@ -332,53 +345,7 @@ function CreateTrip() {
     return () => clearTimeout(timer)
   }, [inputValue, isManualMode])
 
-  const onSaveManualTrip = async () => {
-    if (!user) {
-      setOpenDialog(true)
-      return
-    }
-    setLoading(true)
-    try {
-      const budget = formatBudget(formData.budgetMin, formData.budgetMax)
-      const traveler = formatTravelers()
-      const manualFormData = { ...formData, budget, traveler }
-
-      const tripId = await saveManualTrip({ formData: manualFormData, confirmedHotel, tripDays, user })
-      toast.success('Trip saved successfully!')
-
-      // Clear session on success
-      sessionStorage.removeItem('createTripSession')
-
-      navigate(`/view-trip/${tripId}`)
-    } catch (error) {
-      toast.error(error.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleManualDaysChange = (newTripDays) => {
-    const currentDaysCount = tripDays.length
-    const newDaysCount = newTripDays.length
-
-    if (newDaysCount < currentDaysCount) {
-      toast.success('Day deleted', { duration: 1000 })
-
-      if (formData.startDate) {
-        const newEndDate = addDays(formData.startDate, newDaysCount - 1)
-        setManualFormData(prev => ({ ...prev, endDate: newEndDate }))
-      }
-    } else if (newDaysCount > currentDaysCount) {
-      if (formData.startDate) {
-        const newEndDate = addDays(formData.startDate, newDaysCount - 1)
-        setManualFormData(prev => ({ ...prev, endDate: newEndDate }))
-      }
-    }
-
-    setTripDays(newTripDays)
-  }
-
-  // Warn user before refreshing if there are unsaved changes
+  // Warn before refresh
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       const hasData = place ||
@@ -392,10 +359,7 @@ function CreateTrip() {
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [place, isManualMode, confirmedHotel, tripDays, aiFormData]);
 
   return (
@@ -411,242 +375,10 @@ function CreateTrip() {
           : 'Just provide some basic information, and our trip planner will generate a customized itinerary based on your preferences'}
       </p>
 
-      {isManualMode ? (
+      {/* AI Mode Form - EXACT SAME UI AS BEFORE */}
+      {!isManualMode && (
         <div className='mt-20 flex flex-col gap-10'>
-          <DestinationSelector
-            label='What is your desired destination?'
-            value={place}
-            onLocationSelected={(label, val) => {
-              setPlace(val)
-              handleInputChange('location', label)
-            }}
-          />
-
-          <div>
-            <h2 className='text-xl my-3 font-medium'>
-              When are you planning your trip?
-            </h2>
-
-            <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
-              <div>
-                <label className='block text-sm font-medium text-gray-700 mb-2'>
-                  Start Date
-                </label>
-                <DatePicker
-                  selected={formData.startDate}
-                  onChange={(date) => handleInputChange('startDate', date)}
-                  minDate={new Date()}
-                  maxDate={formData.endDate || undefined}
-                  dateFormat='dd/MM/yyyy'
-                  placeholderText='Select start date'
-                  className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
-                  isClearable
-                />
-              </div>
-
-              <div>
-                <label className='block text-sm font-medium text-gray-700 mb-2'>
-                  End Date
-                </label>
-                <DatePicker
-                  selected={formData.endDate}
-                  onChange={(date) => handleInputChange('endDate', date)}
-                  minDate={formData.startDate || new Date()}
-                  dateFormat='dd/MM/yyyy'
-                  placeholderText='Select end date'
-                  className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
-                  disabled={!formData.startDate}
-                  isClearable
-                />
-              </div>
-            </div>
-
-            {formData.startDate && formData.endDate && (
-              <div className='mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg'>
-                <p className='text-sm text-blue-800'>
-                  ✈️ Trip duration: <span className='font-semibold'>{getTotalDays()} {getTotalDays() === 1 ? 'day' : 'days'}</span>
-                </p>
-                <p className='text-xs text-blue-600 mt-1'>
-                  {format(formData.startDate, 'EEEE, MMMM d, yyyy')} → {format(formData.endDate, 'EEEE, MMMM d, yyyy')}
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Budget Range Slider */}
-          <div>
-            <h2 className='text-xl my-3 font-medium'>
-              What is your budget range? (per person)
-            </h2>
-
-            <div className='p-6 border rounded-lg bg-gradient-to-br from-green-50 to-emerald-50'>
-              <div className='flex justify-between items-center mb-4'>
-                <div className='flex items-center gap-2'>
-                  <DollarSign className='h-5 w-5 text-green-600' />
-                  <span className='text-2xl font-bold text-green-700'>
-                    ${formData.budgetMin.toLocaleString()} - ${formData.budgetMax.toLocaleString()}
-                  </span>
-                </div>
-              </div>
-
-              {/* Min Budget Slider */}
-              <div className='mb-4'>
-                <label className='block text-sm font-medium text-gray-700 mb-2'>
-                  Minimum Budget: ${formData.budgetMin.toLocaleString()}
-                </label>
-                <input
-                  type='range'
-                  min='100'
-                  max='10000'
-                  step='100'
-                  value={formData.budgetMin}
-                  onChange={(e) => {
-                    const val = Number(e.target.value)
-                    if (val < formData.budgetMax) {
-                      handleInputChange('budgetMin', val)
-                    }
-                  }}
-                  className='w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600'
-                />
-              </div>
-
-              {/* Max Budget Slider */}
-              <div>
-                <label className='block text-sm font-medium text-gray-700 mb-2'>
-                  Maximum Budget: ${formData.budgetMax.toLocaleString()}
-                </label>
-                <input
-                  type='range'
-                  min='100'
-                  max='10000'
-                  step='100'
-                  value={formData.budgetMax}
-                  onChange={(e) => {
-                    const val = Number(e.target.value)
-                    if (val > formData.budgetMin) {
-                      handleInputChange('budgetMax', val)
-                    }
-                  }}
-                  className='w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600'
-                />
-              </div>
-
-              <p className='text-xs text-gray-600 mt-3 text-center'>
-                💡 This is the total budget per person for the entire trip
-              </p>
-            </div>
-          </div>
-
-          {/* Number of Travelers */}
-          <div>
-            <h2 className='text-xl my-3 font-medium'>
-              How many people are traveling?
-            </h2>
-
-            <div className='grid grid-cols-1 md:grid-cols-2 gap-6'>
-              {/* Adults */}
-              <div className='p-6 border rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50'>
-                <div className='flex items-center justify-between mb-4'>
-                  <div>
-                    <h3 className='font-semibold text-lg'>Adults</h3>
-                    <p className='text-xs text-gray-600'>Age 18+</p>
-                  </div>
-                  <span className='text-4xl'>👨‍💼</span>
-                </div>
-
-                <div className='flex items-center justify-between'>
-                  <button
-                    type='button'
-                    onClick={() => handleInputChange('adults', Math.max(0, formData.adults - 1))}
-                    className='w-10 h-10 rounded-full bg-white border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors flex items-center justify-center'
-                    disabled={formData.adults === 0}
-                  >
-                    <Minus className='h-4 w-4' />
-                  </button>
-
-                  <span className='text-3xl font-bold text-blue-700'>{formData.adults}</span>
-
-                  <button
-                    type='button'
-                    onClick={() => handleInputChange('adults', Math.min(10, formData.adults + 1))}
-                    className='w-10 h-10 rounded-full bg-white border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors flex items-center justify-center'
-                    disabled={formData.adults === 10}
-                  >
-                    <Plus className='h-4 w-4' />
-                  </button>
-                </div>
-              </div>
-
-              {/* Children */}
-              <div className='p-6 border rounded-lg bg-gradient-to-br from-pink-50 to-rose-50'>
-                <div className='flex items-center justify-between mb-4'>
-                  <div>
-                    <h3 className='font-semibold text-lg'>Children</h3>
-                    <p className='text-xs text-gray-600'>Age 0-17</p>
-                  </div>
-                  <span className='text-4xl'>👶</span>
-                </div>
-
-                <div className='flex items-center justify-between'>
-                  <button
-                    type='button'
-                    onClick={() => handleInputChange('children', Math.max(0, formData.children - 1))}
-                    className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
-                    disabled={formData.children === 0}
-                  >
-                    <Minus className='h-4 w-4' />
-                  </button>
-
-                  <span className='text-3xl font-bold text-pink-700'>{formData.children}</span>
-
-                  <button
-                    type='button'
-                    onClick={() => handleInputChange('children', Math.min(10, formData.children + 1))}
-                    className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
-                    disabled={formData.children === 10}
-                  >
-                    <Plus className='h-4 w-4' />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Total Travelers Summary */}
-            <div className='mt-4 p-3 bg-purple-50 border border-purple-200 rounded-lg'>
-              <p className='text-sm text-purple-800 text-center'>
-                👥 Total: <span className='font-semibold'>{formatTravelers()}</span>
-              </p>
-            </div>
-          </div>
-
-          {formData.location && (
-            <HotelSearch
-              location={formData.location}
-              confirmedHotel={confirmedHotel}
-              onHotelConfirm={(hotel) => setConfirmedHotel(hotel)}
-              onRemoveHotel={() => setConfirmedHotel(null)}
-              startDate={formData.startDate}
-              endDate={formData.endDate}
-              budgetMin={formData.budgetMin}
-              budgetMax={formData.budgetMax}
-              adults={formData.adults}
-              children={formData.children}
-              savedQuery={hotelSearchState.query}
-              savedResults={hotelSearchState.results}
-              onSearchStateChange={(query, results) => setHotelSearchState({ query, results })}
-            />
-          )}
-
-          {confirmedHotel && (
-            <DayManager
-              location={formData.location}
-              tripDays={tripDays}
-              onDaysChange={handleManualDaysChange}
-            />
-          )}
-        </div>
-      ) : (
-        <div className='mt-20 flex flex-col gap-10'>
+          {/* Location Selector */}
           <div>
             <h2 className='text-xl my-3 font-medium'>
               What is your desired destination?
@@ -853,7 +585,7 @@ function CreateTrip() {
               </div>
             </div>
 
-            {/* NEW: Children Ages Selection */}
+            {/* Children Ages Selection */}
             {formData.children > 0 && (
               <div className='mt-6 p-6 border rounded-lg bg-gradient-to-br from-purple-50 to-pink-50'>
                 <h3 className='font-semibold text-lg mb-4 flex items-center gap-2'>
@@ -895,6 +627,37 @@ function CreateTrip() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Manual Mode - Keep as is */}
+      {isManualMode && (
+        <>
+          <DestinationSelector
+            isManualMode={isManualMode}
+            formData={formData}
+            place={place}
+            setPlace={setPlace}
+            inputValue={inputValue}
+            setInputValue={setInputValue}
+            options={options}
+            handleInputChange={handleInputChange}
+          />
+
+          {/* Rest of manual mode components... */}
+          <HotelSearch
+            confirmedHotel={confirmedHotel}
+            setConfirmedHotel={setConfirmedHotel}
+            hotelSearchState={hotelSearchState}
+            setHotelSearchState={setHotelSearchState}
+          />
+
+          <DayManager
+            tripDays={tripDays}
+            setTripDays={setTripDays}
+            startDate={formData.startDate}
+            endDate={formData.endDate}
+          />
+        </>
       )}
 
       <div className='my-10 justify-end flex'>

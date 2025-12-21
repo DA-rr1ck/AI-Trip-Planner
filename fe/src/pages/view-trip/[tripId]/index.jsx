@@ -1,46 +1,53 @@
-// fe/src/pages/view-trip/[tripid]/index.jsx
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { doc, getDoc } from "firebase/firestore";
-import { db } from '@/service/firebaseConfig';
-import { toast } from 'sonner';
-import { useEffect, useState } from 'react';
-import { Loader2, Edit } from 'lucide-react';
-import Button from '@/components/ui/Button';
-import InfoSection from '../components/InfoSection';
-import Hotels from '../components/Hotels';
-import PlacesToVisit from '../components/PlacesToVisit';
-import MapRoute from '@/components/MapRoute';
+import { toast } from 'sonner'
+import { Loader2, Edit } from 'lucide-react'
+import Button from '@/components/ui/Button'
+import InfoSection from '../components/InfoSection'
+import Hotels from '../components/Hotels'
+import PlacesToVisit from '../components/PlacesToVisit'
+import MapRoute from '@/components/MapRoute'
+import { getTripById } from '@/service/tripService' // NEW
 
 function ViewTrip() {
-    const { tripId } = useParams();
-    const navigate = useNavigate();
-    const [trip, setTrip] = useState({});
+    const { tripId } = useParams()
+    const navigate = useNavigate()
+    const [trip, setTrip] = useState({})
     const [loading, setLoading] = useState(true)
 
     const GetTripData = async () => {
         try {
-            const docRef = doc(db, 'AITrips', tripId)
-            const docSnap = await getDoc(docRef)
-            if (docSnap.exists()) {
-                setTrip({ id: docSnap.id, ...docSnap.data() })
+            const result = await getTripById(tripId)
+            
+            if (result.success) {
+                setTrip(result.trip)
             } else {
                 toast.error('Trip not found')
             }
-        } catch (e) {
-            console.error(e)
-            toast.error('Failed to load trip')
+        } catch (error) {
+            console.error('Error loading trip:', error)
+            toast.error(error.message || 'Failed to load trip')
         } finally {
             setLoading(false)
         }
     }
 
     const handleEditTrip = () => {
-        navigate(`/edit-trip/${tripId}`)
+        // Pass trip data to edit page via state
+        navigate(`/edit-trip/${tripId}`, {
+            state: {
+                tripData: {
+                    userSelection: trip.userSelection,
+                    tripData: trip.tripData
+                }
+            }
+        })
     }
 
     useEffect(() => {
-        tripId && GetTripData();
+        if (tripId) {
+            GetTripData()
+        }
     }, [tripId])
 
     // Collect all activities from itinerary for the map

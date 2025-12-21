@@ -1,67 +1,115 @@
+// be/src/controllers/aiTripController.js
+const { generateTripWithGemini } = require('../services/geminiService');
+const { validateTripInput } = require('../services/tripValidationService');
+const { formatTripData } = require('../services/tripDataService');
+const { db } = require('../config/firebase');
+const { format, addDays, differenceInDays } = require('date-fns');
 
+async function generateAITrip(req, res) {
+    try {
+        const { 
+            location, 
+            startDate, 
+            endDate, 
+            budgetMin, 
+            budgetMax, 
+            adults, 
+            children, 
+            childrenAges 
+        } = req.body;
 
-export const REGION_OPTIONS = [
-  { code: 'VN', cc: '84', label: '🇻🇳 Vietnam (+84)',    example: '912345678', min: 9,  max: 10 },
-  { code: 'US', cc: '1',  label: '🇺🇸 United States (+1)', example: '4155552671', min: 10, max: 10 },
-  { code: 'GB', cc: '44', label: '🇬🇧 United Kingdom (+44)', example: '7123456789', min: 10, max: 10 },
-  { code: 'SG', cc: '65', label: '🇸🇬 Singapore (+65)',  example: '81234567',   min: 8,  max: 8  },
-  { code: 'TH', cc: '66', label: '🇹🇭 Thailand (+66)',   example: '812345678',  min: 9,  max: 9  },
-  { code: 'JP', cc: '81', label: '🇯🇵 Japan (+81)',      example: '7012345678', min: 10, max: 10 },
-  { code: 'KR', cc: '82', label: '🇰🇷 South Korea (+82)', example: '1012345678', min: 10, max: 10 },
-  { code: 'DE', cc: '49', label: '🇩🇪 Germany (+49)',    example: '15123456789',min: 10, max: 11 },
-  { code: 'FR', cc: '33', label: '🇫🇷 France (+33)',     example: '612345678',  min: 9,  max: 9  },
-  { code: 'AU', cc: '61', label: '🇦🇺 Australia (+61)',  example: '412345678',  min: 9,  max: 9  },
-];
+        console.log('Generating AI trip for:', location);
 
-export const VIETNAM_PROVINCES = [
-    'An Giang',
-    'Bac Ninh',
-    'Ca Mau',
-    'Cao Bang',
-    'Can Tho',
-    'Da Nang',
-    'Dak Lak',
-    'Dien Bien',
-    'Dong Nai',
-    'Dong Thap',
-    'Gia Lai',
-    'Hanoi',
-    'Ha Tinh',
-    'Hai Phong',
-    'Ho Chi Minh City',
-    'Hue',
-    'Hung Yen',
-    'Khanh Hoa',
-    'Lai Chau',
-    'Lam Dong',
-    'Lang Son',
-    'Lao Cai',
-    'Nghe An',
-    'Ninh Binh',
-    'Phu Tho',
-    'Quang Ngai',
-    'Quang Ninh',
-    'Quang Tri',
-    'Son La',
-    'Tay Ninh',
-    'Thai Nguyen',
-    'Thanh Hoa',
-    'Tuyen Quang',
-    'Vinh Long'
-  ].sort();
+        // 1. Validate input
+        const validation = validateTripInput({
+            location,
+            startDate,
+            endDate,
+            budgetMin,
+            budgetMax,
+            adults,
+            children,
+            childrenAges
+        });
 
-export const AI_PROMPT = `Generate Travel Plan for Location: {location}, for {totalDays} Days for {adults} Adults and {children} Children (ages: {childrenAges}) with a budget range of {budgetMin} to {budgetMax} per person.
+        if (!validation.isValid) {
+            return res.status(400).json({
+                success: false,
+                error: validation.error
+            });
+        }
+
+        // 2. Calculate trip details
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        const totalDays = differenceInDays(end, start) + 1;
+
+        // 3. Build AI prompt
+        const prompt = buildAIPrompt({
+            location,
+            totalDays,
+            adults,
+            children,
+            childrenAges,
+            budgetMin,
+            budgetMax
+        });
+
+        // 4. Generate trip with Gemini
+        const rawTripData = await generateTripWithGemini(prompt);
+
+        // 5. Format and enhance trip data
+        const formattedTrip = formatTripData({
+            rawData: rawTripData,
+            startDate: start,
+            endDate: end,
+            location,
+            budgetMin,
+            budgetMax,
+            adults,
+            children,
+            childrenAges
+        });
+
+        // 6. Save to Firestore (optional - or save from frontend)
+        const tripId = Date.now().toString();
+        
+        // Return trip data to frontend
+        return res.json({
+            success: true,
+            tripId,
+            tripData: formattedTrip
+        });
+
+    } catch (error) {
+        console.error('Error generating AI trip:', error);
+        return res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to generate trip'
+        });
+    }
+}
+
+function buildAIPrompt({ location, totalDays, adults, children, childrenAges, budgetMin, budgetMax }) {
+    // Convert childrenAges array to string
+    const childrenAgesStr = Array.isArray(childrenAges) && childrenAges.length > 0 
+        ? childrenAges.join(', ') 
+        : 'N/A';
+
+    const totalTravelers = adults + children;
+
+    return `Generate Travel Plan for Location: ${location}, for ${totalDays} Days for ${adults} Adults and ${children} Children (ages: ${childrenAgesStr}) with a budget range of ${budgetMin} to ${budgetMax} per person.
 
 You MUST respond with ONLY valid JSON in this EXACT format with NO additional text or explanations:
 
 [
     {
         "TravelPlan": {
-            "Location": "{location}",
-            "Duration": "{totalDays} Days",
-            "Budget": "{budgetMin} - {budgetMax} per person",
-            "Travelers": "{adults} Adults, {children} Children (ages: {childrenAges})",
-            "TotalTravelers": {adults} + {children},
+            "Location": "${location}",
+            "Duration": "${totalDays} Days",
+            "Budget": "${budgetMin} - ${budgetMax} per person",
+            "Travelers": "${adults} Adults, ${children} Children (ages: ${childrenAgesStr})",
+            "TotalTravelers": ${totalTravelers},
             "Timezone": "Asia/Ho_Chi_Minh",
             "Hotels": [
                 {
@@ -140,7 +188,7 @@ You MUST respond with ONLY valid JSON in this EXACT format with NO additional te
                         ]
                     }
                 },
-                "Day{totalDays}": {
+                "Day${totalDays}": {
                     "Theme": "Departure & Check-out",
                     "Morning": {
                         "StartTime": "8:00 AM",
@@ -189,10 +237,10 @@ You MUST respond with ONLY valid JSON in this EXACT format with NO additional te
 
 Rules:
 - Timezone is ALWAYS "Asia/Ho_Chi_Minh" for Vietnam
-- Provide 2-3 hotel options suitable for {adults} adults and {children} children
+- Provide 2-3 hotel options suitable for ${adults} adults and ${children} children
 - Hotel prices should accommodate the total number of travelers
 - If children > 0, prioritize family-friendly hotels and activities
-- Create itinerary for EXACTLY {totalDays} days using Day1, Day2, Day3, etc.
+- Create itinerary for EXACTLY ${totalDays} days using Day1, Day2, Day3, etc.
 - Each activity MUST include: ActivityId, ActivityType, PlaceName, PlaceDetails, ImageUrl, GeoCoordinates, TicketPricing, TimeSlot, Duration (PlaceName must only be the real name of the location, no extra text)
 - ActivityType must be one of: 'hotel_checkin', 'hotel_checkout', 'normal_attraction'
 - Day 1 (Arrival):
@@ -204,12 +252,17 @@ Rules:
   * Morning includes light activities before 11:30 AM
   * Last activity in Morning is hotel check-out at 11:30 AM (ActivityType: 'hotel_checkout')
   * Lunch, Afternoon, Evening are null
-- Middle days (Day2 to Day{totalDays-1}):
+- Middle days (Day2 to Day${totalDays - 1}):
   * Full schedule: Morning, Lunch, Afternoon, Evening
   * All activities have ActivityType: 'normal_attraction'
   * All activities have the field BestTimeToVisit indicating the recommended time to visit
 - TimeSlots must be realistic and sequential (no overlaps)
 - Activities should be age-appropriate based on the children's ages
-- Budget range is per person: total trip budget = ({budgetMin} to {budgetMax}) × ({adults} + {children})
+- Budget range is per person: total trip budget = (${budgetMin} to ${budgetMax}) × (${adults} + ${children})
 - Use real image URLs from the internet, not placeholder URLs
 - Return ONLY the JSON array, no markdown code blocks, no explanations`;
+}
+
+module.exports = {
+    generateAITrip
+};

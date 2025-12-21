@@ -1,28 +1,73 @@
-// fe/src/pages/edit-trip/index.jsx
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { toast } from 'sonner'
 import { Loader2 } from 'lucide-react'
 import { parse, differenceInDays } from 'date-fns'
-import { loadTempChanges } from './utils/localStorage'
+import { loadTempChanges } from '../../preview-trip/utils/localStorage'
+import { getTripById } from '@/service/tripService' // NEW
 
-// Import hooks
-import { useTripData } from './hooks/useTripData'
-import { useDragAndDrop } from './hooks/useDragAndDrop'
-import { useHotelManagement } from './hooks/useHotelManagement'
-import { useTripActions } from './hooks/useTripActions'
+// Import hooks from preview-trip
+import { useTripData } from '../../preview-trip/hooks/useTripData'
+import { useDragAndDrop } from '../../preview-trip/hooks/useDragAndDrop'
+import { useHotelManagement } from '../../preview-trip/hooks/useHotelManagement'
+import { useTripActions } from '../../preview-trip/hooks/useTripActions'
 import { useAuth } from '@/context/AuthContext'
 
-// Import components
-import TripHeader from './components/TripHeader'
-import TripOverview from './components/TripOverview'
-import TripRegenerationSection from './components/TripRegenerationSection'
-import HotelsSection from './components/HotelsSection'
-import ItinerarySection from './components/ItinerarySection'
-import TripMapSection from './components/TripMapSection'
+// Import components from preview-trip
+import TripHeader from '../../preview-trip/components/TripHeader'
+import TripOverview from '../../preview-trip/components/TripOverview'
+import TripRegenerationSection from '../../preview-trip/components/TripRegenerationSection'
+import HotelsSection from '../../preview-trip/components/HotelsSection'
+import ItinerarySection from '../../preview-trip/components/ItinerarySection'
+import TripMapSection from '../../preview-trip/components/TripMapSection'
 
 function EditTrip() {
+  const { tripId } = useParams()
+  const navigate = useNavigate()
+  const location = useLocation()
   const { user } = useAuth()
   
-  // Use custom hooks
+  const [loadingTrip, setLoadingTrip] = useState(true)
+  const [loadedTripData, setLoadedTripData] = useState(null)
+
+  // Load trip using backend API
+  useEffect(() => {
+    const loadTrip = async () => {
+      try {
+        // Check if data passed via state (from view-trip)
+        if (location.state?.tripData) {
+          setLoadedTripData(location.state.tripData)
+          setLoadingTrip(false)
+          return
+        }
+
+        // Load from backend API
+        const result = await getTripById(tripId)
+        
+        if (result.success) {
+          setLoadedTripData({
+            userSelection: result.trip.userSelection,
+            tripData: result.trip.tripData
+          })
+        } else {
+          toast.error('Trip not found')
+          navigate('/my-trips')
+        }
+      } catch (error) {
+        console.error('Error loading trip:', error)
+        toast.error(error.message || 'Failed to load trip')
+        navigate('/my-trips')
+      } finally {
+        setLoadingTrip(false)
+      }
+    }
+
+    if (tripId) {
+      loadTrip()
+    }
+  }, [tripId, navigate, location.state])
+
+  // Use custom hooks (same as preview-trip)
   const {
     tripData,
     updateTripData,
@@ -30,7 +75,7 @@ function EditTrip() {
     rawTripData,
     hasUnsavedChanges,
     setHasUnsavedChanges,
-  } = useTripData()
+  } = useTripData(loadedTripData, tripId)
 
   const {
     sensors,
@@ -65,7 +110,7 @@ function EditTrip() {
     handleActivityClick,
   } = useTripActions(tripData, updateTripData, existingTripId, rawTripData, user)
 
-  // Warn before leaving with unsaved changes
+
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       const hasTempData = loadTempChanges(existingTripId)
@@ -79,11 +124,11 @@ function EditTrip() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [hasUnsavedChanges, existingTripId])
 
-  if (tripData === null) {
+  if (loadingTrip || tripData === null) {
     return (
       <div className='p-10 md:px-20 lg:px-44 xl:px-56 flex flex-col justify-center items-center min-h-[50vh]'>
         <Loader2 className='h-8 w-8 animate-spin mb-4 text-purple-600' />
-        <p className='text-gray-500'>Loading trip data...</p>
+        <p className='text-gray-500'>Loading trip...</p>
       </div>
     )
   }
@@ -112,7 +157,7 @@ function EditTrip() {
         hasUnsavedChanges={hasUnsavedChanges}
         saving={saving}
         onSave={() => handleSaveTrip(selectedHotels, setHasUnsavedChanges)}
-        isNewTrip={existingTripId.startsWith('temp_')}
+        isNewTrip={false}
       />
 
       <TripOverview

@@ -11,6 +11,7 @@ const serpRoutes = require('./routes/hotelSerp');
 const placesRoutes = require('./routes/placesSerp');
 const imagesRoutes = require('./routes/images');
 const smartTripRoutes = require('./routes/smartTripRoutes');
+const tripRoutes = require('./routes/tripRoutes')
 const app = express();
 
 // Security & parsers
@@ -34,6 +35,7 @@ app.use('/api/serp', serpRoutes);
 app.use('/api/serp', placesRoutes);
 app.use('/api/serp', imagesRoutes);
 app.use('/api/smart-trip', smartTripRoutes);
+app.use('/api/trip', tripRoutes);
 // Start
 app.listen(PORT, () => {
     console.log(`API listening on http://localhost:${PORT}`);

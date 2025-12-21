@@ -14,7 +14,8 @@ import ProtectedRoute from '@/components/ProtectedRoute/ProtectedRoute.jsx'
 import Hero from '@/components/custom/Hero.jsx'                 // Landing content
 import CreateTrip from '@/pages/create-trip/index.jsx'
 import ViewTrip from '@/pages/view-trip/[tripId]/index.jsx'
-import EditTrip from '@/pages/edit-trip/index.jsx'
+import PreviewTrip from '@/pages/preview-trip/index.jsx'
+import EditTrip from '@/pages/edit-trip/[tripId]/index.jsx'
 import MyTrips from '@/pages/my-trips/index.jsx'
 import ProfilePage from '@/pages/profile/index.jsx'
 import SmartTripPage from './pages/smart-trip'
@@ -51,6 +52,15 @@ export default function App() {
               />
 
               <Route
+                path="preview-trip"
+                element={
+                  <ProtectedRoute>
+                    <PreviewTrip />
+                  </ProtectedRoute>
+                }
+              />  
+
+              <Route
                 path="view-trip/:tripId"
                 element={
                   <ProtectedRoute>
@@ -76,7 +86,7 @@ export default function App() {
                  />
 
               <Route
-                path="edit-trip"
+                path="edit-trip/:tripId"
                 element={
                   <ProtectedRoute>
                     <EditTrip />
