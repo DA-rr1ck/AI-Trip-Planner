@@ -3,14 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import Select from 'react-select'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
-import { differenceInDays, format, addDays } from 'date-fns'
+import { differenceInDays, format } from 'date-fns'
 import { AiOutlineLoading3Quarters } from 'react-icons/ai'
 import AuthDialog from '@/components/custom/AuthDialog'
 import Button from '@/components/ui/Button'
 import { toast } from 'sonner'
-import { AI_PROMPT } from '@/constants/options'
-import { generateTrip } from '@/service/AIModel'
 import { useAuth } from '@/context/AuthContext'
+import { doc, setDoc } from 'firebase/firestore'
+import { db } from '@/service/firebaseConfig'
 import { Minus, Plus, DollarSign } from 'lucide-react'
 import DestinationSelector from './components/DestinationSelector'
 import ModeSwitch from './components/ModeSwitch'
@@ -134,22 +134,24 @@ async function searchNominatim(query) {
 function CreateTrip() {
   const [place, setPlace] = useState(null)
   const [aiFormData, setAiFormData] = useState({
+    location: '',
     startDate: null,
     endDate: null,
     budgetMin: 500,
     budgetMax: 2000,
     adults: 2,
     children: 0,
-    childrenAges: [], // Array to store ages of each child
+    childrenAges: [],
   })
   const [manualFormData, setManualFormData] = useState({
+    location: '',
     startDate: null,
     endDate: null,
     budgetMin: 500,
     budgetMax: 2000,
     adults: 2,
     children: 0,
-    childrenAges: [], // Array to store ages of each child
+    childrenAges: [],
   })
   const [options, setOptions] = useState([])
   const [inputValue, setInputValue] = useState('')
@@ -165,11 +167,9 @@ function CreateTrip() {
 
   // Load session data on mount
   useEffect(() => {
-    // Check if this is a hard reload (F5/Ctrl+R) using sessionStorage flag
     const wasPageReloaded = sessionStorage.getItem('createTripPageLoaded') === 'true'
 
     if (wasPageReloaded) {
-      // This is a reload - check navigation type
       const navEntry = performance.getEntriesByType("navigation")[0];
       if (navEntry && navEntry.type === 'reload') {
         sessionStorage.removeItem('createTripSession');
@@ -179,14 +179,12 @@ function CreateTrip() {
       }
     }
 
-    // Mark that this page has been loaded (for detecting future reloads)
     sessionStorage.setItem('createTripPageLoaded', 'true')
 
     const savedSession = sessionStorage.getItem('createTripSession')
     if (savedSession) {
       try {
         const parsed = JSON.parse(savedSession)
-        // Restore dates from strings
         if (parsed.aiFormData) {
           if (parsed.aiFormData.startDate) parsed.aiFormData.startDate = new Date(parsed.aiFormData.startDate)
           if (parsed.aiFormData.endDate) parsed.aiFormData.endDate = new Date(parsed.aiFormData.endDate)
@@ -246,7 +244,7 @@ function CreateTrip() {
     if (newCount > currentCount) {
       newAges = [...currentAges]
       for (let i = currentCount; i < newCount; i++) {
-        newAges.push(5) // default age
+        newAges.push(5)
       }
     } else {
       newAges = currentAges.slice(0, newCount)
@@ -270,55 +268,15 @@ function CreateTrip() {
     })
   }
 
-  useEffect(() => {
-    if (!isManualMode) return
-
-    // Auto-calculate days from date range if dates are selected
-    const totalDays = getTotalDays()
-    if (totalDays > 0) {
-      setManualFormData(prev => ({ ...prev, noOfdays: totalDays.toString() }))
-    }
-
-    const n = parseInt(formData.noOfdays, 10)
-    if (!Number.isFinite(n) || n <= 0) return
-
-    setTripDays(prev => {
-      if (prev.length === n) {
-        return prev.map((day, index) => ({ ...day, dayNumber: index + 1 }))
-      }
-
-      const next = []
-      for (let i = 0; i < n; i++) {
-        const existing = prev[i]
-        if (existing) {
-          next.push({ ...existing, dayNumber: i + 1 })
-        } else {
-          next.push({ id: Date.now() + i, dayNumber: i + 1, places: [] })
-        }
-      }
-      return next
-    })
-  }, [formData.noOfdays, formData.startDate, formData.endDate, isManualMode])
-
-  useEffect(() => {
-    if (!isManualMode) return
-    if (!formData.noOfdays) {
-      setTripDays([])
-    }
-  }, [formData.noOfdays, isManualMode])
-
-  // Calculate number of days
   const getTotalDays = () => {
     if (!formData.startDate || !formData.endDate) return 0
     return differenceInDays(formData.endDate, formData.startDate) + 1
   }
 
-  // Format budget range
   const formatBudget = (min, max) => {
     return `$${min.toLocaleString()} - $${max.toLocaleString()}`
   }
 
-  // Format travelers
   const formatTravelers = () => {
     const parts = []
     if (formData.adults > 0) parts.push(`${formData.adults} ${formData.adults === 1 ? 'Adult' : 'Adults'}`)
@@ -330,6 +288,7 @@ function CreateTrip() {
     return parts.join(', ') || '0 Travelers'
   }
 
+  // AI Trip Generation - Uses backend API
   const onGenerateTrip = async () => {
     if (!isAuthenticated) {
       setOpenDialog(true)
@@ -338,8 +297,8 @@ function CreateTrip() {
     }
 
     const totalDays = getTotalDays()
-    if (totalDays < 1 || totalDays > 5) {
-      toast.error('Please select a trip between 1-5 days.', { duration: 1200 })
+    if (totalDays < 1 || totalDays > 30) {
+      toast.error('Please select a trip between 1-30 days.', { duration: 1200 })
       return
     }
 
@@ -353,7 +312,6 @@ function CreateTrip() {
       return
     }
 
-    // NEW: Validate that all children have ages set
     if (formData.children > 0 && formData.childrenAges.length !== formData.children) {
       toast.error('Please set ages for all children.', { duration: 1200 })
       return
@@ -361,59 +319,35 @@ function CreateTrip() {
 
     setLoading(true)
 
-    const FINAL_PROMPT = AI_PROMPT
-      .replace('{location}', formData?.location)
-      .replace('{totalDays}', totalDays)
-      .replace('{adults}', formData.adults)
-      .replace('{children}', formData.children)
-      .replace('{childrenAges}', formData.childrenAges.join(', '))
-      .replace('{budgetMin}', formData.budgetMin)
-      .replace('{budgetMax}', formData.budgetMax)
-
     try {
-      const result = await generateTrip(FINAL_PROMPT)
-      console.log('Raw result:', result)
-
-      let tripData
-      if (typeof result === 'string') {
-        tripData = JSON.parse(result)
-      } else if (typeof result === 'object') {
-        tripData = result
-      } else {
-        throw new Error('Invalid trip data format')
-      }
-
-      // Extract TravelPlan
-      const travelPlan = tripData[0]?.TravelPlan || tripData.TravelPlan || tripData
-
-      const itineraryWithDates = {}
-      Object.entries(travelPlan.Itinerary || {}).forEach(([, dayData], index) => {
-        const actualDate = addDays(formData.startDate, index)
-        const dateKey = format(actualDate, 'yyyy-MM-dd')
-        itineraryWithDates[dateKey] = dayData
+      // Call backend API
+      const result = await generateAITrip({
+        location: formData.location,
+        startDate: formData.startDate.toISOString(),
+        endDate: formData.endDate.toISOString(),
+        budgetMin: formData.budgetMin,
+        budgetMax: formData.budgetMax,
+        adults: formData.adults,
+        children: formData.children,
+        childrenAges: formData.childrenAges
       })
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to generate trip')
+      }
 
       // Clear session on success
       sessionStorage.removeItem('createTripSession')
 
-      navigate('/edit-trip', {
+      // Navigate to edit page with trip data
+      navigate('/preview-trip', {
         state: {
-          tripData: {
-            userSelection: {
-              ...formData,
-              location: formData.location,
-              startDate: format(formData.startDate, 'yyyy-MM-dd'),
-              endDate: format(formData.endDate, 'yyyy-MM-dd'),
-              budget: formatBudget(formData.budgetMin, formData.budgetMax),
-              traveler: formatTravelers(),
-            },
-            tripData: {
-              ...travelPlan,
-              Itinerary: itineraryWithDates
-            }
-          }
+          tripData: result.tripData
         }
       })
+
+      toast.success('Trip generated successfully!')
+
     } catch (error) {
       console.error('Error generating trip:', error)
       toast.error(error.message || 'Failed to generate trip. Please try again.', { duration: 2000 })
@@ -521,10 +455,7 @@ function CreateTrip() {
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [place, isManualMode, confirmedHotel, tripDays, aiFormData]);
 
   return (
@@ -982,7 +913,7 @@ function CreateTrip() {
               </div>
             </div>
 
-            {/* NEW: Children Ages Selection */}
+            {/* Children Ages Selection */}
             {formData.children > 0 && (
               <div className='mt-6 p-6 border rounded-lg bg-gradient-to-br from-purple-50 to-pink-50'>
                 <h3 className='font-semibold text-lg mb-4 flex items-center gap-2'>

@@ -1,11 +1,13 @@
+// fe/src/pages/my-trips/index.jsx
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MoreVertical, Trash2, Eye, MapPin, Calendar, Users, DollarSign, Plus, Sparkles } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { collection, query, where, getDocs, deleteDoc, doc } from "firebase/firestore"
+import { db } from '@/service/firebaseConfig'
 import { toast } from 'sonner'
 import { useAuth } from '@/context/AuthContext'
 import { format, parse, differenceInDays } from 'date-fns'
-import { getUserTrips, deleteTrip } from '@/service/tripService'
 
 // Simple in-memory cache
 const imageCache = new Map()
@@ -217,23 +219,22 @@ function MyTrips() {
     (async () => {
       setLoading(true)
       try {
-        const result = await getUserTrips(user.email)
+        const q = query(collection(db, 'AITrips'), where('userEmail', '==', user.email))
+        const querySnapshot = await getDocs(q)
+        const trips = []
+        querySnapshot.forEach((d) => trips.push({ id: d.id, ...d.data() }))
         
-        if (result.success) {
-          // Sort trips by creation date (newest first)
-          const sortedTrips = result.trips.sort((a, b) => {
-            const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0)
-            const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0)
-            return dateB - dateA
-          })
-          
-          setUserTrips(sortedTrips)
-        } else {
-          toast.error('Failed to load your trips')
-        }
+        // Sort trips by creation date (newest first)
+        trips.sort((a, b) => {
+          const dateA = a.userSelection?.startDate ? new Date(a.userSelection.startDate) : new Date(0)
+          const dateB = b.userSelection?.startDate ? new Date(b.userSelection.startDate) : new Date(0)
+          return dateB - dateA
+        })
+        
+        setUserTrips(trips)
       } catch (error) {
         console.error('Error fetching trips:', error)
-        toast.error(error.message || 'Failed to load your trips')
+        toast.error('Failed to load your trips')
       } finally {
         setLoading(false)
       }
@@ -242,19 +243,13 @@ function MyTrips() {
 
   const handleDeleteTrip = async (tripId) => {
     if (!window.confirm('Delete this trip permanently? This cannot be undone.')) return
-    
     try {
-      const result = await deleteTrip(tripId)
-      
-      if (result.success) {
-        setUserTrips((prev) => prev.filter((t) => t.id !== tripId))
-        toast.success('Trip deleted successfully')
-      } else {
-        toast.error('Failed to delete trip')
-      }
+      await deleteDoc(doc(db, 'AITrips', tripId))
+      setUserTrips((prev) => prev.filter((t) => t.id !== tripId))
+      toast.success('Trip deleted successfully')
     } catch (error) {
       console.error('Error deleting trip:', error)
-      toast.error(error.message || 'Failed to delete trip, please try again.')
+      toast.error('Failed to delete trip, please try again.')
     }
   }
 
