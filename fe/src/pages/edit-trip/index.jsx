@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext'
 import Button from '@/components/ui/Button'
 import { Save, Loader2 } from 'lucide-react'
 import { format, parse, differenceInDays, addDays } from 'date-fns'
+import { addScheduleToItinerary } from '@/utils/dateTimeUtils'
 
 // Import hooks
 import { useTripData } from './hooks/useTripData'
@@ -47,6 +48,7 @@ function EditTrip() {
     activeId,
     handleDragStart,
     handleDragEnd,
+    handleDragCancel,
   } = useDragAndDrop(tripData, updateTripData)
 
   // Component state
@@ -60,14 +62,88 @@ function EditTrip() {
   // Hotel selection state
   const [selectedHotels, setSelectedHotels] = useState([])
 
+  // Helper function to update hotel check-in/out activities
+  const updateHotelActivities = (selectedHotel) => {
+    if (!selectedHotel || !tripData?.tripData?.Itinerary) return
+
+    const dateKeys = Object.keys(tripData.tripData.Itinerary).sort()
+    if (dateKeys.length === 0) return
+
+    const firstDate = dateKeys[0]
+    const lastDate = dateKeys[dateKeys.length - 1]
+    const newItinerary = { ...tripData.tripData.Itinerary }
+
+    // Update check-in activity (first day's afternoon)
+    if (newItinerary[firstDate]?.Afternoon?.Activities) {
+      newItinerary[firstDate] = {
+        ...newItinerary[firstDate],
+        Afternoon: {
+          ...newItinerary[firstDate].Afternoon,
+          Activities: newItinerary[firstDate].Afternoon.Activities.map(activity => {
+            if (activity.ActivityType === 'hotel_checkin') {
+              return {
+                ...activity,
+                PlaceName: 'Hotel Check-in',
+                PlaceDetails: `Check-in at ${selectedHotel.HotelName}`,
+                ImageUrl: selectedHotel.HotelImageUrl || activity.ImageUrl,
+                GeoCoordinates: selectedHotel.GeoCoordinates,
+              }
+            }
+            return activity
+          })
+        }
+      }
+    }
+
+    // Update check-out activity (last day's morning)
+    if (newItinerary[lastDate]?.Morning?.Activities) {
+      newItinerary[lastDate] = {
+        ...newItinerary[lastDate],
+        Morning: {
+          ...newItinerary[lastDate].Morning,
+          Activities: newItinerary[lastDate].Morning.Activities.map(activity => {
+            if (activity.ActivityType === 'hotel_checkout') {
+              return {
+                ...activity,
+                PlaceName: 'Hotel Check-out',
+                PlaceDetails: `Check-out from ${selectedHotel.HotelName}`,
+                ImageUrl: selectedHotel.HotelImageUrl || activity.ImageUrl,
+                GeoCoordinates: selectedHotel.GeoCoordinates,
+              }
+            }
+            return activity
+          })
+        }
+      }
+    }
+
+    const updatedTripData = {
+      ...tripData,
+      tripData: {
+        ...tripData.tripData,
+        Itinerary: newItinerary,
+      },
+    }
+
+    updateTripData(updatedTripData)
+  }
+
   // Initialize selected hotels when tripData loads
   useEffect(() => {
-    if (tripData?.tripData?.Hotels) {
+    if (tripData?.tripData?.Hotels && rawTripData?.id && !existingTripId.startsWith('temp_')) {
+      // Only auto-select if this is an existing saved trip being edited
       if (selectedHotels.length === 0) {
         setSelectedHotels(tripData.tripData.Hotels)
       }
     }
-  }, [tripData?.tripData?.Hotels])
+  }, [tripData?.tripData?.Hotels, rawTripData?.id, existingTripId])
+
+  // Update hotel activities when hotel selection changes
+  useEffect(() => {
+    if (selectedHotels.length > 0 && tripData?.tripData?.Itinerary) {
+      updateHotelActivities(selectedHotels[0])
+    }
+  }, [selectedHotels])
 
   // Handle hotel selection toggle
   const handleToggleHotelSelection = (hotel) => {
@@ -75,9 +151,11 @@ function EditTrip() {
       const isSelected = prev.some(h => h.HotelName === hotel.HotelName)
       
       if (isSelected) {
-        return prev.filter(h => h.HotelName !== hotel.HotelName)
+        // Deselect the hotel
+        return []
       } else {
-        return [...prev, hotel]
+        // Select this hotel (replace any previously selected hotel)
+        return [hotel]
       }
     })
     setHasUnsavedChanges(true)
@@ -124,6 +202,7 @@ function EditTrip() {
       budgetMax: tripData.userSelection.budgetMax || 2000,
       adults: tripData.userSelection.adults || 2,
       children: tripData.userSelection.children || 0,
+      childrenAges: tripData.userSelection.childrenAges || []
     })
     setIsEditingSelection(true)
   }
@@ -157,6 +236,7 @@ function EditTrip() {
         .replace('{totalDays}', totalDays)
         .replace('{adults}', editedSelection.adults)
         .replace('{children}', editedSelection.children)
+        .replace('{childrenAges}', editedSelection.childrenAges?.join(', ') || 'N/A')
         .replace('{budgetMin}', editedSelection.budgetMin)
         .replace('{budgetMax}', editedSelection.budgetMax)
 
@@ -180,34 +260,34 @@ function EditTrip() {
         
         itineraryWithDates[dateKey] = {
           ...dayData,
-          Morning: dayData.Morning ? {
+          Morning: dayData.Morning && dayData.Morning.Activities ? {
             ...dayData.Morning,
-            Activities: (dayData.Morning.Activities || []).map((activity, idx) => ({
+            Activities: dayData.Morning.Activities.map((activity, idx) => ({
               ...activity,
               id: `${dateKey}-morning-${idx}-${Date.now()}-${Math.random()}`,
             }))
-          } : undefined,
-          Lunch: dayData.Lunch ? {
+          } : null,
+          Lunch: dayData.Lunch && dayData.Lunch.Activity ? {
             ...dayData.Lunch,
-            Activity: dayData.Lunch.Activity ? {
+            Activity: {
               ...dayData.Lunch.Activity,
               id: `${dateKey}-lunch-${Date.now()}-${Math.random()}`,
-            } : undefined
-          } : undefined,
-          Afternoon: dayData.Afternoon ? {
+            }
+          } : null,
+          Afternoon: dayData.Afternoon && dayData.Afternoon.Activities ? {
             ...dayData.Afternoon,
-            Activities: (dayData.Afternoon.Activities || []).map((activity, idx) => ({
+            Activities: dayData.Afternoon.Activities.map((activity, idx) => ({
               ...activity,
               id: `${dateKey}-afternoon-${idx}-${Date.now()}-${Math.random()}`,
             }))
-          } : undefined,
-          Evening: dayData.Evening ? {
+          } : null,
+          Evening: dayData.Evening && dayData.Evening.Activities ? {
             ...dayData.Evening,
-            Activities: (dayData.Evening.Activities || []).map((activity, idx) => ({
+            Activities: dayData.Evening.Activities.map((activity, idx) => ({
               ...activity,
               id: `${dateKey}-evening-${idx}-${Date.now()}-${Math.random()}`,
             }))
-          } : undefined,
+          } : null,
         }
       })
 
@@ -220,8 +300,9 @@ function EditTrip() {
           budgetMax: editedSelection.budgetMax,
           adults: editedSelection.adults,
           children: editedSelection.children,
+          childrenAges: editedSelection.childrenAges,
           budget: formatBudget(editedSelection.budgetMin, editedSelection.budgetMax),
-          traveler: formatTravelers(editedSelection.adults, editedSelection.children),
+          traveler: formatTravelers(editedSelection.adults, editedSelection.children, editedSelection.childrenAges),
         },
         tripData: {
           ...travelPlan,
@@ -294,28 +375,28 @@ function EditTrip() {
             ...activity,
             id: `${dateKey}-morning-${idx}-${Date.now()}-${Math.random()}`,
           }))
-        } : undefined,
+        } : null,
         Lunch: newDayData.Lunch ? {
           ...newDayData.Lunch,
           Activity: newDayData.Lunch.Activity ? {
             ...newDayData.Lunch.Activity,
             id: `${dateKey}-lunch-${Date.now()}-${Math.random()}`,
-          } : undefined
-        } : undefined,
+          } : null
+        } : null,
         Afternoon: newDayData.Afternoon ? {
           ...newDayData.Afternoon,
           Activities: (newDayData.Afternoon.Activities || []).map((activity, idx) => ({
             ...activity,
             id: `${dateKey}-afternoon-${idx}-${Date.now()}-${Math.random()}`,
           }))
-        } : undefined,
+        } : null,
         Evening: newDayData.Evening ? {
           ...newDayData.Evening,
           Activities: (newDayData.Evening.Activities || []).map((activity, idx) => ({
             ...activity,
             id: `${dateKey}-evening-${idx}-${Date.now()}-${Math.random()}`,
           }))
-        } : undefined,
+        } : null,
       }
 
       const updatedTripData = {
@@ -369,6 +450,28 @@ function EditTrip() {
     const dayData = tripData.tripData.Itinerary[dateKey]
     const newDayData = { ...dayData }
 
+    let activityToRemove = null
+  
+    // Check all time slots
+    if (dayData.Morning?.Activities) {
+      activityToRemove = dayData.Morning.Activities.find(a => a.id === activityId)
+    }
+    if (!activityToRemove && dayData.Lunch?.Activity?.id === activityId) {
+      activityToRemove = dayData.Lunch.Activity
+    }
+    if (!activityToRemove && dayData.Afternoon?.Activities) {
+      activityToRemove = dayData.Afternoon.Activities.find(a => a.id === activityId)
+    }
+    if (!activityToRemove && dayData.Evening?.Activities) {
+      activityToRemove = dayData.Evening.Activities.find(a => a.id === activityId)
+    }
+    
+    // Prevent removing hotel activities
+    if (activityToRemove?.ActivityType === 'hotel_checkin' || activityToRemove?.ActivityType === 'hotel_checkout') {
+      toast.error('Hotel check-in/out activities cannot be removed')
+      return
+    }
+
     // Remove from Morning
     if (dayData.Morning?.Activities) {
       const filtered = dayData.Morning.Activities.filter(a => a.id !== activityId)
@@ -379,7 +482,7 @@ function EditTrip() {
 
     // Remove from Lunch
     if (dayData.Lunch?.Activity?.id === activityId) {
-      newDayData.Lunch = { ...dayData.Lunch, Activity: undefined }
+      newDayData.Lunch = { ...dayData.Lunch, Activity: null }
     }
 
     // Remove from Afternoon
@@ -418,14 +521,14 @@ function EditTrip() {
       toast.error('Please log in to save trip')
       return
     }
-
+  
     if (selectedHotels.length === 0) {
-      toast.error('Please select at least one hotel before saving', {
+      toast.error('Please select one hotel before saving', {
         duration: 3000
       })
       return
     }
-
+  
     // Check for empty days based on time slot structure
     const emptyDays = Object.entries(tripData.tripData.Itinerary)
       .filter(([_, dayData]) => {
@@ -438,58 +541,91 @@ function EditTrip() {
         return totalActivities === 0
       })
       .map(([dateKey]) => format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'MMMM d'))
-
+  
     if (emptyDays.length > 0) {
       toast.error(`Please add activities to: ${emptyDays.join(', ')}`, {
         duration: 3000
       })
       return
     }
-
+  
     setSaving(true)
     try {
       const isRealId = rawTripData?.id && !existingTripId.startsWith('temp_')
       const docId = isRealId ? rawTripData.id : Date.now().toString()
-
+  
+      const timezone = tripData.tripData.Timezone || 'Asia/Ho_Chi_Minh'
+  
+      // Add schedule timestamps to all activities
+      const itineraryWithSchedules = addScheduleToItinerary(
+        tripData.tripData.Itinerary, 
+        timezone
+      )
+  
       // Remove IDs from all activities in time slots
       const itineraryWithoutIds = {}
-      Object.entries(tripData.tripData.Itinerary).forEach(([dateKey, dayData]) => {
-        itineraryWithoutIds[dateKey] = {
-          ...dayData,
-          Morning: dayData.Morning ? {
-            ...dayData.Morning,
-            Activities: (dayData.Morning.Activities || []).map(({ id, ...activity }) => activity),
-          } : undefined,
-          Lunch: dayData.Lunch ? {
-            ...dayData.Lunch,
-            Activity: dayData.Lunch.Activity ? (({ id, ...activity }) => activity)(dayData.Lunch.Activity) : undefined,
-          } : undefined,
-          Afternoon: dayData.Afternoon ? {
-            ...dayData.Afternoon,
-            Activities: (dayData.Afternoon.Activities || []).map(({ id, ...activity }) => activity),
-          } : undefined,
-          Evening: dayData.Evening ? {
-            ...dayData.Evening,
-            Activities: (dayData.Evening.Activities || []).map(({ id, ...activity }) => activity),
-          } : undefined,
+      Object.entries(itineraryWithSchedules).forEach(([dateKey, dayData]) => {
+        const cleanedDay = {
+          Theme: dayData.Theme,
+          BestTimeToVisit: dayData.BestTimeToVisit
         }
+        
+        // Only add time slots if they exist and have content
+        if (dayData.Morning?.Activities && dayData.Morning.Activities.length > 0) {
+          cleanedDay.Morning = {
+            StartTime: dayData.Morning.StartTime,
+            EndTime: dayData.Morning.EndTime,
+            Activities: dayData.Morning.Activities.map(({ id, ...activity }) => activity)
+          }
+        }
+        
+        if (dayData.Lunch?.Activity) {
+          cleanedDay.Lunch = {
+            StartTime: dayData.Lunch.StartTime,
+            EndTime: dayData.Lunch.EndTime,
+            Activity: (({ id, ...activity }) => activity)(dayData.Lunch.Activity)
+          }
+        }
+        
+        if (dayData.Afternoon?.Activities && dayData.Afternoon.Activities.length > 0) {
+          cleanedDay.Afternoon = {
+            StartTime: dayData.Afternoon.StartTime,
+            EndTime: dayData.Afternoon.EndTime,
+            Activities: dayData.Afternoon.Activities.map(({ id, ...activity }) => activity)
+          }
+        }
+        
+        if (dayData.Evening?.Activities && dayData.Evening.Activities.length > 0) {
+          cleanedDay.Evening = {
+            StartTime: dayData.Evening.StartTime,
+            EndTime: dayData.Evening.EndTime,
+            Activities: dayData.Evening.Activities.map(({ id, ...activity }) => activity)
+          }
+        }
+        
+        itineraryWithoutIds[dateKey] = cleanedDay
       })
-
+  
       await setDoc(doc(db, 'AITrips', docId), {
         userSelection: tripData.userSelection,
         tripData: {
-          ...tripData.tripData,
+          Location: tripData.tripData.Location,
+          Duration: tripData.tripData.Duration,
+          Budget: tripData.tripData.Budget,
+          Travelers: tripData.tripData.Travelers,
+          TotalTravelers: tripData.tripData.TotalTravelers,
+          Timezone: timezone,
           Hotels: selectedHotels,
           Itinerary: itineraryWithoutIds,
         },
         userEmail: user.email,
         id: docId,
       })
-
+  
       clearTempChanges(existingTripId)
       clearTempTripId()
       setHasUnsavedChanges(false)
-
+  
       toast.success(isRealId ? 'Trip updated successfully!' : 'Trip saved successfully!')
       navigate(`/view-trip/${docId}`)
     } catch (error) {
@@ -599,6 +735,7 @@ function EditTrip() {
         sensors={sensors}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
       />
     </div>
   )

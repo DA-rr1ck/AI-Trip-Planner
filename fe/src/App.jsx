@@ -26,6 +26,8 @@ import AttractionDetails from '@/pages/attraction-details/index.jsx'
 import ManualHotelDetails from '@/pages/manual/hotel-details/index.jsx'
 import ManualAttractionDetails from '@/pages/manual/attraction-details/index.jsx'
 
+import TripTracking from '@/pages/trip-tracking/index.jsx'
+
 // Root layout INSIDE the router so any component can use <Link/>
 function RootLayout() {
   return (
@@ -132,6 +134,15 @@ export default function App() {
                 {/* Fallback */}
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>
+
+              <Route
+                path="/trip/:tripId/track"
+                element={
+                  <ProtectedRoute>
+                    <TripTracking />
+                  </ProtectedRoute>
+                }
+              />
             </Routes>
           </LocaleProvider>
         </AuthProvider>

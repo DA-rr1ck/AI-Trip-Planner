@@ -3,19 +3,137 @@ import { useState } from 'react'
 import { useSensors, useSensor, PointerSensor, KeyboardSensor } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable'
 import { toast } from 'sonner'
+import { createScheduleTimestamps } from '@/utils/dateTimeUtils'
 
 export function useDragAndDrop(tripData, updateTripData) {
   const [activeId, setActiveId] = useState(null)
 
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   )
 
+  // Helper to calculate new TimeSlot based on slot and position
+  const calculateNewTimeSlot = (dateKey, slot, index, totalActivities) => {
+    const dayData = tripData.tripData.Itinerary[dateKey]
+    const slotData = dayData[slot]
+    
+    if (!slotData) return null
+    
+    const startTime = slotData.StartTime
+    const endTime = slotData.EndTime
+    
+    // Parse time string to hours
+    const parseTime = (timeStr) => {
+      const match = timeStr.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM)/i)
+      if (!match) return 0
+      
+      let hours = parseInt(match[1])
+      const minutes = match[2] ? parseInt(match[2]) : 0
+      const period = match[3].toUpperCase()
+      
+      if (period === 'PM' && hours !== 12) hours += 12
+      if (period === 'AM' && hours === 12) hours = 0
+      
+      return hours + (minutes / 60)
+    }
+    
+    // Format hours back to time string
+    const formatTime = (hours) => {
+      const h = Math.floor(hours)
+      const m = Math.round((hours - h) * 60)
+      const period = h >= 12 ? 'PM' : 'AM'
+      const displayHour = h > 12 ? h - 12 : (h === 0 ? 12 : h)
+      return `${displayHour}${m > 0 ? ':' + m.toString().padStart(2, '0') : ''} ${period}`
+    }
+    
+    const start = parseTime(startTime)
+    const end = parseTime(endTime)
+    const duration = end - start
+    
+    // If only one activity, use full slot
+    if (totalActivities === 1) {
+      return `${startTime} - ${endTime}`
+    }
+    
+    // Divide evenly
+    const timePerActivity = duration / totalActivities
+    const activityStart = start + (timePerActivity * index)
+    const activityEnd = activityStart + timePerActivity
+    
+    return `${formatTime(activityStart)} - ${formatTime(activityEnd)}`
+  }
+
+  // Helper function to find which day and time slot an activity belongs to
+  const findActivityLocation = (activityId) => {
+    for (const [dateKey, dayData] of Object.entries(tripData.tripData.Itinerary)) {
+      if (dayData.Morning?.Activities) {
+        const index = dayData.Morning.Activities.findIndex(a => a.id === activityId)
+        if (index !== -1) {
+          return { dateKey, slot: 'Morning', index, activity: dayData.Morning.Activities[index] }
+        }
+      }
+      
+      if (dayData.Lunch?.Activity?.id === activityId) {
+        return { dateKey, slot: 'Lunch', index: 0, activity: dayData.Lunch.Activity }
+      }
+      
+      if (dayData.Afternoon?.Activities) {
+        const index = dayData.Afternoon.Activities.findIndex(a => a.id === activityId)
+        if (index !== -1) {
+          return { dateKey, slot: 'Afternoon', index, activity: dayData.Afternoon.Activities[index] }
+        }
+      }
+      
+      if (dayData.Evening?.Activities) {
+        const index = dayData.Evening.Activities.findIndex(a => a.id === activityId)
+        if (index !== -1) {
+          return { dateKey, slot: 'Evening', index, activity: dayData.Evening.Activities[index] }
+        }
+      }
+    }
+    return null
+  }
+
+  const findActivityById = (activityId) => {
+    for (const [dateKey, dayData] of Object.entries(tripData.tripData.Itinerary)) {
+      if (dayData.Morning?.Activities) {
+        const activity = dayData.Morning.Activities.find(a => a.id === activityId)
+        if (activity) return activity
+      }
+      if (dayData.Lunch?.Activity?.id === activityId) {
+        return dayData.Lunch.Activity
+      }
+      if (dayData.Afternoon?.Activities) {
+        const activity = dayData.Afternoon.Activities.find(a => a.id === activityId)
+        if (activity) return activity
+      }
+      if (dayData.Evening?.Activities) {
+        const activity = dayData.Evening.Activities.find(a => a.id === activityId)
+        if (activity) return activity
+      }
+    }
+    return null
+  }
+
   const handleDragStart = (event) => {
-    setActiveId(event.active.id)
+    const activityId = event.active.id
+    const activity = findActivityById(activityId)
+    
+    if (activity?.ActivityType === 'hotel_checkin' || activity?.ActivityType === 'hotel_checkout') {
+      toast.error('Hotel check-in/out activities cannot be moved', {
+        duration: 2000
+      })
+      return
+    }
+    
+    setActiveId(activityId)
   }
 
   const handleDragEnd = (event) => {
@@ -24,46 +142,16 @@ export function useDragAndDrop(tripData, updateTripData) {
 
     if (!over || active.id === over.id) return
 
-    // Helper function to find which day and time slot an activity belongs to
-    const findActivityLocation = (activityId) => {
-      for (const [dateKey, dayData] of Object.entries(tripData.tripData.Itinerary)) {
-        // Check Morning
-        if (dayData.Morning?.Activities) {
-          const index = dayData.Morning.Activities.findIndex(a => a.id === activityId)
-          if (index !== -1) {
-            return { dateKey, slot: 'Morning', index, activity: dayData.Morning.Activities[index] }
-          }
-        }
-        
-        // Check Lunch
-        if (dayData.Lunch?.Activity?.id === activityId) {
-          return { dateKey, slot: 'Lunch', index: 0, activity: dayData.Lunch.Activity }
-        }
-        
-        // Check Afternoon
-        if (dayData.Afternoon?.Activities) {
-          const index = dayData.Afternoon.Activities.findIndex(a => a.id === activityId)
-          if (index !== -1) {
-            return { dateKey, slot: 'Afternoon', index, activity: dayData.Afternoon.Activities[index] }
-          }
-        }
-        
-        // Check Evening
-        if (dayData.Evening?.Activities) {
-          const index = dayData.Evening.Activities.findIndex(a => a.id === activityId)
-          if (index !== -1) {
-            return { dateKey, slot: 'Evening', index, activity: dayData.Evening.Activities[index] }
-          }
-        }
-      }
-      return null
-    }
-
     const activeLocation = findActivityLocation(active.id)
     let overLocation = findActivityLocation(over.id)
     
-    // If dropping on a day card (not an activity), don't do anything
     if (!activeLocation || !overLocation) return
+    
+    if (activeLocation.activity?.ActivityType === 'hotel_checkin' || 
+        activeLocation.activity?.ActivityType === 'hotel_checkout') {
+      toast.error('Hotel check-in/out activities cannot be moved')
+      return
+    }
 
     const newItinerary = { ...tripData.tripData.Itinerary }
 
@@ -74,7 +162,6 @@ export function useDragAndDrop(tripData, updateTripData) {
       const slot = activeLocation.slot
       
       if (slot === 'Lunch') {
-        // Can't reorder a single lunch activity
         return
       }
       
@@ -83,18 +170,25 @@ export function useDragAndDrop(tripData, updateTripData) {
       const newIndex = slotActivities.findIndex(a => a.id === over.id)
       
       if (oldIndex !== -1 && newIndex !== -1) {
+        const reorderedActivities = arrayMove(slotActivities, oldIndex, newIndex)
+        
+        // UPDATE TimeSlots for all activities in this slot
+        const updatedActivities = reorderedActivities.map((activity, idx) => ({
+          ...activity,
+          TimeSlot: calculateNewTimeSlot(activeLocation.dateKey, slot, idx, reorderedActivities.length)
+        }))
+        
         newItinerary[activeLocation.dateKey] = {
           ...newItinerary[activeLocation.dateKey],
           [slot]: {
             ...newItinerary[activeLocation.dateKey][slot],
-            Activities: arrayMove(slotActivities, oldIndex, newIndex)
+            Activities: updatedActivities
           }
         }
       }
     } 
     // Different slot or different day - move
     else {
-      // NEW: Prevent moving if it's the last activity in the source slot
       const sourceSlot = activeLocation.slot
       const sourceActivitiesCount = sourceSlot === 'Lunch' 
         ? 1 
@@ -120,11 +214,17 @@ export function useDragAndDrop(tripData, updateTripData) {
         const sourceActivities = [...newItinerary[activeLocation.dateKey][sourceSlot].Activities]
         sourceActivities.splice(activeLocation.index, 1)
         
+        // UPDATE TimeSlots for remaining activities in source slot
+        const updatedSourceActivities = sourceActivities.map((activity, idx) => ({
+          ...activity,
+          TimeSlot: calculateNewTimeSlot(activeLocation.dateKey, sourceSlot, idx, sourceActivities.length)
+        }))
+        
         newItinerary[activeLocation.dateKey] = {
           ...newItinerary[activeLocation.dateKey],
           [sourceSlot]: {
             ...newItinerary[activeLocation.dateKey][sourceSlot],
-            Activities: sourceActivities
+            Activities: updatedSourceActivities
           }
         }
       }
@@ -132,39 +232,54 @@ export function useDragAndDrop(tripData, updateTripData) {
       // Add to destination
       const targetSlot = overLocation.slot
       
-      // NEW: Generate new ID based on target slot BUT preserve TimeSlot field
-      const movedActivity = {
-        ...activeLocation.activity,
-        id: `${overLocation.dateKey}-${targetSlot.toLowerCase()}-${Date.now()}-${Math.random()}`,
-        // PRESERVE the original TimeSlot - don't change it!
-        // TimeSlot: activeLocation.activity.TimeSlot // Keep original time
-      }
-      
       if (targetSlot === 'Lunch') {
-        // Replace lunch activity
+        const newTimeSlot = calculateNewTimeSlot(overLocation.dateKey, targetSlot, 0, 1)
+        
         newItinerary[overLocation.dateKey] = {
           ...newItinerary[overLocation.dateKey],
           Lunch: {
             ...newItinerary[overLocation.dateKey].Lunch,
-            Activity: movedActivity
+            Activity: {
+              ...activeLocation.activity,
+              id: `${overLocation.dateKey}-lunch-${Date.now()}-${Math.random()}`,
+              TimeSlot: newTimeSlot
+            }
           }
         }
       } else {
         const targetActivities = [...(newItinerary[overLocation.dateKey][targetSlot]?.Activities || [])]
         
-        // Insert at the position of the over item
         const overIndex = targetActivities.findIndex(a => a.id === over.id)
-        if (overIndex !== -1) {
-          targetActivities.splice(overIndex, 0, movedActivity)
-        } else {
-          targetActivities.push(movedActivity)
-        }
+        const insertIndex = overIndex !== -1 ? overIndex : targetActivities.length
+        
+        // Insert activity WITHOUT TimeSlot first
+        targetActivities.splice(insertIndex, 0, {
+          ...activeLocation.activity,
+          id: `${overLocation.dateKey}-${targetSlot.toLowerCase()}-${Date.now()}-${Math.random()}`
+        })
+        
+        // UPDATE TimeSlots for ALL activities in target slot
+        const updatedTargetActivities = targetActivities.map((activity, idx) => {
+          const newTimeSlot = calculateNewTimeSlot(overLocation.dateKey, targetSlot, idx, targetActivities.length)
+          const { ScheduleStart, ScheduleEnd } = createScheduleTimestamps(
+            overLocation.dateKey, 
+            newTimeSlot, 
+            tripData.tripData.Timezone || 'Asia/Ho_Chi_Minh'
+          )
+          
+          return {
+            ...activity,
+            TimeSlot: newTimeSlot,
+            ScheduleStart,
+            ScheduleEnd
+          }
+        })
         
         newItinerary[overLocation.dateKey] = {
           ...newItinerary[overLocation.dateKey],
           [targetSlot]: {
             ...newItinerary[overLocation.dateKey][targetSlot],
-            Activities: targetActivities
+            Activities: updatedTargetActivities
           }
         }
       }
@@ -181,112 +296,8 @@ export function useDragAndDrop(tripData, updateTripData) {
     updateTripData(updatedData)
   }
 
-  return {
-    sensors,
-    activeId,
-    handleDragStart,
-    handleDragEnd,
-  }
-}
-
-/*
-import { useState } from 'react'
-import { useSensors, useSensor, PointerSensor, KeyboardSensor } from '@dnd-kit/core'
-import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable'
-
-export function useDragAndDrop(tripData, updateTripData) {
-  const [activeId, setActiveId] = useState(null)
-
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  )
-
-  const handleDragStart = (event) => {
-    setActiveId(event.active.id)
-  }
-
-  const handleDragEnd = (event) => {
-    const { active, over } = event
+  const handleDragCancel = () => {
     setActiveId(null)
-
-    if (!over || active.id === over.id) return
-
-    const findDayForActivity = (activityId) => {
-      for (const [dateKey, dayData] of Object.entries(tripData.tripData.Itinerary)) {
-        if (dayData.Activities.find(a => a.id === activityId)) {
-          return dateKey
-        }
-      }
-      return null
-    }
-
-    const activeDateKey = findDayForActivity(active.id)
-    let overDateKey = findDayForActivity(over.id)
-    
-    if (!overDateKey && tripData.tripData.Itinerary[over.id]) {
-      overDateKey = over.id
-    }
-
-    if (!activeDateKey || !overDateKey) return
-
-    const newItinerary = { ...tripData.tripData.Itinerary }
-
-    if (activeDateKey === overDateKey) {
-      // Same day reordering
-      const dayActivities = [...newItinerary[activeDateKey].Activities]
-      const oldIndex = dayActivities.findIndex(a => a.id === active.id)
-      const newIndex = dayActivities.findIndex(a => a.id === over.id)
-      
-      if (oldIndex !== -1 && newIndex !== -1) {
-        newItinerary[activeDateKey] = {
-          ...newItinerary[activeDateKey],
-          Activities: arrayMove(dayActivities, oldIndex, newIndex)
-        }
-      }
-    } else {
-      // Cross-day move
-      const sourceActivities = [...newItinerary[activeDateKey].Activities]
-      const targetActivities = [...newItinerary[overDateKey].Activities]
-      const activeIndex = sourceActivities.findIndex(a => a.id === active.id)
-      
-      if (activeIndex !== -1) {
-        const [movedActivity] = sourceActivities.splice(activeIndex, 1)
-        const updatedActivity = {
-          ...movedActivity,
-          id: `${overDateKey}-activity-${Date.now()}-${Math.random()}`
-        }
-        
-        const overIndex = targetActivities.findIndex(a => a.id === over.id)
-        if (overIndex !== -1) {
-          targetActivities.splice(overIndex, 0, updatedActivity)
-        } else {
-          targetActivities.push(updatedActivity)
-        }
-        
-        newItinerary[activeDateKey] = {
-          ...newItinerary[activeDateKey],
-          Activities: sourceActivities
-        }
-        
-        newItinerary[overDateKey] = {
-          ...newItinerary[overDateKey],
-          Activities: targetActivities
-        }
-      }
-    }
-
-    const updatedData = {
-      ...tripData,
-      tripData: {
-        ...tripData.tripData,
-        Itinerary: newItinerary,
-      },
-    }
-
-    updateTripData(updatedData)
   }
 
   return {
@@ -294,7 +305,6 @@ export function useDragAndDrop(tripData, updateTripData) {
     activeId,
     handleDragStart,
     handleDragEnd,
+    handleDragCancel,
   }
 }
-
-*/
