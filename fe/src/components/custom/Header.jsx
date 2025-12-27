@@ -1,133 +1,195 @@
 import React, { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { Plus, Map, User, LogOut } from "lucide-react";
+import { Plus, Map, User, LogOut } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import Button from '@/components/ui/Button'
-import avatarFallback from '@/assets/avatar.png'
 import AuthDialog from '@/components/custom/AuthDialog'
+import LocaleToggle from '@/components/custom/LocaleToggle'
+import avatarFallback from '@/assets/avatar.png'
 import { useAuth } from '@/context/AuthContext'
 
 function Header() {
-  const { isAuthenticated, user, logout } = useAuth();
-  const [openPopover, setOpenPopover] = useState(false);
-  const [openDialog, setOpenDialog] = useState(false);
-  const navigate = useNavigate();
+  const { isAuthenticated, user, logout } = useAuth()
+  const [openPopover, setOpenPopover] = useState(false)
+  const [openDialog, setOpenDialog] = useState(false)
+  const navigate = useNavigate()
 
-  const avatarSrc = user?.avatar || avatarFallback;
-  const displayName = user?.username || user?.email || 'User';
+  const avatarSrc = user?.avatar || avatarFallback
+  const displayName = user?.username || user?.email || 'User'
+
+  const handleLogoClick = () => navigate('/')
+  const handleSignInClick = () => setOpenDialog(true)
+
+  const handleSignOut = () => {
+    setOpenPopover(false)
+    logout()
+  }
 
   return (
-    <div className='h-20 px-5 shadow-sm flex justify-between items-center'>
-      <img
-        src='/webicon.jpg'
-        height={40}
-        width={63}
-        alt='logo'
-        className='cursor-pointer'
-        onClick={() => (navigate('/'))}
-      />
+    <>
+      <header className="sticky top-0 z-[9998] border-b bg-background/80 backdrop-blur">
+        <div className="mx-auto flex h-16 md:h-20 items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
+          {/* Left: logo + brand */}
+          <button
+            type="button"
+            onClick={handleLogoClick}
+            className="group flex items-center gap-2 rounded-full bg-transparent pr-2 transition hover:bg-muted/70"
+          >
+            <div className="flex h-10 w-10 md:h-16 md:w-16 items-center justify-center overflow-hidden rounded-2xl border bg-background shadow-sm">
+              <img
+                src="/webicon.jpg"
+                height={40}
+                width={40}
+                alt="AI Travel Planner logo"
+                className="h-full w-full object-cover transition group-hover:scale-105"
+              />
+            </div>
+            <div className="hidden sm:flex flex-col text-left">
+              <span className="text-[13px] font-semibold tracking-tight leading-none">
+                AI Travel Planner
+              </span>
+              <span className="mt-0.5 text-[11px] text-muted-foreground leading-none">
+                Plan · Track · Explore
+              </span>
+            </div>
+          </button>
 
-      <div>
-        {isAuthenticated ? (
+          {/* Right: actions */}
           <div className="flex items-center gap-2 sm:gap-3">
-            <Link to="/create-trip">
-              <Button
-                className="rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white shadow-sm hover:shadow-md hover:opacity-95"
-              >
-                <Plus className="h-4 w-4 mr-1" />
-                Create Trip
-              </Button>
-            </Link>
+            {/* Locale toggle */}
+            <LocaleToggle />
 
-            <Link to="/my-trips">
-              <Button variant="outline" className="rounded-full">
-                <Map className="h-4 w-4 mr-1" />
-                My Trips
-              </Button>
-            </Link>
+            {isAuthenticated ? (
+              <>
+                {/* Create Trip – only show on ≥ md, mobile will use bottom nav */}
+                <Link to="/create-trip" className="hidden md:flex">
+                  <Button className="rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white shadow-sm hover:shadow-md hover:opacity-95">
+                    <Plus className="h-4 w-4 mr-1" />
+                    <span className="hidden sm:inline">Create trip</span>
+                  </Button>
+                </Link>
 
-            <Link to="/smart-trip">
-              <Button variant="outline" className="rounded-full">
-                <Map className="h-4 w-4 mr-1" />
-                Smart Trip Generator
-              </Button>
-            </Link>
+                {/* My Trips – only show on ≥ md */}
+                <Link to="/my-trips" className="hidden md:flex">
+                  <Button
+                    variant="outline"
+                    className="rounded-full border-border/70 bg-background/60 hover:bg-muted/80"
+                  >
+                    <Map className="h-4 w-4 mr-1" />
+                    <span className="hidden sm:inline">My trips</span>
+                  </Button>
+                </Link>
 
+                <Link to="/smart-trip">
+                  <Button variant="outline" className="rounded-full">
+                    <Map className="h-4 w-4 mr-1" />
+                    Smart Trip Generator
+                  </Button>
+                </Link>
 
-            <Popover open={openPopover} onOpenChange={setOpenPopover}>
-              <PopoverTrigger asChild>
+                {/* Profile (desktop/tablet) */}
+                <Popover open={openPopover} onOpenChange={setOpenPopover}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="relative hidden sm:flex h-9 w-9 items-center justify-center rounded-full border border-border/60 bg-background/80 shadow-sm outline-none ring-2 ring-transparent transition hover:ring-indigo-400"
+                      aria-label="Open profile menu"
+                    >
+                      <img
+                        src={avatarSrc}
+                        alt={displayName}
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        className="h-8 w-8 rounded-full object-cover"
+                      />
+                    </button>
+                  </PopoverTrigger>
+
+                  <PopoverContent
+                    align="end"
+                    className="w-72 overflow-hidden z-[9999] rounded-xl border bg-background/95 p-0 shadow-xl"
+                  >
+                    {/* Top gradient panel */}
+                    <div className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 p-4 text-white">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={avatarSrc}
+                          alt={displayName}
+                          loading="lazy"
+                          referrerPolicy="no-referrer"
+                          className="h-10 w-10 rounded-full object-cover ring-2 ring-white/80"
+                        />
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold">
+                            {displayName}
+                          </div>
+                          <div className="truncate text-xs opacity-90">
+                            {user?.email ?? '—'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="space-y-1 p-2">
+                      <Link
+                        to="/profile"
+                        onClick={() => setOpenPopover(false)}
+                        className="block"
+                      >
+                        <Button
+                          variant="ghost"
+                          className="w-full justify-start gap-2 rounded-lg text-sm"
+                        >
+                          <User className="h-4 w-4" />
+                          Profile
+                        </Button>
+                      </Link>
+
+                      <div className="my-1 h-px bg-border/80" />
+
+                      <Button
+                        onClick={handleSignOut}
+                        variant="destructive"
+                        className="w-full justify-start gap-2 rounded-lg text-sm"
+                      >
+                        <LogOut className="h-4 w-4" />
+                        Sign out
+                      </Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                {/* Tiny avatar on very small mobile (no popover, bottom bar handles account) */}
                 <button
-                  className="relative rounded-full outline-none ring-2 ring-transparent transition hover:ring-indigo-400"
-                  aria-label="Open profile menu"
+                  type="button"
+                  className="flex sm:hidden h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/80 shadow-sm"
+                  onClick={() => navigate('/profile')}
                 >
                   <img
                     src={avatarSrc}
                     alt={displayName}
-                    loading='lazy'
-                    referrerPolicy='no-referrer'
-                    className="h-9 w-9 rounded-full object-cover"
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    className="h-7 w-7 rounded-full object-cover"
                   />
-                  {/* online dot */}
-                  {/* <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-background" /> */}
                 </button>
-              </PopoverTrigger>
-
-              <PopoverContent className="w-72 p-0 overflow-hidden rounded-xl shadow-xl border">
-                <div className="bg-gradient-to-r from-indigo-500 to-purple-500 p-4 text-white">
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={avatarSrc}
-                      alt={displayName}
-                      loading='lazy'
-                      referrerPolicy='no-referrer'
-                      className="h-10 w-10 rounded-full object-cover ring-2 ring-white/80"
-                    />
-                    <div className="min-w-0">
-                      <div className="font-semibold truncate">{displayName}</div>
-                      <div className="text-xs opacity-90 truncate">
-                        {user?.email ?? "—"}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-2">
-                  <Link onClick={() => setOpenPopover(false)} to="/profile" className="block">
-                    <Button variant="ghost" className="w-full justify-start gap-2">
-                      <User className="h-4 w-4" />
-                      Profile
-                    </Button>
-                  </Link>
-
-                  {/* <Link to="/my-trips" className="block">
-                    <Button variant="ghost" className="w-full justify-start gap-2">
-                      <Map className="h-4 w-4" />
-                      My Trips
-                    </Button>
-                  </Link> */}
-
-                  <div className="my-2 h-px bg-border" />
-
-                  <Button
-                    onClick={logout}
-                    variant="destructive"
-                    className="w-full justify-start gap-2"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Sign Out
-                  </Button>
-                </div>
-              </PopoverContent>
-            </Popover>
+              </>
+            ) : (
+              <Button
+                onClick={handleSignInClick}
+                className="rounded-full px-4 py-2 text-sm font-medium shadow-sm"
+              >
+                Sign in
+              </Button>
+            )}
           </div>
-        ) : (
-          <>
-            <Button onClick={() => setOpenDialog(true)}>Sign in</Button>
-            <AuthDialog open={openDialog} onOpenChange={setOpenDialog} />
-          </>
-        )}
-      </div>
-    </div>
+        </div>
+      </header>
+
+      {/* Auth dialog for header sign-in */}
+      <AuthDialog open={openDialog} onOpenChange={setOpenDialog} />
+    </>
   )
 }
 

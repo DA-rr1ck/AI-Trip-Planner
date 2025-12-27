@@ -23,7 +23,6 @@ import {
 import { slugToTitle } from '@/lib/slugToTitle'
 import SectionCard from '@/components/custom/SectionCard'
 import PhotoCarousel from '@/components/custom/PhotoCarousel'
-import { HOTEL_AMENITIES_CONFIG, PROPERTY_POLICY_FIELDS } from '@/constants/hotelAmenities'
 
 // Safely convert rating (or any value) to a number
 function toSafeNumber(value, fallback = null) {

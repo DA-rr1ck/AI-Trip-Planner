@@ -1,0 +1,8 @@
+{
+  "appId": "com.doantotnghiep.aitravelplanner",
+  "appName": "AI Travel Planner",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http"
+  }
+}

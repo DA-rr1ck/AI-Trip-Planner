@@ -16,7 +16,120 @@ import DestinationSelector from './components/DestinationSelector'
 import ModeSwitch from './components/ModeSwitch'
 import HotelSearch from './components/manual/HotelSearch'
 import DayManager from './components/manual/DayManager'
-import { generateAITrip } from '@/service/tripService'
+import { saveManualTrip } from './utils/manual/tripSaver'
+import { Capacitor, CapacitorHttp } from '@capacitor/core'
+
+// Base URL for Nominatim
+const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+
+// --- JSONP fallback (ignores CORS) ---
+function nominatimSearchJSONP(query) {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      resolve([]);
+      return;
+    }
+
+    const callbackName = `__nominatim_cb_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2)}`;
+
+    const script = document.createElement('script');
+    let timeoutId;
+
+    function cleanup() {
+      if (script.parentNode) script.parentNode.removeChild(script);
+      clearTimeout(timeoutId);
+      // @ts-ignore
+      delete window[callbackName];
+    }
+
+    // @ts-ignore
+    window[callbackName] = (data) => {
+      cleanup();
+      const arr = Array.isArray(data) ? data : [];
+      resolve(arr);
+    };
+
+    script.src =
+      `${NOMINATIM_URL}?format=json&addressdetails=1&limit=10` +
+      `&q=${encodeURIComponent(query)}` +
+      `&json_callback=${callbackName}`;
+    script.async = true;
+    script.onerror = (err) => {
+      cleanup();
+      reject(err);
+    };
+
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Nominatim JSONP timeout'));
+    }, 10000);
+
+    document.body.appendChild(script);
+  });
+}
+
+// --- Single entry point: searchNominatim(query) ---
+async function searchNominatim(query) {
+  const isNative =
+    typeof Capacitor !== 'undefined' &&
+    typeof Capacitor.isNativePlatform === 'function' &&
+    Capacitor.isNativePlatform();
+
+  // 1. On native: try CapacitorHttp first
+  if (isNative) {
+    try {
+      console.log('[Nominatim] Native HTTP via CapacitorHttp, query:', query);
+
+      const res = await CapacitorHttp.get({
+        url: NOMINATIM_URL,
+        params: {
+          format: 'json',
+          q: query,
+        },
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      console.log(
+        '[Nominatim] Native response:',
+        res.status,
+        typeof res.data
+      );
+
+      const raw = res.data;
+      const parsed =
+        typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch (err) {
+      console.warn('[Nominatim] Native HTTP failed, will try fetch/JSONP:', err);
+    }
+  }
+
+  // 2. Try normal fetch (if CORS header is present)
+  try {
+    console.log('[Nominatim] Fetch attempt, query:', query);
+
+    const url = `${NOMINATIM_URL}?format=json&addressdetails=1&limit=10` + `&q=${encodeURIComponent(query)}`;
+
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (Array.isArray(data)) return data;
+  } catch (err) {
+    console.warn('[Nominatim] Fetch failed (probably CORS), fallback to JSONP:', err);
+  }
+
+  // 3. Last resort: JSONP (no CORS at all)
+  return await nominatimSearchJSONP(query);
+}
 
 function CreateTrip() {
   const [place, setPlace] = useState(null)
@@ -243,109 +356,92 @@ function CreateTrip() {
     }
   }
 
-  // Manual Trip Save - OLD WAY (saves directly to Firestore)
+  useEffect(() => {
+    if (isManualMode) {
+      // Do not clear place here as it is used in Manual Mode too
+      setOptions([]);
+      setInputValue('');
+      return;
+    }
+
+    const state = { cancelled: false };
+
+    const timer = setTimeout(() => {
+      const query = (inputValue || '').trim();
+      if (query.length <= 2) {
+        if (!state.cancelled) setOptions([]);
+        return;
+      }
+
+      (async () => {
+        try {
+          const results = await searchNominatim(query);
+          if (state.cancelled) return;
+
+          const arr = Array.isArray(results) ? results : [];
+
+          setOptions(arr.map((item) => ({ label: item.display_name, value: item })));
+        } catch (err) {
+          if (state.cancelled) return;
+          console.error('[Nominatim] Final error:', err);
+          setOptions([]);
+        }
+      })();
+    }, 500);
+
+    return () => {
+      state.cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [inputValue, isManualMode]);
+
   const onSaveManualTrip = async () => {
     if (!user) {
       setOpenDialog(true)
       return
     }
-
-    if (!formData.location || !formData.startDate || !formData.endDate) {
-      toast.error('Please fill all required fields.')
-      return
-    }
-
-    if (tripDays.length === 0) {
-      toast.error('Please add at least one day to your trip.')
-      return
-    }
-
     setLoading(true)
-
     try {
-      const docId = Date.now().toString()
+      const budget = formatBudget(formData.budgetMin, formData.budgetMax)
+      const traveler = formatTravelers()
+      const manualFormData = { ...formData, budget, traveler }
 
-      // Build itinerary from tripDays
-      const itinerary = {}
-      const start = new Date(formData.startDate)
-
-      tripDays.forEach((day, index) => {
-        const dayDate = new Date(start)
-        dayDate.setDate(start.getDate() + index)
-        const dateKey = format(dayDate, 'yyyy-MM-dd')
-
-        itinerary[dateKey] = {
-          DayNumber: day.dayNumber,
-          Activities: day.places || []
-        }
-      })
-
-      const tripDocument = {
-        id: docId,
-        userEmail: user.email,
-        userSelection: {
-          location: formData.location,
-          startDate: format(formData.startDate, 'yyyy-MM-dd'),
-          endDate: format(formData.endDate, 'yyyy-MM-dd'),
-          budget: formatBudget(formData.budgetMin, formData.budgetMax),
-          traveler: formatTravelers(),
-          budgetMin: formData.budgetMin,
-          budgetMax: formData.budgetMax,
-          adults: formData.adults,
-          children: formData.children,
-          childrenAges: formData.childrenAges
-        },
-        tripData: {
-          Location: formData.location,
-          Hotels: confirmedHotel ? [confirmedHotel] : [],
-          Itinerary: itinerary
-        },
-        createdAt: new Date().toISOString(),
-        generationMethod: 'manual'
-      }
-
-      // Save to Firestore directly
-      await setDoc(doc(db, 'AITrips', docId), tripDocument)
-
+      const tripId = await saveManualTrip({ formData: manualFormData, confirmedHotel, tripDays, user })
       toast.success('Trip saved successfully!')
 
       // Clear session on success
       sessionStorage.removeItem('createTripSession')
 
-      // Navigate to view trip
-      navigate(`/view-trip/${docId}`)
-
+      navigate(`/view-trip/${tripId}`)
     } catch (error) {
-      console.error('Error saving manual trip:', error)
-      toast.error('Failed to save trip. Please try again.')
+      toast.error(error.message)
     } finally {
       setLoading(false)
     }
   }
 
-  // Location search
-  useEffect(() => {
-    if (isManualMode) {
-      setOptions([])
-      setInputValue('')
-      return
+  const handleManualDaysChange = (newTripDays) => {
+    const currentDaysCount = tripDays.length
+    const newDaysCount = newTripDays.length
+
+    if (newDaysCount < currentDaysCount) {
+      toast.success('Day deleted', { duration: 1000 })
+
+      if (formData.startDate) {
+        const newEndDate = addDays(formData.startDate, newDaysCount - 1)
+        setManualFormData(prev => ({ ...prev, endDate: newEndDate }))
+      }
+    } else if (newDaysCount > currentDaysCount) {
+      if (formData.startDate) {
+        const newEndDate = addDays(formData.startDate, newDaysCount - 1)
+        setManualFormData(prev => ({ ...prev, endDate: newEndDate }))
+      }
     }
 
-    const timer = setTimeout(() => {
-      if ((inputValue || '').length > 2) {
-        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(inputValue)}`)
-          .then(response => response.json())
-          .then(data => setOptions(data.map(item => ({ label: item.display_name, value: item }))))
-          .catch(() => setOptions([]))
-      } else {
-        setOptions([])
-      }
-    }, 500)
+    setTripDays(newTripDays)
+  }
 
-    return () => clearTimeout(timer)
-  }, [inputValue, isManualMode])
-
-  // Warn before refresh
+  // Warn user before refreshing if there are unsaved changes
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       const hasData = place ||
@@ -363,7 +459,7 @@ function CreateTrip() {
   }, [place, isManualMode, confirmedHotel, tripDays, aiFormData]);
 
   return (
-    <div className='sm:px-10 md:px-32 lg:px-56 px-5 mt-10'>
+    <div className='px-5 md:px-56 mt-5'>
       <ModeSwitch isManualMode={isManualMode} onChange={setIsManualMode} />
 
       <h2 className='font-bold text-3xl'>
@@ -375,10 +471,242 @@ function CreateTrip() {
           : 'Just provide some basic information, and our trip planner will generate a customized itinerary based on your preferences'}
       </p>
 
-      {/* AI Mode Form - EXACT SAME UI AS BEFORE */}
-      {!isManualMode && (
-        <div className='mt-20 flex flex-col gap-10'>
-          {/* Location Selector */}
+      {isManualMode ? (
+        <div className='mt-10 flex flex-col gap-10'>
+          <DestinationSelector
+            label='What is your desired destination?'
+            value={place}
+            onLocationSelected={(label, val) => {
+              setPlace(val)
+              handleInputChange('location', label)
+            }}
+          />
+
+          <div>
+            <h2 className='text-xl my-3 font-medium'>
+              When are you planning your trip?
+            </h2>
+
+            <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+              <div>
+                <label className='block text-sm font-medium text-gray-700 mb-2'>
+                  Start Date
+                </label>
+                <DatePicker
+                  selected={formData.startDate}
+                  onChange={(date) => handleInputChange('startDate', date)}
+                  minDate={new Date()}
+                  maxDate={formData.endDate || undefined}
+                  dateFormat='dd/MM/yyyy'
+                  placeholderText='Select start date'
+                  className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+                  isClearable
+                />
+              </div>
+
+              <div>
+                <label className='block text-sm font-medium text-gray-700 mb-2'>
+                  End Date
+                </label>
+                <DatePicker
+                  selected={formData.endDate}
+                  onChange={(date) => handleInputChange('endDate', date)}
+                  minDate={formData.startDate || new Date()}
+                  dateFormat='dd/MM/yyyy'
+                  placeholderText='Select end date'
+                  className='w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+                  disabled={!formData.startDate}
+                  isClearable
+                />
+              </div>
+            </div>
+
+            {formData.startDate && formData.endDate && (
+              <div className='mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg'>
+                <p className='text-sm text-blue-800'>
+                  ✈️ Trip duration: <span className='font-semibold'>{getTotalDays()} {getTotalDays() === 1 ? 'day' : 'days'}</span>
+                </p>
+                <p className='text-xs text-blue-600 mt-1'>
+                  {format(formData.startDate, 'EEEE, MMMM d, yyyy')} → {format(formData.endDate, 'EEEE, MMMM d, yyyy')}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Budget Range Slider */}
+          <div>
+            <h2 className='text-xl my-3 font-medium'>
+              What is your budget range? (per person)
+            </h2>
+
+            <div className='p-6 border rounded-lg bg-gradient-to-br from-green-50 to-emerald-50'>
+              <div className='flex justify-between items-center mb-4'>
+                <div className='flex items-center gap-2'>
+                  <DollarSign className='h-5 w-5 text-green-600' />
+                  <span className='text-2xl font-bold text-green-700'>
+                    ${formData.budgetMin.toLocaleString()} - ${formData.budgetMax.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Min Budget Slider */}
+              <div className='mb-4'>
+                <label className='block text-sm font-medium text-gray-700 mb-2'>
+                  Minimum Budget: ${formData.budgetMin.toLocaleString()}
+                </label>
+                <input
+                  type='range'
+                  min='100'
+                  max='10000'
+                  step='100'
+                  value={formData.budgetMin}
+                  onChange={(e) => {
+                    const val = Number(e.target.value)
+                    if (val < formData.budgetMax) {
+                      handleInputChange('budgetMin', val)
+                    }
+                  }}
+                  className='w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600'
+                />
+              </div>
+
+              {/* Max Budget Slider */}
+              <div>
+                <label className='block text-sm font-medium text-gray-700 mb-2'>
+                  Maximum Budget: ${formData.budgetMax.toLocaleString()}
+                </label>
+                <input
+                  type='range'
+                  min='100'
+                  max='10000'
+                  step='100'
+                  value={formData.budgetMax}
+                  onChange={(e) => {
+                    const val = Number(e.target.value)
+                    if (val > formData.budgetMin) {
+                      handleInputChange('budgetMax', val)
+                    }
+                  }}
+                  className='w-full h-2 bg-green-200 rounded-lg appearance-none cursor-pointer accent-green-600'
+                />
+              </div>
+
+              <p className='text-xs text-gray-600 mt-3 text-center'>
+                💡 This is the total budget per person for the entire trip
+              </p>
+            </div>
+          </div>
+
+          {/* Number of Travelers */}
+          <div>
+            <h2 className='text-xl my-3 font-medium'>
+              How many people are traveling?
+            </h2>
+
+            <div className='grid grid-cols-1 md:grid-cols-2 gap-6'>
+              {/* Adults */}
+              <div className='p-6 border rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50'>
+                <div className='flex items-center justify-between mb-4'>
+                  <div>
+                    <h3 className='font-semibold text-lg'>Adults</h3>
+                    <p className='text-xs text-gray-600'>Age 18+</p>
+                  </div>
+                  <span className='text-4xl'>👨‍💼</span>
+                </div>
+
+                <div className='flex items-center justify-between'>
+                  <button
+                    type='button'
+                    onClick={() => handleInputChange('adults', Math.max(0, formData.adults - 1))}
+                    className='w-10 h-10 rounded-full bg-white border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors flex items-center justify-center'
+                    disabled={formData.adults === 0}
+                  >
+                    <Minus className='h-4 w-4' />
+                  </button>
+
+                  <span className='text-3xl font-bold text-blue-700'>{formData.adults}</span>
+
+                  <button
+                    type='button'
+                    onClick={() => handleInputChange('adults', Math.min(10, formData.adults + 1))}
+                    className='w-10 h-10 rounded-full bg-white border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white transition-colors flex items-center justify-center'
+                    disabled={formData.adults === 10}
+                  >
+                    <Plus className='h-4 w-4' />
+                  </button>
+                </div>
+              </div>
+
+              {/* Children */}
+              <div className='p-6 border rounded-lg bg-gradient-to-br from-pink-50 to-rose-50'>
+                <div className='flex items-center justify-between mb-4'>
+                  <div>
+                    <h3 className='font-semibold text-lg'>Children</h3>
+                    <p className='text-xs text-gray-600'>Age 0-17</p>
+                  </div>
+                  <span className='text-4xl'>👶</span>
+                </div>
+
+                <div className='flex items-center justify-between'>
+                  <button
+                    type='button'
+                    onClick={() => handleInputChange('children', Math.max(0, formData.children - 1))}
+                    className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
+                    disabled={formData.children === 0}
+                  >
+                    <Minus className='h-4 w-4' />
+                  </button>
+
+                  <span className='text-3xl font-bold text-pink-700'>{formData.children}</span>
+
+                  <button
+                    type='button'
+                    onClick={() => handleInputChange('children', Math.min(10, formData.children + 1))}
+                    className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
+                    disabled={formData.children === 10}
+                  >
+                    <Plus className='h-4 w-4' />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Total Travelers Summary */}
+            <div className='mt-4 p-3 bg-purple-50 border border-purple-200 rounded-lg'>
+              <p className='text-sm text-purple-800 text-center'>
+                👥 Total: <span className='font-semibold'>{formatTravelers()}</span>
+              </p>
+            </div>
+          </div>
+
+          {formData.location && (
+            <HotelSearch
+              location={formData.location}
+              confirmedHotel={confirmedHotel}
+              onHotelConfirm={(hotel) => setConfirmedHotel(hotel)}
+              onRemoveHotel={() => setConfirmedHotel(null)}
+              startDate={formData.startDate}
+              endDate={formData.endDate}
+              budgetMin={formData.budgetMin}
+              budgetMax={formData.budgetMax}
+              adults={formData.adults}
+              children={formData.children}
+              savedQuery={hotelSearchState.query}
+              savedResults={hotelSearchState.results}
+              onSearchStateChange={(query, results) => setHotelSearchState({ query, results })}
+            />
+          )}
+
+          {confirmedHotel && (
+            <DayManager
+              location={formData.location}
+              tripDays={tripDays}
+              onDaysChange={handleManualDaysChange}
+            />
+          )}
+        </div>
+      ) : (
+        <div className='mt-10 flex flex-col gap-10'>
           <div>
             <h2 className='text-xl my-3 font-medium'>
               What is your desired destination?
@@ -629,38 +957,7 @@ function CreateTrip() {
         </div>
       )}
 
-      {/* Manual Mode - Keep as is */}
-      {isManualMode && (
-        <>
-          <DestinationSelector
-            isManualMode={isManualMode}
-            formData={formData}
-            place={place}
-            setPlace={setPlace}
-            inputValue={inputValue}
-            setInputValue={setInputValue}
-            options={options}
-            handleInputChange={handleInputChange}
-          />
-
-          {/* Rest of manual mode components... */}
-          <HotelSearch
-            confirmedHotel={confirmedHotel}
-            setConfirmedHotel={setConfirmedHotel}
-            hotelSearchState={hotelSearchState}
-            setHotelSearchState={setHotelSearchState}
-          />
-
-          <DayManager
-            tripDays={tripDays}
-            setTripDays={setTripDays}
-            startDate={formData.startDate}
-            endDate={formData.endDate}
-          />
-        </>
-      )}
-
-      <div className='my-10 justify-end flex'>
+      <div className='mt-5 mb-20 md:mb-5 justify-end flex'>
         <Button
           disabled={loading}
           onClick={isManualMode ? onSaveManualTrip : onGenerateTrip}

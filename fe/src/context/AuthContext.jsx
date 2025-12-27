@@ -4,7 +4,8 @@ import React, {
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { useGoogleLogin, googleLogout } from "@react-oauth/google";
+import { useGoogleLogin } from "@react-oauth/google";
+import { Capacitor } from "@capacitor/core";
 
 // ---- Config ----
 const LS_KEY = "auth.session";
@@ -43,12 +44,21 @@ export function AuthProvider({ children }) {
   const [provider, setProvider] = useState(null);     // 'email' | 'google'
   const [user, setUser] = useState(null);
 
+  // full session payload (for mobile bearer tokens)
+  const [session, setSession] = useState(null);
+
   const [localExpiresAt, setLocalExpiresAt] = useState(null);
   const [googleExpiresAt, setGoogleExpiresAt] = useState(null);
   const [timerArmed, setTimerArmed] = useState(false);
   const expiryTimerRef = useRef(null);
 
   const abortRef = useRef(false);
+  const sessionRef = useRef(null);
+
+  // Keep sessionRef in sync for interceptors
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   const handleHardLogout = useCallback(() => {
     if (expiryTimerRef.current) {
@@ -59,6 +69,7 @@ export function AuthProvider({ children }) {
     clearSession();
     setProvider(null);
     setUser(null);
+    setSession(null);
 
     setLocalExpiresAt(null);
     setGoogleExpiresAt(null);
@@ -81,6 +92,33 @@ export function AuthProvider({ children }) {
     return () => api.interceptors.response.eject(id);
   }, []);
 
+  // mobile-only request interceptor to send Bearer token
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform || !Capacitor.isNativePlatform()) {
+      return;
+    }
+
+    // For native, no need to rely on cookies
+    api.defaults.withCredentials = false;
+
+    const id = api.interceptors.request.use((config) => {
+      const s = sessionRef.current;
+      const accessToken = s?.accessToken;
+      if (accessToken) {
+        const tokenType = s?.tokenType || "Bearer";
+        const headers = config.headers || {};
+        // Don't overwrite if caller explicitly set Authorization
+        if (!headers.Authorization && !headers.authorization) {
+          headers.Authorization = `${tokenType} ${accessToken}`;
+        }
+        config.headers = headers;
+      }
+      return config;
+    });
+
+    return () => api.interceptors.request.eject(id);
+  }, []);
+
   // Bootstrap session from localStorage
   useEffect(() => {
     (async () => {
@@ -98,6 +136,19 @@ export function AuthProvider({ children }) {
       }
       else {
         handleHardLogout();
+      }
+
+      // restore session payload if present (for native)
+      if (saved?.session) {
+        setSession(saved.session);
+      }
+
+      // arm timer again after bootstrapping
+      if (
+        (saved?.localExpiresAt && typeof saved.localExpiresAt === "number") ||
+        (saved?.googleExpiresAt && typeof saved.googleExpiresAt === "number")
+      ) {
+        setTimerArmed(true);
       }
 
       if (!abortRef.current) setInitializing(false);
@@ -144,6 +195,10 @@ export function AuthProvider({ children }) {
     setUser(u);
     setProvider("email");
 
+    // capture session payload (for native)
+    const sessionPayload = data.session ?? null;
+    setSession(sessionPayload);
+
     const expiration = typeof data.session.expiresAt === "number" ? data.session.expiresAt : null;
     setLocalExpiresAt(expiration);
     setTimerArmed(true)
@@ -152,6 +207,7 @@ export function AuthProvider({ children }) {
       provider: "email",
       user: u,
       localExpiresAt: expiration,
+      session: sessionPayload,
     });
 
     return u;
@@ -180,11 +236,15 @@ export function AuthProvider({ children }) {
       if (!accessToken) return;
 
       // Send token to BE. BE will: verify/fetch Google profile, upsert user, set session cookie
+      // and return a session.accessToken (for mobile)
       const { data } = await api.post("/auth/google", { accessToken });
       const u = data.user;
 
       setUser(u);
       setProvider("google");
+
+      const sessionPayload = data.session ?? null;
+      setSession(sessionPayload);
 
       const expiration = typeof data.session.expiresAt === "number" ? data.session.expiresAt : null;
       setGoogleExpiresAt(expiration);
@@ -194,6 +254,7 @@ export function AuthProvider({ children }) {
         provider: "google",
         user: u,
         googleExpiresAt: expiration,
+        session: sessionPayload,
       });
 
       toast.success("Signed in!");
@@ -209,12 +270,12 @@ export function AuthProvider({ children }) {
   // ---------- LOGOUT ----------
   const logout = useCallback(async () => {
     try {
-      // Always clear server session cookie
+      // clear server session cookie
       await api.post("/auth/logout").catch(() => { });
-
       navigate('/');
       toast.info('Signed out!');
     } finally {
+      // clear local state + token
       handleHardLogout();
     }
   }, [handleHardLogout]);
@@ -232,6 +293,7 @@ export function AuthProvider({ children }) {
       isEmail,
       isGoogle,
       user,
+      session,
 
       // deps
       api,
@@ -243,7 +305,7 @@ export function AuthProvider({ children }) {
       logout,
     };
   }, [
-    initializing, provider, user,
+    initializing, provider, user, session,
     loginWithPassword, register, loginWithGoogle, logout,
   ]);
 

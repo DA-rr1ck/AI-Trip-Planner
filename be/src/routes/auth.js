@@ -3,7 +3,8 @@ const https = require('https');
 const bcrypt = require('bcrypt');
 const { db, FieldValue } = require('../config/firebase');
 const { AUTH_EXPIRATION } = process.env;
-const { signToken, verifyToken } = require('../utils/jwt');
+const { signToken } = require('../utils/jwt');
+const { getAuthUserFromRequest } = require('../utils/authUser');
 
 const GOOGLE_USERINFO_API = 'https://www.googleapis.com/oauth2/v3/userinfo';
 const router = express.Router();
@@ -67,13 +68,25 @@ function getCookieExpires() {
 const cookieExpires = getCookieExpires();
 
 function cookieOptions() {
-    const prod = process.env.NODE_ENV === 'production';
+    const prod = process.env.BE_ENV === 'production';
     return {
         httpOnly: true,
         sameSite: prod ? 'strict' : 'lax',
         secure: prod,                 // true on HTTPS in prod
         maxAge: cookieExpires,
         path: '/',
+    };
+}
+
+// Build payload for mobile auth
+function buildSessionPayload(userId, email) {
+    const accessToken = signToken({ uid: userId, email });
+
+    return {
+        type: 'cookie+bearer',       // backwards-compatible, web can ignore
+        tokenType: 'Bearer',
+        accessToken,
+        expiresAt: Date.now() + cookieExpires,
     };
 }
 
@@ -88,12 +101,6 @@ async function findUserByPhone(phone) {
     const snap = await db.collection('users').where('phone', '==', phone).limit(1).get();
     if (snap.empty) return null;
     const doc = snap.docs[0];
-    return { id: doc.id, ...doc.data() };
-}
-
-async function getUserById(id) {
-    const doc = await db.collection('users').doc(id).get();
-    if (!doc.exists) return null;
     return { id: doc.id, ...doc.data() };
 }
 
@@ -154,7 +161,8 @@ router.post('/register', async (req, res) => {
         res.cookie('token', token, cookieOptions());
 
         return res.status(201).json({
-            user: user,
+            user,
+            session: buildSessionPayload(ref.id, normalizedEmail),
         });
     } catch (e) {
         console.error(e);
@@ -178,10 +186,7 @@ router.post('/login', async (req, res) => {
 
         return res.json({
             user: normalizeBackendUser(user),
-            session: {
-                type: "cookie",
-                expiresAt: Date.now() + cookieExpires,
-            }
+            session: buildSessionPayload(user.id, normalizedEmail),
         });
     } catch (e) {
         console.error(e);
@@ -246,10 +251,7 @@ router.post('/google', async (req, res) => {
 
         return res.json({
             user: normalizeGoogleUser(user),
-            session: {
-                type: 'cookie',
-                expiresAt: Date.now() + cookieExpires,
-            },
+            session: buildSessionPayload(user.id, user.email),
         });
     } catch (e) {
         console.error(e);
@@ -259,13 +261,8 @@ router.post('/google', async (req, res) => {
 
 router.get('/me', async (req, res) => {
     try {
-        const token = req.cookies?.token;
-        if (!token) return res.status(401).json({ message: 'Unauthorized' });
-
-        const decoded = verifyToken(token);
-
-        const me = await getUserById(decoded.uid);
-        if (!me) return res.status(404).json({ message: 'User not found' });
+        const me = await getAuthUserFromRequest(req);
+        if (!me) return res.status(401).json({ message: 'Unauthorized' });
 
         return res.json({
             user: {
