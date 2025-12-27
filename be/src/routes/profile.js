@@ -1,15 +1,9 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const { db, FieldValue } = require('../config/firebase');
-const { verifyToken } = require('../utils/jwt');
+const { getAuthUserFromRequest, getUserById } = require('../utils/authUser');
 
 const router = express.Router();
-
-async function getUserById(id) {
-    const doc = await db.collection('users').doc(id).get();
-    if (!doc.exists) return null;
-    return { id: doc.id, ...doc.data() };
-}
 
 async function findUserByPhone(phone) {
     const snap = await db.collection('users').where('phone', '==', phone).limit(1).get();
@@ -22,16 +16,10 @@ const phoneRe = /^[1-9]\d{0,3}-\d{6,14}$/;
 
 router.patch('/update/username', async (req, res) => {
     try {
-        const token = req.cookies?.token;
-        if (!token) return res.status(401).json({ message: 'Unauthorized' });
-
-        const decoded = verifyToken(token);
+        const me = await getAuthUserFromRequest(req);
+        if (!me) return res.status(401).json({ message: 'Unauthorized' });
 
         const { newUsername } = req.body || {};
-
-        // Load current user
-        const me = await getUserById(decoded.uid);
-        if (!me) return res.status(404).json({ message: 'User not found' });
 
         // Update phone in Firestore
         await db.collection('users').doc(me.id).update({
@@ -61,10 +49,8 @@ router.patch('/update/username', async (req, res) => {
 
 router.patch('/update/phone', async (req, res) => {
     try {
-        const token = req.cookies?.token;
-        if (!token) return res.status(401).json({ message: 'Unauthorized' });
-
-        const decoded = verifyToken(token);
+        const me = await getAuthUserFromRequest(req);
+        if (!me) return res.status(401).json({ message: 'Unauthorized' });
 
         const { newPhone } = req.body || {};
         const normalizedPhone = String(newPhone || '').trim();
@@ -75,10 +61,6 @@ router.patch('/update/phone', async (req, res) => {
         if (!phoneRe.test(normalizedPhone)) {
             return res.status(400).json({ message: 'Invalid phone number format!' });
         }
-
-        // Load current user
-        const me = await getUserById(decoded.uid);
-        if (!me) return res.status(404).json({ message: 'User not found' });
 
         // Check for duplicate phone (other account)
         const existing = await findUserByPhone(normalizedPhone);
@@ -114,26 +96,20 @@ router.patch('/update/phone', async (req, res) => {
 
 router.patch('/update/password', async (req, res) => {
     try {
-        const token = req.cookies?.token;
-        if (!token) return res.status(401).json({ message: 'Unauthorized' });
-
-        const decoded = verifyToken(token);
+        const me = await getAuthUserFromRequest(req);
+        if (!me) return res.status(401).json({ message: 'Unauthorized' });
 
         const { currentPassword, newPassword } = req.body || {};
-
-        // Load current user
-        const me = await getUserById(decoded.uid);
-        if (!me) return res.status(404).json({ message: 'User not found!' });
 
         // Check old password
         const ok = await bcrypt.compare(currentPassword || '', me.passwordHash || '');
         if (!ok) return res.status(400).json({ message: 'Invalid current password!' });
 
-        const passwordHash = await bcrypt.hash(newPassword, 10);
+        const newHash = await bcrypt.hash(newPassword, 10);
 
         // Update password in Firestore
         await db.collection('users').doc(me.id).update({
-            passwordHash: passwordHash,
+            passwordHash: newHash,
             updatedAt: FieldValue.serverTimestamp(),
         });
 
