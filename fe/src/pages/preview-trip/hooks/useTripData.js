@@ -18,10 +18,8 @@ export function useTripData(initialTripData = null, forcedTripId = null) {
   const location = useLocation()
   const navigate = useNavigate()
   
-  // Use initialTripData if provided (for edit-trip), otherwise use location.state
   const passedTripData = initialTripData || location.state?.tripData
   
-  // Determine trip ID - prioritize forcedTripId (from URL param for edit-trip)
   const existingTripId = forcedTripId || 
                         passedTripData?.id || 
                         getTempTripId() || 
@@ -35,15 +33,24 @@ export function useTripData(initialTripData = null, forcedTripId = null) {
   
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   
-  // Initialize trip data with localStorage check
+  // Initialize trip data
   const [tripData, setTripData] = useState(() => {
-    if (!passedTripData) return null
+    console.log('=== Initializing tripData ===');
+    
+    if (!passedTripData) {
+      console.log('No passedTripData');
+      return null;
+    }
 
+    // First, try to load from localStorage
     const tempChanges = loadTempChanges(existingTripId)
     if (tempChanges) {
-      console.log('Loaded from localStorage:', tempChanges);
+      console.log('✅ Loaded from localStorage');
+      console.log('localStorage itinerary keys:', Object.keys(tempChanges.tripData.Itinerary).sort());
       return tempChanges;
     }
+
+    console.log('No localStorage data, initializing from passedTripData');
 
     // Initialize from passedTripData
     let travelPlan
@@ -62,12 +69,12 @@ export function useTripData(initialTripData = null, forcedTripId = null) {
       return null
     }
 
-    // Add IDs to activities in time slots
+    console.log('Initial itinerary keys from passedTripData:', Object.keys(travelPlan.Itinerary).sort());
+
     const itineraryWithIds = {}
     Object.entries(travelPlan.Itinerary).forEach(([dateKey, dayData]) => {
       itineraryWithIds[dateKey] = {
         ...dayData,
-        // Morning activities
         Morning: dayData.Morning ? {
           ...dayData.Morning,
           Activities: (dayData.Morning.Activities || []).map((activity, idx) => ({
@@ -75,7 +82,6 @@ export function useTripData(initialTripData = null, forcedTripId = null) {
             id: activity.id || `${dateKey}-morning-${idx}-${Date.now()}-${Math.random()}`,
           }))
         } : null,
-        // Lunch activity
         Lunch: dayData.Lunch ? {
           ...dayData.Lunch,
           Activity: dayData.Lunch.Activity ? {
@@ -83,7 +89,6 @@ export function useTripData(initialTripData = null, forcedTripId = null) {
             id: dayData.Lunch.Activity.id || `${dateKey}-lunch-${Date.now()}-${Math.random()}`,
           } : null
         } : null,
-        // Afternoon activities
         Afternoon: dayData.Afternoon ? {
           ...dayData.Afternoon,
           Activities: (dayData.Afternoon.Activities || []).map((activity, idx) => ({
@@ -91,7 +96,6 @@ export function useTripData(initialTripData = null, forcedTripId = null) {
             id: activity.id || `${dateKey}-afternoon-${idx}-${Date.now()}-${Math.random()}`,
           }))
         } : null,
-        // Evening activities
         Evening: dayData.Evening ? {
           ...dayData.Evening,
           Activities: (dayData.Evening.Activities || []).map((activity, idx) => ({
@@ -102,7 +106,7 @@ export function useTripData(initialTripData = null, forcedTripId = null) {
       }
     })
 
-    return {
+    const initialized = {
       userSelection: passedTripData.userSelection || {},
       tripData: {
         ...travelPlan,
@@ -110,11 +114,18 @@ export function useTripData(initialTripData = null, forcedTripId = null) {
         Itinerary: itineraryWithIds,
       },
     }
+
+    console.log('Initialized itinerary keys:', Object.keys(initialized.tripData.Itinerary).sort());
+    
+    // Save to localStorage immediately after initialization
+    saveTempChanges(existingTripId, initialized)
+    console.log('Saved initial data to localStorage');
+
+    return initialized;
   })
 
-  // Redirect if no trip data (only for preview-trip, not edit-trip)
+  // Redirect if no trip data
   useEffect(() => {
-    // Don't redirect if we have a forcedTripId (edit-trip with URL param)
     if (!tripData && !initialTripData && !forcedTripId) {
       toast.error('No trip data found. Redirecting...')
       const timer = setTimeout(() => navigate('/create-trip'), 2000)
@@ -122,12 +133,67 @@ export function useTripData(initialTripData = null, forcedTripId = null) {
     }
   }, [tripData, navigate, initialTripData, forcedTripId])
 
-  // Update trip data and save to localStorage
-  const updateTripData = (updatedData) => {
-    setTripData(updatedData)
-    saveTempChanges(existingTripId, updatedData)
-    setHasUnsavedChanges(true)
+// Update trip data and save to localStorage
+const updateTripData = (updatedData) => {
+  console.log('=== updateTripData Called ===')
+  console.log('updatedData structure:', updatedData)
+  console.log('updatedData.tripData:', updatedData?.tripData)
+  console.log('updatedData.tripData.Itinerary:', updatedData?.tripData?.Itinerary)
+  
+  if (!updatedData?.tripData?.Itinerary) {
+    console.error('❌ ERROR: Invalid updatedData structure!', updatedData)
+    toast.error('Error updating trip data - invalid structure')
+    return
   }
+  
+  console.log('New itinerary keys:', Object.keys(updatedData.tripData.Itinerary).sort())
+  
+  // Use functional update to ensure we're working with latest state
+  setTripData(prev => {
+    console.log('Previous state:', prev)
+    console.log('Previous itinerary keys:', prev ? Object.keys(prev.tripData.Itinerary).sort() : 'null')
+    console.log('Updated itinerary keys:', Object.keys(updatedData.tripData.Itinerary).sort())
+    
+    // Verify the structure before returning
+    if (!updatedData.tripData || !updatedData.tripData.Itinerary) {
+      console.error('❌ ERROR: Corrupted data in setTripData!')
+      return prev // Return previous state to avoid corruption
+    }
+    
+    return updatedData
+  })
+  
+  saveTempChanges(existingTripId, updatedData)
+  setHasUnsavedChanges(true)
+  
+  // Verify it was saved
+  setTimeout(() => {
+    const saved = loadTempChanges(existingTripId)
+    console.log('Verified saved itinerary keys (after delay):', saved ? Object.keys(saved.tripData.Itinerary).sort() : 'NOT SAVED')
+  }, 100)
+}
+
+// Debug: Log current state
+useEffect(() => {
+  console.log('=== Current tripData State (useEffect triggered) ===')
+  console.log('tripData:', tripData)
+  console.log('tripData?.tripData:', tripData?.tripData)
+  console.log('tripData?.tripData?.Itinerary:', tripData?.tripData?.Itinerary)
+  
+  if (tripData && tripData.tripData && tripData.tripData.Itinerary) {
+    console.log('Current itinerary keys:', Object.keys(tripData.tripData.Itinerary).sort())
+  } else {
+    console.error('❌ ERROR: tripData structure is broken!', tripData)
+  }
+}, [tripData])
+
+  // Debug: Log current state
+  useEffect(() => {
+    if (tripData) {
+      console.log('=== Current tripData State ===')
+      console.log('Current itinerary keys:', Object.keys(tripData.tripData.Itinerary).sort())
+    }
+  }, [tripData])
 
   return {
     tripData,

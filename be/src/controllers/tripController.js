@@ -106,8 +106,11 @@ async function saveTripToFirestore(req, res) {
             selectedHotels
         } = req.body;
 
+        console.log('=== Backend: saveTripToFirestore ===');
         console.log('Saving trip for user:', userEmail);
         console.log('Trip ID received:', tripId);
+        console.log('Received itinerary days:', Object.keys(tripData.Itinerary || {}).sort());
+        console.log('Full received itinerary:', JSON.stringify(tripData.Itinerary, null, 2));
 
         // 1. Validate required fields
         if (!userEmail) {
@@ -162,10 +165,14 @@ async function saveTripToFirestore(req, res) {
 
         // 5. Add schedules to itinerary
         const timezone = tripData.Timezone || 'Asia/Ho_Chi_Minh';
+        console.log('Before addScheduleToItinerary:', Object.keys(tripData.Itinerary).sort());
         const itineraryWithSchedules = addScheduleToItinerary(tripData.Itinerary, timezone);
+        console.log('After addScheduleToItinerary:', Object.keys(itineraryWithSchedules).sort());
 
         // 6. Clean itinerary (remove IDs)
+        console.log('Before cleanItinerary:', Object.keys(itineraryWithSchedules).sort());
         const cleanedItinerary = cleanItinerary(itineraryWithSchedules);
+        console.log('After cleanItinerary:', Object.keys(cleanedItinerary).sort());
 
         // 7. Prepare document
         const tripDocument = {
@@ -191,8 +198,10 @@ async function saveTripToFirestore(req, res) {
             tripDocument.createdAt = new Date().toISOString();
         }
 
+        console.log('Final itinerary being saved:', Object.keys(tripDocument.tripData.Itinerary).sort());
+
         // 8. Save to Firestore
-        await db.collection('AITrips').doc(docId).set(tripDocument, { merge: !isNewTrip });
+        await db.collection('AITrips').doc(docId).set(tripDocument);
 
         console.log(`Trip ${isNewTrip ? 'created' : 'updated'} successfully:`, docId);
 

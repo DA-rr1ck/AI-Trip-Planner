@@ -243,20 +243,48 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
   }
 
   const handleRemoveDay = (dateKey) => {
-    const displayDate = format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'MMMM d, yyyy')
-    if (!window.confirm(`Delete ${displayDate}? This cannot be undone.`)) {
-      return
-    }
-
     const dateKeys = Object.keys(tripData.tripData.Itinerary).sort()
+    
+    // Check if it's the last remaining day
     if (dateKeys.length <= 1) {
       toast.error('Cannot delete the last day!')
       return
     }
-
+    
+    const firstDay = dateKeys[0]
+    const lastDay = dateKeys[dateKeys.length - 1]
+    
+    // Prevent deleting first day (has check-in)
+    if (dateKey === firstDay) {
+      toast.error('Cannot delete the first day (contains hotel check-in)', {
+        duration: 4000
+      })
+      return
+    }
+    
+    // Prevent deleting last day (has check-out)
+    if (dateKey === lastDay) {
+      toast.error('Cannot delete the last day (contains hotel check-out)', {
+        duration: 4000
+      })
+      return
+    }
+    
+    const displayDate = format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'MMMM d, yyyy')
+    if (!window.confirm(`Delete ${displayDate}? This cannot be undone.`)) {
+      return
+    }
+  
+    // Create a new itinerary without this date
     const newItinerary = { ...tripData.tripData.Itinerary }
     delete newItinerary[dateKey]
-
+  
+    console.log('=== handleRemoveDay Debug ===')
+    console.log('Deleted day:', dateKey)
+    console.log('Remaining days:', Object.keys(newItinerary).sort())
+    console.log('Old itinerary keys:', Object.keys(tripData.tripData.Itinerary).sort())
+    console.log('New itinerary keys:', Object.keys(newItinerary).sort())
+  
     const updatedTripData = {
       ...tripData,
       tripData: {
@@ -264,60 +292,96 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
         Itinerary: newItinerary,
       },
     }
-
+  
+    console.log('Updated trip data itinerary:', Object.keys(updatedTripData.tripData.Itinerary).sort())
+  
     updateTripData(updatedTripData)
-    toast.success('Day deleted successfully')
+    toast.success('Day deleted successfully. Remember to save your changes!')
   }
 
   const handleRemoveActivity = (dateKey, activityId) => {
     const dayData = tripData.tripData.Itinerary[dateKey]
-    const newDayData = { ...dayData }
-
+    
+    // Find the activity to remove and which time slot it's in
     let activityToRemove = null
-  
+    let timeSlot = null
+    let timeSlotActivities = []
+    
     if (dayData.Morning?.Activities) {
       activityToRemove = dayData.Morning.Activities.find(a => a.id === activityId)
-    }
-    if (!activityToRemove && dayData.Lunch?.Activity?.id === activityId) {
-      activityToRemove = dayData.Lunch.Activity
-    }
-    if (!activityToRemove && dayData.Afternoon?.Activities) {
-      activityToRemove = dayData.Afternoon.Activities.find(a => a.id === activityId)
-    }
-    if (!activityToRemove && dayData.Evening?.Activities) {
-      activityToRemove = dayData.Evening.Activities.find(a => a.id === activityId)
+      if (activityToRemove) {
+        timeSlot = 'Morning'
+        timeSlotActivities = dayData.Morning.Activities
+      }
     }
     
-    if (activityToRemove?.ActivityType === 'hotel_checkin' || activityToRemove?.ActivityType === 'hotel_checkout') {
+    if (!activityToRemove && dayData.Lunch?.Activity?.id === activityId) {
+      activityToRemove = dayData.Lunch.Activity
+      timeSlot = 'Lunch'
+      timeSlotActivities = [dayData.Lunch.Activity]
+    }
+    
+    if (!activityToRemove && dayData.Afternoon?.Activities) {
+      activityToRemove = dayData.Afternoon.Activities.find(a => a.id === activityId)
+      if (activityToRemove) {
+        timeSlot = 'Afternoon'
+        timeSlotActivities = dayData.Afternoon.Activities
+      }
+    }
+    
+    if (!activityToRemove && dayData.Evening?.Activities) {
+      activityToRemove = dayData.Evening.Activities.find(a => a.id === activityId)
+      if (activityToRemove) {
+        timeSlot = 'Evening'
+        timeSlotActivities = dayData.Evening.Activities
+      }
+    }
+    
+    if (!activityToRemove) {
+      toast.error('Activity not found')
+      return
+    }
+    
+    // Prevent removing hotel check-in/out activities
+    if (activityToRemove.ActivityType === 'hotel_checkin' || activityToRemove.ActivityType === 'hotel_checkout') {
       toast.error('Hotel check-in/out activities cannot be removed')
       return
     }
-
-    if (dayData.Morning?.Activities) {
+    
+    // Check if this is the last activity in the TIME SLOT
+    if (timeSlotActivities.length <= 1) {
+      toast.error(`Cannot remove the last activity from ${timeSlot} slot. Each time slot must have at least one activity.`, {
+        duration: 4000
+      })
+      return
+    }
+    
+    // Show confirmation dialog
+    const activityName = activityToRemove.PlaceName || 'this activity'
+    if (!window.confirm(`Remove "${activityName}" from ${timeSlot}? This cannot be undone.`)) {
+      return
+    }
+  
+    // Create a copy of the day data
+    const newDayData = { ...dayData }
+  
+    // Remove the activity based on which time slot it's in
+    if (timeSlot === 'Morning') {
       const filtered = dayData.Morning.Activities.filter(a => a.id !== activityId)
-      if (filtered.length !== dayData.Morning.Activities.length) {
-        newDayData.Morning = { ...dayData.Morning, Activities: filtered }
-      }
-    }
-
-    if (dayData.Lunch?.Activity?.id === activityId) {
-      newDayData.Lunch = { ...dayData.Lunch, Activity: null }
-    }
-
-    if (dayData.Afternoon?.Activities) {
+      newDayData.Morning = { ...dayData.Morning, Activities: filtered }
+    } else if (timeSlot === 'Lunch') {
+      // This case should never happen since we check timeSlotActivities.length <= 1 above
+      // But keep it for safety
+      delete newDayData.Lunch
+    } else if (timeSlot === 'Afternoon') {
       const filtered = dayData.Afternoon.Activities.filter(a => a.id !== activityId)
-      if (filtered.length !== dayData.Afternoon.Activities.length) {
-        newDayData.Afternoon = { ...dayData.Afternoon, Activities: filtered }
-      }
-    }
-
-    if (dayData.Evening?.Activities) {
+      newDayData.Afternoon = { ...dayData.Afternoon, Activities: filtered }
+    } else if (timeSlot === 'Evening') {
       const filtered = dayData.Evening.Activities.filter(a => a.id !== activityId)
-      if (filtered.length !== dayData.Evening.Activities.length) {
-        newDayData.Evening = { ...dayData.Evening, Activities: filtered }
-      }
+      newDayData.Evening = { ...dayData.Evening, Activities: filtered }
     }
-
+  
+    // Update trip data
     const updatedTripData = {
       ...tripData,
       tripData: {
@@ -328,9 +392,9 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
         },
       },
     }
-
+  
     updateTripData(updatedTripData)
-    toast.success('Activity removed')
+    toast.success(`Activity removed from ${timeSlot}`)
   }
 
   const handleSaveTrip = async (selectedHotels, setHasUnsavedChanges) => {
@@ -359,19 +423,21 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
       return
     }
   
+    console.log('=== handleSaveTrip Debug ===')
+    console.log('tripData:', tripData)
+    console.log('tripData.tripData:', tripData?.tripData)
+    console.log('tripData.tripData.Itinerary:', tripData?.tripData?.Itinerary)
+    console.log('Itinerary days being saved:', Object.keys(tripData.tripData.Itinerary).sort())
+    console.log('Full itinerary being sent:', JSON.stringify(tripData.tripData.Itinerary, null, 2))
+  
     setSaving(true)
     try {
-      // Determine tripId to send to backend
-      // If existingTripId starts with 'temp_', it's a new trip, send null
-      // Otherwise, it's an existing trip, send the ID
-      const tripIdToSave = existingTripId.startsWith('temp_') ? null : existingTripId;
+      const tripIdToSave = existingTripId.startsWith('temp_') ? null : existingTripId
       
-      console.log('=== handleSaveTrip Debug ===');
-      console.log('existingTripId:', existingTripId);
-      console.log('tripIdToSave:', tripIdToSave);
-      console.log('rawTripData:', rawTripData);
-      console.log('rawTripData?.id:', rawTripData?.id);
-
+      console.log('existingTripId:', existingTripId)
+      console.log('tripIdToSave:', tripIdToSave)
+      console.log('Calling saveTripToFirestore...')
+  
       // Call backend API to save trip
       const result = await saveTripToFirestore({
         tripId: tripIdToSave,
@@ -380,11 +446,13 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
         tripData: tripData.tripData,
         selectedHotels
       })
-
+  
+      console.log('Backend response:', result)
+  
       if (!result.success) {
         throw new Error(result.error || 'Failed to save trip')
       }
-
+  
       // Clear temporary data
       clearTempChanges(existingTripId)
       clearTempTripId()
@@ -394,6 +462,7 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
       navigate(`/view-trip/${result.tripId}`)
     } catch (error) {
       console.error('Error saving trip:', error)
+      console.error('Error details:', error.message)
       toast.error(error.message || 'Failed to save trip')
     } finally {
       setSaving(false)

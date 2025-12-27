@@ -5,7 +5,9 @@ import { format, parse } from 'date-fns'
 import { Trash2 } from 'lucide-react'
 import TimeSlotSection from './TimeSlotSection'
 
-function DayCard({ dateKey, dayData, onRemoveDay, onActivityClick, onRemoveActivity, children }) {
+function DayCard({ dateKey, dayData, onRemoveDay, onActivityClick, onRemoveActivity, children, isFirstDay,  
+  isLastDay,   
+  allDateKeys }) {
   const { setNodeRef } = useSortable({ id: dateKey })
 
   const displayDate = format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'EEEE, MMMM d, yyyy')

@@ -39,7 +39,7 @@ async function generateAITrip(req, res) {
             });
         }
 
-        // 2. Calculate trip details
+       
         const start = new Date(startDate);
         const end = new Date(endDate);
         const totalDays = differenceInDays(end, start) + 1;
@@ -71,7 +71,7 @@ async function generateAITrip(req, res) {
             childrenAges
         });
 
-        // 6. Save to Firestore (optional - or save from frontend)
+        // 6. Save to Firestore 
         const tripId = Date.now().toString();
         
         // Return trip data to frontend
@@ -91,7 +91,7 @@ async function generateAITrip(req, res) {
 }
 
 function buildAIPrompt({ location, totalDays, adults, children, childrenAges, budgetMin, budgetMax }) {
-    // Convert childrenAges array to string
+    
     const childrenAgesStr = Array.isArray(childrenAges) && childrenAges.length > 0 
         ? childrenAges.join(', ') 
         : 'N/A';

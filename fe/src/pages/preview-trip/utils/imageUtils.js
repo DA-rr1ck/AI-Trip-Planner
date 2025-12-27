@@ -10,7 +10,7 @@ async function fetchImageFromAPI(query) {
   }
 
   try {
-    // Use relative path - Vite proxy will forward to http://localhost:8000/api
+    
     const response = await fetch(
       `/api/serp/images/search?q=${encodeURIComponent(query)}`
     );
