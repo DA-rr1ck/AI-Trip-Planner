@@ -5,7 +5,7 @@ const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 
 const { PORT = 8000 } = process.env;
-const { ALLOWED_ORIGINS } = require('./utils/clientOriginConfig');
+const { ALLOWED_ORIGINS } = require('./utils/clientOrigin');
 const authRoutes = require('./routes/auth');
 const profileRoutes = require('./routes/profile');
 const serpHotelRoutes = require('./routes/hotelSerp');
@@ -24,7 +24,7 @@ app.use(cookieParser());
 app.use(
     cors({
         origin(origin, cb) {
-            // Allow tools without an Origin header (Postman, curl, etc.)
+            // Allow tools without an Origin header (Postman, curl)
             if (!origin) return cb(null, true);
 
             if (ALLOWED_ORIGINS.includes(origin)) {

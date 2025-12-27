@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Select from 'react-select'
@@ -18,6 +17,119 @@ import ModeSwitch from './components/ModeSwitch'
 import HotelSearch from './components/manual/HotelSearch'
 import DayManager from './components/manual/DayManager'
 import { saveManualTrip } from './utils/manual/tripSaver'
+import { Capacitor, CapacitorHttp } from '@capacitor/core'
+
+// Base URL for Nominatim
+const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+
+// --- JSONP fallback (ignores CORS) ---
+function nominatimSearchJSONP(query) {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      resolve([]);
+      return;
+    }
+
+    const callbackName = `__nominatim_cb_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2)}`;
+
+    const script = document.createElement('script');
+    let timeoutId;
+
+    function cleanup() {
+      if (script.parentNode) script.parentNode.removeChild(script);
+      clearTimeout(timeoutId);
+      // @ts-ignore
+      delete window[callbackName];
+    }
+
+    // @ts-ignore
+    window[callbackName] = (data) => {
+      cleanup();
+      const arr = Array.isArray(data) ? data : [];
+      resolve(arr);
+    };
+
+    script.src =
+      `${NOMINATIM_URL}?format=json&addressdetails=1&limit=10` +
+      `&q=${encodeURIComponent(query)}` +
+      `&json_callback=${callbackName}`;
+    script.async = true;
+    script.onerror = (err) => {
+      cleanup();
+      reject(err);
+    };
+
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Nominatim JSONP timeout'));
+    }, 10000);
+
+    document.body.appendChild(script);
+  });
+}
+
+// --- Single entry point: searchNominatim(query) ---
+async function searchNominatim(query) {
+  const isNative =
+    typeof Capacitor !== 'undefined' &&
+    typeof Capacitor.isNativePlatform === 'function' &&
+    Capacitor.isNativePlatform();
+
+  // 1. On native: try CapacitorHttp first
+  if (isNative) {
+    try {
+      console.log('[Nominatim] Native HTTP via CapacitorHttp, query:', query);
+
+      const res = await CapacitorHttp.get({
+        url: NOMINATIM_URL,
+        params: {
+          format: 'json',
+          q: query,
+        },
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      console.log(
+        '[Nominatim] Native response:',
+        res.status,
+        typeof res.data
+      );
+
+      const raw = res.data;
+      const parsed =
+        typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch (err) {
+      console.warn('[Nominatim] Native HTTP failed, will try fetch/JSONP:', err);
+    }
+  }
+
+  // 2. Try normal fetch (if CORS header is present)
+  try {
+    console.log('[Nominatim] Fetch attempt, query:', query);
+
+    const url = `${NOMINATIM_URL}?format=json&addressdetails=1&limit=10` + `&q=${encodeURIComponent(query)}`;
+
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (Array.isArray(data)) return data;
+  } catch (err) {
+    console.warn('[Nominatim] Fetch failed (probably CORS), fallback to JSONP:', err);
+  }
+
+  // 3. Last resort: JSONP (no CORS at all)
+  return await nominatimSearchJSONP(query);
+}
 
 function CreateTrip() {
   const [place, setPlace] = useState(null)
@@ -343,24 +455,41 @@ function CreateTrip() {
   useEffect(() => {
     if (isManualMode) {
       // Do not clear place here as it is used in Manual Mode too
-      setOptions([])
-      setInputValue('')
-      return
+      setOptions([]);
+      setInputValue('');
+      return;
     }
 
-    const timer = setTimeout(() => {
-      if ((inputValue || '').length > 2) {
-        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(inputValue)}`)
-          .then(response => response.json())
-          .then(data => setOptions(data.map(item => ({ label: item.display_name, value: item }))))
-          .catch(() => setOptions([]))
-      } else {
-        setOptions([])
-      }
-    }, 500)
+    const state = { cancelled: false };
 
-    return () => clearTimeout(timer)
-  }, [inputValue, isManualMode])
+    const timer = setTimeout(() => {
+      const query = (inputValue || '').trim();
+      if (query.length <= 2) {
+        if (!state.cancelled) setOptions([]);
+        return;
+      }
+
+      (async () => {
+        try {
+          const results = await searchNominatim(query);
+          if (state.cancelled) return;
+
+          const arr = Array.isArray(results) ? results : [];
+
+          setOptions(arr.map((item) => ({ label: item.display_name, value: item })));
+        } catch (err) {
+          if (state.cancelled) return;
+          console.error('[Nominatim] Final error:', err);
+          setOptions([]);
+        }
+      })();
+    }, 500);
+
+    return () => {
+      state.cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [inputValue, isManualMode]);
 
   const onSaveManualTrip = async () => {
     if (!user) {
@@ -429,7 +558,7 @@ function CreateTrip() {
   }, [place, isManualMode, confirmedHotel, tripDays, aiFormData]);
 
   return (
-    <div className='sm:px-10 md:px-32 lg:px-56 px-5 mt-10'>
+    <div className='px-5 md:px-56 mt-5'>
       <ModeSwitch isManualMode={isManualMode} onChange={setIsManualMode} />
 
       <h2 className='font-bold text-3xl'>
@@ -442,7 +571,7 @@ function CreateTrip() {
       </p>
 
       {isManualMode ? (
-        <div className='mt-20 flex flex-col gap-10'>
+        <div className='mt-10 flex flex-col gap-10'>
           <DestinationSelector
             label='What is your desired destination?'
             value={place}
@@ -710,7 +839,7 @@ function CreateTrip() {
           )}
         </div>
       ) : (
-        <div className='mt-20 flex flex-col gap-10'>
+        <div className='mt-10 flex flex-col gap-10'>
           <div>
             <h2 className='text-xl my-3 font-medium'>
               What is your desired destination?
@@ -961,7 +1090,7 @@ function CreateTrip() {
         </div>
       )}
 
-      <div className='my-10 justify-end flex'>
+      <div className='mt-5 mb-20 md:mb-5 justify-end flex'>
         <Button
           disabled={loading}
           onClick={isManualMode ? onSaveManualTrip : onGenerateTrip}

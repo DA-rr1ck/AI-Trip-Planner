@@ -7,7 +7,6 @@ function TimeSlotSection({
   title, 
   timeRange, 
   activities, 
-  icon, 
   dateKey,
   onActivityClick, 
   onRemoveActivity 
@@ -26,41 +25,51 @@ function TimeSlotSection({
     Evening: 'from-purple-50 to-pink-50 border-purple-200'
   }
 
-  // Calculate time based on position in the slot
-  const getActivityTime = (index, totalActivities) => {
-    const slotTimes = {
-      Morning: { start: 8, duration: 4 }, // 8 AM - 12 PM (4 hours)
-      Lunch: { start: 12, duration: 1.5 }, // 12 PM - 1:30 PM (1.5 hours)
-      Afternoon: { start: 13.5, duration: 4.5 }, // 1:30 PM - 6 PM (4.5 hours)
-      Evening: { start: 18, duration: 4 } // 6 PM - 10 PM (4 hours)
-    }
+  // Parse time string like "2:00 PM" to decimal hours (14.0)
+  const parseTimeToHours = (timeStr) => {
+    if (!timeStr) return 0
     
-    const { start, duration } = slotTimes[title]
+    const match = timeStr.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM)/i)
+    if (!match) return 0
+    
+    let hours = parseInt(match[1])
+    const minutes = match[2] ? parseInt(match[2]) : 0
+    const period = match[3].toUpperCase()
+    
+    if (period === 'PM' && hours !== 12) hours += 12
+    if (period === 'AM' && hours === 12) hours = 0
+    
+    return hours + (minutes / 60)
+  }
+
+  // Format decimal hours back to time string
+  const formatTime = (hours) => {
+    const h = Math.floor(hours)
+    const m = Math.round((hours - h) * 60)
+    const period = h >= 12 ? 'PM' : 'AM'
+    const displayHour = h > 12 ? h - 12 : (h === 0 ? 12 : h)
+    return `${displayHour}${m > 0 ? ':' + m.toString().padStart(2, '0') : ''} ${period}`
+  }
+
+  // Calculate time based on position in the slot using ACTUAL timeRange
+  const getActivityTime = (index, totalActivities) => {
+    // Parse the actual start and end times from timeRange prop
+    // Format is like "2:00 PM - 5:30 PM"
+    const [startTimeStr, endTimeStr] = timeRange.split('-').map(s => s.trim())
+    
+    const start = parseTimeToHours(startTimeStr)
+    const end = parseTimeToHours(endTimeStr)
+    const duration = end - start
     
     // If only one activity, use the full slot time
     if (totalActivities === 1) {
-      const formatTime = (hours) => {
-        const h = Math.floor(hours)
-        const m = Math.round((hours - h) * 60)
-        const period = h >= 12 ? 'PM' : 'AM'
-        const displayHour = h > 12 ? h - 12 : (h === 0 ? 12 : h)
-        return `${displayHour}${m > 0 ? ':' + m.toString().padStart(2, '0') : ''} ${period}`
-      }
-      return `${formatTime(start)} - ${formatTime(start + duration)}`
+      return timeRange // Return the original timeRange
     }
     
     // Divide time slot evenly among activities
     const timePerActivity = duration / totalActivities
     const activityStart = start + (timePerActivity * index)
     const activityEnd = activityStart + timePerActivity
-    
-    const formatTime = (hours) => {
-      const h = Math.floor(hours)
-      const m = Math.round((hours - h) * 60)
-      const period = h >= 12 ? 'PM' : 'AM'
-      const displayHour = h > 12 ? h - 12 : (h === 0 ? 12 : h)
-      return `${displayHour}${m > 0 ? ':' + m.toString().padStart(2, '0') : ''} ${period}`
-    }
     
     return `${formatTime(activityStart)} - ${formatTime(activityEnd)}`
   }
@@ -81,7 +90,7 @@ function TimeSlotSection({
       <div className='space-y-2 pl-4'>
         {activities.map((activity, index) => (
           <div key={activity.id}>
-            {/* Show position-based calculated time */}
+            {/* Show position-based calculated time using actual timeRange */}
             <div className='text-xs text-gray-500 mb-1 flex items-center gap-1'>
               <Clock className='h-3 w-3' />
               <span className='font-medium'>{getActivityTime(index, activities.length)}</span>

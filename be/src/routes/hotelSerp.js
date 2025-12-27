@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require('axios');
+const { getAuthUserFromRequest } = require('../utils/authUser');
 
 const router = express.Router();
 
@@ -467,8 +468,8 @@ router.get('/hotel/details', async (req, res) => {
     }
 
     try {
-        const token = req.cookies?.token;
-        if (!token) return res.status(401).json({ message: 'Unauthorized' });
+        const me = await getAuthUserFromRequest(req);
+        if (!me) return res.status(401).json({ message: 'Unauthorized' });
 
         const baseParams = buildParamsHotelDetails(req.query);
 
