@@ -11,26 +11,49 @@ import {
     BedDouble,
     UtensilsCrossed,
     Landmark,
-    Navigation2,
+    Navigation,
     Info,
     Contact,
+    Phone,
+    Globe,
 } from 'lucide-react'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 
 import { slugToTitle } from '@/lib/slugToTitle'
 import SectionCard from '@/components/custom/SectionCard'
 import PhotoCarousel from '@/components/custom/PhotoCarousel'
 
+// Fix Leaflet default marker icon issue
+delete L.Icon.Default.prototype._getIconUrl
+L.Icon.Default.mergeOptions({
+    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+})
+
+// Safely convert rating (or any value) to a number
+function toSafeNumber(value, fallback = null) {
+    if (typeof value === 'number') return value
+    const num = parseFloat(value)
+    return Number.isFinite(num) ? num : fallback
+}
+
 /**
  * Data layer for attraction details.
- * Fetches real data from SerpAPI via backend.
+ * Fetches real data from SerpAPI via backend, and operating hours from Overpass API.
  */
 function useAttractionDetails(initialActivity, tripContext) {
     const [apiData, setApiData] = useState(null)
+    const [osmData, setOsmData] = useState(null)
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState(null)
 
     const placeName = initialActivity?.PlaceName || initialActivity?.name || null
+    const lat = initialActivity?.lat
+    const lon = initialActivity?.lon
 
+    // Fetch from SerpAPI
     useEffect(() => {
         if (!placeName) {
             setIsLoading(false)
@@ -75,10 +98,162 @@ function useAttractionDetails(initialActivity, tripContext) {
         return () => controller.abort()
     }, [placeName])
 
+    // Fetch operating hours from Overpass API (OpenStreetMap) using coordinates
+    useEffect(() => {
+        if (!lat || !lon) return
+
+        const fetchOsmData = async () => {
+            try {
+                // Query for POIs near the coordinates that might be this attraction
+                // Include opening_hours tag in the output
+                const query = `
+                    [out:json][timeout:15];
+                    (
+                        node["tourism"](around:100, ${lat}, ${lon});
+                        node["amenity"](around:100, ${lat}, ${lon});
+                        node["historic"](around:100, ${lat}, ${lon});
+                        node["leisure"](around:100, ${lat}, ${lon});
+                        way["tourism"](around:100, ${lat}, ${lon});
+                        way["amenity"](around:100, ${lat}, ${lon});
+                        way["historic"](around:100, ${lat}, ${lon});
+                        way["leisure"](around:100, ${lat}, ${lon});
+                    );
+                    out body;
+                `
+
+                const response = await fetch('https://overpass-api.de/api/interpreter', {
+                    method: 'POST',
+                    body: query
+                })
+                
+                if (!response.ok) {
+                    console.warn('Overpass API request failed')
+                    return
+                }
+
+                const data = await response.json()
+                
+                // Find the best match - prefer one with opening_hours
+                let bestMatch = null
+                let matchWithHours = null
+                
+                for (const el of data.elements) {
+                    if (!el.tags) continue
+                    
+                    // Check if name matches (fuzzy)
+                    const osmName = el.tags['name:en'] || el.tags.name || ''
+                    const searchName = placeName?.toLowerCase() || ''
+                    const nameMatches = osmName.toLowerCase().includes(searchName) || 
+                                       searchName.includes(osmName.toLowerCase())
+                    
+                    if (el.tags.opening_hours) {
+                        if (nameMatches || !matchWithHours) {
+                            matchWithHours = el
+                        }
+                    }
+                    if (nameMatches && !bestMatch) {
+                        bestMatch = el
+                    }
+                }
+
+                const selectedMatch = matchWithHours || bestMatch
+                
+                if (selectedMatch?.tags) {
+                    const tags = selectedMatch.tags
+                    setOsmData({
+                        openingHours: tags.opening_hours || null,
+                        phone: tags.phone || tags['contact:phone'] || null,
+                        website: tags.website || tags['contact:website'] || null,
+                        wheelchair: tags.wheelchair || null,
+                        fee: tags.fee || null,
+                        wikidata: tags.wikidata || null,
+                        description: tags.description || tags['description:en'] || null,
+                    })
+                }
+            } catch (err) {
+                console.warn('Failed to fetch OSM data:', err)
+                // Don't set error - OSM is supplementary data
+            }
+        }
+
+        fetchOsmData()
+    }, [lat, lon, placeName])
+
     // Debug logging
     useEffect(() => {
         console.log('useAttractionDetails - apiData:', apiData)
-    }, [apiData])
+        console.log('useAttractionDetails - osmData:', osmData)
+    }, [apiData, osmData])
+
+    // Parse OSM opening_hours format (e.g., "Mo-Fr 09:00-18:00; Sa 10:00-14:00")
+    const parseOsmOpeningHours = (hoursStr) => {
+        if (!hoursStr) return null
+        
+        // Common OSM opening_hours format patterns
+        // Return as-is if it's a simple format, or parse if complex
+        try {
+            // Check for 24/7
+            if (hoursStr.toLowerCase() === '24/7') {
+                return { type: 'always', display: 'Open 24/7' }
+            }
+            
+            // Check for "off" or closed
+            if (hoursStr.toLowerCase() === 'off' || hoursStr.toLowerCase() === 'closed') {
+                return { type: 'closed', display: 'Currently Closed' }
+            }
+
+            // Parse typical format: "Mo-Fr 09:00-18:00; Sa 10:00-14:00; Su off"
+            const parts = hoursStr.split(';').map(p => p.trim()).filter(Boolean)
+            const schedule = []
+            
+            const dayMap = {
+                'mo': 'Monday', 'tu': 'Tuesday', 'we': 'Wednesday',
+                'th': 'Thursday', 'fr': 'Friday', 'sa': 'Saturday', 'su': 'Sunday',
+                'ph': 'Public Holiday'
+            }
+
+            for (const part of parts) {
+                // Match patterns like "Mo-Fr 09:00-18:00" or "Sa 10:00-14:00" or "Su off"
+                const match = part.match(/^([A-Za-z,-]+)\s+(.+)$/i)
+                if (match) {
+                    const dayPart = match[1].toLowerCase()
+                    const timePart = match[2]
+                    
+                    // Expand day ranges
+                    let days = []
+                    if (dayPart.includes('-')) {
+                        const [start, end] = dayPart.split('-')
+                        const dayOrder = ['mo', 'tu', 'we', 'th', 'fr', 'sa', 'su']
+                        const startIdx = dayOrder.indexOf(start)
+                        const endIdx = dayOrder.indexOf(end)
+                        if (startIdx !== -1 && endIdx !== -1) {
+                            for (let i = startIdx; i <= endIdx; i++) {
+                                days.push(dayMap[dayOrder[i]])
+                            }
+                        }
+                    } else if (dayPart.includes(',')) {
+                        days = dayPart.split(',').map(d => dayMap[d.trim()] || d.trim())
+                    } else {
+                        days = [dayMap[dayPart] || dayPart]
+                    }
+                    
+                    schedule.push({
+                        days: days.filter(Boolean),
+                        hours: timePart === 'off' ? 'Closed' : timePart
+                    })
+                }
+            }
+
+            if (schedule.length > 0) {
+                return { type: 'schedule', schedule, raw: hoursStr }
+            }
+
+            // Fallback: return raw string
+            return { type: 'raw', display: hoursStr }
+        } catch (e) {
+            return { type: 'raw', display: hoursStr }
+        }
+    }
 
     // Format operating hours from API
     const formatOperatingHours = (hours) => {
@@ -129,17 +304,36 @@ function useAttractionDetails(initialActivity, tripContext) {
         return photos
     }
 
-    // Build attraction object from API + initial data
+    // Get operating hours - prefer OSM data (free), fallback to SerpAPI
+    const getOperatingHours = () => {
+        // First try OSM opening_hours
+        if (osmData?.openingHours) {
+            const parsed = parseOsmOpeningHours(osmData.openingHours)
+            return parsed
+        }
+        // Then try SerpAPI data
+        const serpHours = formatOperatingHours(apiData?.operatingHours)
+        if (serpHours) {
+            return { type: 'serp', display: serpHours }
+        }
+        // Finally try initial activity data
+        if (initialActivity?.OperatingHours) {
+            return { type: 'initial', display: initialActivity.OperatingHours }
+        }
+        return null
+    }
+
+    // Build attraction object from API + OSM + initial data
     const attraction = {
         PlaceName: initialActivity?.PlaceName || apiData?.title || null,
-        PlaceDetails: apiData?.description || initialActivity?.PlaceDetails || null,
+        PlaceDetails: apiData?.description || osmData?.description || initialActivity?.PlaceDetails || null,
         Address: apiData?.address || initialActivity?.Address || 'Address not available',
-        OperatingHours: formatOperatingHours(apiData?.operatingHours) || initialActivity?.OperatingHours || null,
+        OperatingHours: getOperatingHours(),
         RecommendedVisit: initialActivity?.RecommendedVisit || 'Visit duration varies based on your interests',
         Contacts: {
-            phone: apiData?.phone || initialActivity?.Contacts?.phone || null,
+            phone: apiData?.phone || osmData?.phone || initialActivity?.Contacts?.phone || null,
             email: initialActivity?.Contacts?.email || null,
-            website: apiData?.website || initialActivity?.Contacts?.website || null,
+            website: apiData?.website || osmData?.website || initialActivity?.Contacts?.website || null,
         },
         Rating: apiData?.rating || initialActivity?.Rating || null,
         Photos: buildPhotos(),
@@ -149,44 +343,149 @@ function useAttractionDetails(initialActivity, tripContext) {
             latitude: initialActivity?.lat,
             longitude: initialActivity?.lon,
         },
+        // Additional OSM data
+        wheelchair: osmData?.wheelchair || null,
+        fee: osmData?.fee || null,
+        // Ticket/service info from API
+        ticketInfo: apiData?.ticketInfo || null,
+        serviceOptions: apiData?.serviceOptions || null,
     }
 
-    // Tickets - use from initial activity if available, otherwise placeholder
-    const placeholderTickets = [
-        {
-            id: 'general',
-            name: 'General Admission',
-            price: apiData?.priceLevel || 'Price varies',
-            description: 'Standard entry ticket for one adult.',
-            details: [
-                'Valid for 1 day',
-                'Check official website for current pricing',
-            ],
-        },
-    ]
+    // Build tickets array from multiple data sources
+    const buildTickets = () => {
+        const tickets = []
+        
+        // 1. From SerpAPI ticket info
+        if (apiData?.ticketInfo) {
+            const ti = apiData.ticketInfo
+            
+            // Ticket prices if available
+            if (ti.ticketPrices) {
+                if (Array.isArray(ti.ticketPrices)) {
+                    ti.ticketPrices.forEach((tp, idx) => {
+                        tickets.push({
+                            id: `serp-ticket-${idx}`,
+                            name: tp.name || tp.type || 'Ticket',
+                            price: tp.price || tp.amount || 'Price varies',
+                            description: tp.description || null,
+                            details: tp.details || [],
+                            source: 'Google',
+                        })
+                    })
+                } else if (typeof ti.ticketPrices === 'object') {
+                    Object.entries(ti.ticketPrices).forEach(([name, price], idx) => {
+                        tickets.push({
+                            id: `serp-ticket-${idx}`,
+                            name: name,
+                            price: price,
+                            source: 'Google',
+                        })
+                    })
+                }
+            }
+            
+            // Entry fee
+            if (ti.entryFee && tickets.length === 0) {
+                tickets.push({
+                    id: 'entry-fee',
+                    name: 'Entry Fee',
+                    price: ti.entryFee,
+                    source: 'Google',
+                })
+            }
 
-    const activityTickets = []
-    if (initialActivity?.TicketPricing) {
-        activityTickets.push({
-            id: 'itinerary-ticket',
-            name: 'Estimated Ticket Price',
-            price: initialActivity.TicketPricing,
-            description: 'Price estimate from your trip itinerary.',
-            details: [
-                'Price is indicative',
-                'Verify on official website',
-            ],
-        })
+            // Price attributes
+            if (ti.priceAttributes && ti.priceAttributes.length > 0) {
+                ti.priceAttributes.forEach((attr, idx) => {
+                    const attrName = typeof attr === 'string' ? attr : attr.name || attr
+                    if (!tickets.some(t => t.name.toLowerCase().includes(attrName.toLowerCase()))) {
+                        tickets.push({
+                            id: `attr-${idx}`,
+                            name: attrName,
+                            price: null,
+                            isAttribute: true,
+                            source: 'Google',
+                        })
+                    }
+                })
+            }
+        }
+
+        // 2. From OSM fee data
+        if (osmData?.fee) {
+            const feeInfo = osmData.fee.toLowerCase()
+            if (feeInfo === 'no' || feeInfo === 'free') {
+                if (!tickets.some(t => t.name.toLowerCase().includes('free'))) {
+                    tickets.push({
+                        id: 'osm-free',
+                        name: 'Admission',
+                        price: 'Free',
+                        description: 'Free entry to this attraction',
+                        source: 'OpenStreetMap',
+                    })
+                }
+            } else if (feeInfo === 'yes') {
+                if (tickets.length === 0) {
+                    tickets.push({
+                        id: 'osm-paid',
+                        name: 'Admission',
+                        price: 'Paid entry',
+                        description: 'This attraction requires paid admission',
+                        source: 'OpenStreetMap',
+                    })
+                }
+            } else {
+                // Custom fee description
+                tickets.push({
+                    id: 'osm-fee',
+                    name: 'Admission',
+                    price: osmData.fee,
+                    source: 'OpenStreetMap',
+                })
+            }
+        }
+
+        // 3. From initial activity/itinerary data
+        if (initialActivity?.TicketPricing) {
+            tickets.push({
+                id: 'itinerary-ticket',
+                name: 'Estimated Ticket Price',
+                price: initialActivity.TicketPricing,
+                description: 'Price estimate from your trip itinerary',
+                source: 'Trip Itinerary',
+            })
+        }
+
+        // 4. Price level indicator
+        if (apiData?.priceLevel && tickets.length === 0) {
+            tickets.push({
+                id: 'price-level',
+                name: 'Price Level',
+                price: apiData.priceLevel,
+                description: 'General price indicator',
+                source: 'Google',
+            })
+        }
+
+        // 5. Fallback if no ticket info found
+        if (tickets.length === 0) {
+            tickets.push({
+                id: 'no-info',
+                name: 'Ticket Information',
+                price: 'Price varies',
+                description: 'Check the official website for current pricing',
+                details: [
+                    'Pricing information not available',
+                    'Visit official website for details',
+                ],
+                source: null,
+            })
+        }
+
+        return tickets
     }
 
-    const tickets = activityTickets.length > 0 ? activityTickets : placeholderTickets
-
-    // Nearby places - keep as placeholder for now
-    const nearby = {
-        hotels: [],
-        attractions: [],
-        restaurants: [],
-    }
+    const tickets = buildTickets()
 
     // Rating data
     const rating = apiData?.rating || attraction.Rating
@@ -223,7 +522,6 @@ function useAttractionDetails(initialActivity, tripContext) {
     return {
         attraction,
         tickets,
-        nearby,
         rating,
         ratingCount,
         ratingBreakdown,
@@ -234,90 +532,214 @@ function useAttractionDetails(initialActivity, tripContext) {
 }
 
 /**
- * Card: Attraction Information
+ * Card: Operating Hours & Visiting Info
  */
-function AttractionInfoCard({ attraction, onScrollToMap }) {
-    const { OperatingHours, RecommendedVisit, Address, Contacts } = attraction || {}
+function OperatingHoursCard({ attraction }) {
+    const { OperatingHours, RecommendedVisit, wheelchair, fee } = attraction || {}
 
-    const formatHours = (hours) => {
-        if (!hours) return 'N/A'
-        if (typeof hours === 'string') return hours
-        if (hours.open && hours.close) return `${hours.open} - ${hours.close}`
-        return 'N/A'
+    // Determine the source of operating hours data
+    const getOperatingHoursSource = () => {
+        if (!OperatingHours) return null
+        if (OperatingHours.type === 'schedule') return 'OpenStreetMap'
+        if (OperatingHours.type === 'always' || OperatingHours.type === 'closed') return 'OpenStreetMap'
+        if (OperatingHours.type === 'raw') return 'OpenStreetMap'
+        if (OperatingHours.type === 'serp') return 'Google'
+        if (OperatingHours.type === 'initial') return 'Trip Itinerary'
+        return null
+    }
+
+    // Collect all data sources
+    const collectSources = () => {
+        const sources = new Set()
+        const hoursSource = getOperatingHoursSource()
+        if (hoursSource) sources.add(hoursSource)
+        if (wheelchair) sources.add('OpenStreetMap')
+        if (fee) sources.add('OpenStreetMap')
+        // RecommendedVisit comes from Trip Itinerary
+        if (RecommendedVisit && RecommendedVisit !== 'Visit duration varies based on your interests') {
+            sources.add('Trip Itinerary')
+        }
+        return [...sources]
+    }
+
+    const sources = collectSources()
+    const hasData = OperatingHours || wheelchair || fee || (RecommendedVisit && RecommendedVisit !== 'Visit duration varies based on your interests')
+
+    // Render operating hours based on type
+    const renderOperatingHours = () => {
+        if (!OperatingHours) {
+            return <span className='text-gray-400'>Operating hours not available</span>
+        }
+
+        // Handle different types of operating hours data
+        if (OperatingHours.type === 'always') {
+            return (
+                <div>
+                    <span className='text-green-600 font-medium'>{OperatingHours.display}</span>
+                    <p className='text-[10px] text-gray-400 mt-1'>Source: OpenStreetMap</p>
+                </div>
+            )
+        }
+
+        if (OperatingHours.type === 'closed') {
+            return (
+                <div>
+                    <span className='text-red-600 font-medium'>{OperatingHours.display}</span>
+                    <p className='text-[10px] text-gray-400 mt-1'>Source: OpenStreetMap</p>
+                </div>
+            )
+        }
+
+        if (OperatingHours.type === 'schedule' && OperatingHours.schedule) {
+            // Get today's day name
+            const today = new Date().toLocaleDateString('en-US', { weekday: 'long' })
+            
+            return (
+                <div className='space-y-1'>
+                    {OperatingHours.schedule.map((item, idx) => {
+                        const isToday = item.days.includes(today)
+                        const daysStr = item.days.length > 2 
+                            ? `${item.days[0]} - ${item.days[item.days.length - 1]}`
+                            : item.days.join(', ')
+                        
+                        return (
+                            <div 
+                                key={idx} 
+                                className={`flex justify-between ${isToday ? 'font-medium text-blue-600' : ''}`}
+                            >
+                                <span>{daysStr}{isToday && ' (Today)'}</span>
+                                <span className={item.hours === 'Closed' ? 'text-red-500' : ''}>
+                                    {item.hours}
+                                </span>
+                            </div>
+                        )
+                    })}
+                    <p className='text-[10px] text-gray-400 mt-2'>Source: OpenStreetMap</p>
+                </div>
+            )
+        }
+
+        // Handle raw OSM format
+        if (OperatingHours.type === 'raw' && OperatingHours.display) {
+            return (
+                <div>
+                    <span>{OperatingHours.display}</span>
+                    <p className='text-[10px] text-gray-400 mt-1'>Source: OpenStreetMap</p>
+                </div>
+            )
+        }
+
+        // Handle SerpAPI data
+        if (OperatingHours.type === 'serp' && OperatingHours.display) {
+            return (
+                <div>
+                    <span>{OperatingHours.display}</span>
+                    <p className='text-[10px] text-gray-400 mt-1'>Source: Google</p>
+                </div>
+            )
+        }
+
+        // Handle initial/itinerary data
+        if (OperatingHours.type === 'initial' && OperatingHours.display) {
+            return (
+                <div>
+                    <span>{OperatingHours.display}</span>
+                    <p className='text-[10px] text-gray-400 mt-1'>Source: Trip Itinerary</p>
+                </div>
+            )
+        }
+
+        // Handle simple display string
+        if (OperatingHours.display) {
+            return <span>{OperatingHours.display}</span>
+        }
+
+        // Fallback for legacy string format
+        if (typeof OperatingHours === 'string') {
+            return <span>{OperatingHours}</span>
+        }
+
+        if (OperatingHours.open && OperatingHours.close) {
+            return <span>{OperatingHours.open} - {OperatingHours.close}</span>
+        }
+
+        return <span className='text-gray-400'>Operating hours not available</span>
     }
 
     return (
-        <div className='space-y-4 text-sm text-gray-700'>
-            <div className='grid md:grid-cols-2 gap-4'>
+        <SectionCard
+            title='Operating Hours & Visiting Info'
+            subtitle={hasData && sources.length > 0
+                ? `Information from ${sources.join(', ')}`
+                : 'Plan your visit with these timing details.'
+            }
+        >
+            <div className='grid md:grid-cols-2 gap-6 text-sm text-gray-700'>
+                {/* Operating Hours */}
                 <div className='flex items-start gap-2'>
-                    <Clock3 className='h-4 w-4 mt-0.5 text-gray-500' />
-                    <div>
-                        <div className='font-semibold'>Operating Time</div>
+                    <Clock3 className='h-4 w-4 mt-0.5 text-gray-500 flex-shrink-0' />
+                    <div className='flex-1'>
+                        <div className='font-semibold mb-1'>Operating Time</div>
                         <div className='text-gray-700'>
-                            {formatHours(OperatingHours)}
+                            {renderOperatingHours()}
                         </div>
                     </div>
                 </div>
 
+                {/* Visiting Recommendation */}
                 <div className='flex items-start gap-2'>
-                    <MapPin className='h-5 w-5 md:h-4 md:w-4 mt-0.5 text-gray-500' />
-                    <div className='space-y-1'>
-                        <div className='font-semibold'>Address</div>
-                        <div className='flex flex-col md:flex-row md:items-center text-gray-600 mt-1'>
-                            <p className='text-gray-700'>
-                                {Address || 'The full address will be loaded from Google / SerpAPI'}
-                            </p>
-
-                            <span
-                                onClick={onScrollToMap}
-                                className='md:pl-1 text-blue-600 hover:underline cursor-pointer'
-                            >
-                                View on map
-                            </span>
+                    <Info className='h-4 w-4 mt-0.5 text-gray-500 flex-shrink-0' />
+                    <div>
+                        <div className='font-semibold mb-1'>Visiting Hours Recommendation</div>
+                        <div className='text-gray-700'>
+                            {RecommendedVisit || 'Visit duration varies based on your interests.'}
                         </div>
+                        {RecommendedVisit && RecommendedVisit !== 'Visit duration varies based on your interests' && (
+                            <p className='text-[10px] text-gray-400 mt-1'>Source: Trip Itinerary</p>
+                        )}
                     </div>
                 </div>
+
+                {/* Accessibility - if available from OSM */}
+                {wheelchair && (
+                    <div className='flex items-start gap-2'>
+                        <span className='text-gray-500 text-base mt-0.5'>♿</span>
+                        <div>
+                            <div className='font-semibold mb-1'>Accessibility</div>
+                            <div className='text-gray-700 capitalize'>
+                                {wheelchair === 'yes' ? 'Wheelchair accessible' : 
+                                 wheelchair === 'limited' ? 'Limited wheelchair access' :
+                                 wheelchair === 'no' ? 'Not wheelchair accessible' : wheelchair}
+                            </div>
+                            <p className='text-[10px] text-gray-400 mt-1'>Source: OpenStreetMap</p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Admission Fee - if available from OSM */}
+                {fee && (
+                    <div className='flex items-start gap-2'>
+                        <Ticket className='h-4 w-4 mt-0.5 text-gray-500 flex-shrink-0' />
+                        <div>
+                            <div className='font-semibold mb-1'>Admission</div>
+                            <div className='text-gray-700 capitalize'>
+                                {fee === 'yes' ? 'Paid admission' : 
+                                 fee === 'no' ? 'Free admission' : fee}
+                            </div>
+                            <p className='text-[10px] text-gray-400 mt-1'>Source: OpenStreetMap</p>
+                        </div>
+                    </div>
+                )}
             </div>
 
-            <div className='grid md:grid-cols-2 gap-4'>
-                <div className='flex items-start gap-2'>
-                    <Info className='h-4 w-4 mt-0.5 text-gray-500' />
-                    <div>
-                        <div className='font-semibold'>Visiting Hours Recommendation</div>
-                        <div className='text-gray-700'>
-                            {RecommendedVisit || 'Recommended visit duration will be loaded from the APIs.'}
-                        </div>
-                    </div>
-                </div>
-
-                <div className='flex items-start gap-2'>
-                    <Contact className='h-4 w-4 mt-0.5 text-gray-500' />
-                    <div className='space-y-2'>
-                        <div className='font-semibold'>Contacts</div>
-                        <div className='space-y-1'>
-                            <div className='flex flex-wrap gap-2'>
-                                <span className='font-medium'>Phone:</span>
-                                <span className={Contacts?.phone ? 'text-gray-700' : 'text-gray-400'}>
-                                    {Contacts?.phone || 'N/A'}
-                                </span>
-                            </div>
-                            <div className='flex flex-wrap gap-2'>
-                                <span className='font-medium'>Email:</span>
-                                <span className={Contacts?.email ? 'text-gray-700' : 'text-gray-400'}>
-                                    {Contacts?.email || 'N/A'}
-                                </span>
-                            </div>
-                            <div className='flex flex-wrap gap-2'>
-                                <span className='font-medium'>Website:</span>
-                                <span className={Contacts?.website ? 'text-gray-700' : 'text-gray-400'}>
-                                    {Contacts?.website || 'N/A'}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+            {/* Helpful tip when limited data available */}
+            {!hasData && (
+                <p className='text-xs text-gray-500 pt-4 border-t border-gray-100 mt-4'>
+                    💡 Tip: Operating hours may vary by season or holidays. 
+                    Always verify on the official website before visiting.
+                </p>
+            )}
+        </SectionCard>
     )
 }
 
@@ -349,6 +771,12 @@ function AttractionDescriptionCard({ attraction }) {
  * Card: Tickets & Passes
  */
 function TicketCard({ ticket }) {
+    const priceColor = ticket.price?.toLowerCase() === 'free' 
+        ? 'text-green-600' 
+        : ticket.price?.toLowerCase().includes('paid') 
+            ? 'text-orange-600'
+            : 'text-blue-600'
+
     return (
         <div className='border rounded-lg p-4 flex flex-col gap-2 bg-gray-50'>
             <div className='flex items-center justify-between gap-2'>
@@ -358,9 +786,11 @@ function TicketCard({ ticket }) {
                         {ticket.name}
                     </h4>
                 </div>
-                <div className='text-sm font-semibold text-blue-600'>
-                    {ticket.price}
-                </div>
+                {ticket.price && (
+                    <div className={`text-sm font-semibold ${priceColor}`}>
+                        {ticket.price}
+                    </div>
+                )}
             </div>
             {ticket.description && (
                 <p className='text-xs text-gray-600'>
@@ -374,29 +804,72 @@ function TicketCard({ ticket }) {
                     ))}
                 </ul>
             )}
+            {ticket.source && (
+                <p className='text-[10px] text-gray-400 mt-1'>
+                    Source: {ticket.source}
+                </p>
+            )}
         </div>
     )
 }
 
-function TicketsPassesSection({ tickets }) {
+function TicketsPassesSection({ tickets, attraction }) {
+    // Check if we have any real ticket data
+    const hasRealData = tickets.some(t => t.source && t.source !== null)
+    
+    // Get unique sources
+    const sources = [...new Set(tickets.filter(t => t.source).map(t => t.source))]
+
     if (!Array.isArray(tickets) || tickets.length === 0) {
-        // If no tickets, do not render this card at all
         return null
     }
 
     return (
         <SectionCard
-            title='Tickets & Passes'
-            subtitle='Indicative ticket types and prices. Real data will be fetched from official sources later.'
+            title='Tickets & Admission'
+            subtitle={hasRealData 
+                ? `Pricing information from ${sources.join(', ')}`
+                : 'Check official website for current pricing details.'
+            }
         >
             <div className='space-y-3'>
                 {tickets.map(t => (
                     <TicketCard key={t.id || t.name} ticket={t} />
                 ))}
-                <p className='text-xs text-gray-500'>
-                    Note: All prices and ticket types shown here are placeholders and will be replaced with
-                    live data from your backend and APIs.
-                </p>
+                
+                {/* Booking link if available */}
+                {attraction?.ticketInfo?.reservationLink && (
+                    <a 
+                        href={attraction.ticketInfo.reservationLink}
+                        target='_blank'
+                        rel='noopener noreferrer'
+                        className='inline-flex items-center gap-2 text-sm text-blue-600 hover:underline mt-2'
+                    >
+                        <Ticket className='h-4 w-4' />
+                        Book tickets online
+                    </a>
+                )}
+
+                {/* Website link for more info */}
+                {attraction?.Contacts?.website && (
+                    <div className='pt-2 border-t border-gray-200'>
+                        <a 
+                            href={attraction.Contacts.website}
+                            target='_blank'
+                            rel='noopener noreferrer'
+                            className='inline-flex items-center gap-2 text-sm text-blue-600 hover:underline'
+                        >
+                            Visit official website for full pricing details →
+                        </a>
+                    </div>
+                )}
+
+                {!hasRealData && (
+                    <p className='text-xs text-gray-500 pt-2'>
+                        💡 Tip: Prices may vary by season, age group, and ticket type. 
+                        Always verify on the official website before visiting.
+                    </p>
+                )}
             </div>
         </SectionCard>
     )
@@ -563,211 +1036,419 @@ function AttractionReviewsSection({
     )
 }
 
-/**
- * Card: Map + Nearby
- */
-function NearbyPlaceItem({ place, type, onClick }) {
-    const Icon =
-        type === 'hotel'
-            ? BedDouble
-            : type === 'restaurant'
-                ? UtensilsCrossed
-                : Landmark
+function AttractionMapSection({ attraction }) {
+    const mapContainerRef = useRef(null)
+    const mapInstance = useRef(null)
+    const markersRef = useRef([])
+    const [allPlaces, setAllPlaces] = useState([])
+    const [displayPlaces, setDisplayPlaces] = useState([])
+    const [activeFilter, setActiveFilter] = useState('all')
+    const [loadingPlaces, setLoadingPlaces] = useState(false)
 
-    const label =
-        type === 'hotel'
-            ? 'Hotel'
-            : type === 'restaurant'
-                ? 'Restaurant'
-                : 'Attraction'
+    const hasCoordinates = attraction?.gpsCoordinates?.latitude && attraction?.gpsCoordinates?.longitude
 
-    return (
-        <button
-            type='button'
-            onClick={() => onClick(place)}
-            className='w-full text-left flex gap-3 p-2 rounded-lg border hover:border-blue-500 hover:bg-blue-50 transition-colors text-sm'
-        >
-            <div className='w-16 h-16 rounded-md overflow-hidden bg-gray-200 flex-shrink-0'>
-                <img
-                    src={place.photo || '/placeholder.jpg'}
-                    alt={place.name}
-                    className='w-full h-full object-cover'
-                />
-            </div>
-            <div className='flex-1'>
-                <div className='flex items-center justify-between gap-2'>
-                    <h4 className='font-semibold text-gray-800 truncate'>
-                        {place.name}
-                    </h4>
-                    {place.distance && (
-                        <span className='text-xs text-gray-500 whitespace-nowrap'>
-                            {place.distance}
-                        </span>
-                    )}
-                </div>
-                <div className='flex items-center gap-1 text-xs text-gray-500 mt-1'>
-                    <Icon className='h-3 w-3' />
-                    <span>{label}</span>
-                </div>
-                <div className='mt-1 flex items-center gap-1 text-[11px] text-blue-600'>
-                    <ArrowRight className='h-3 w-3' />
-                    <span>
-                        {type === 'restaurant'
-                            ? 'Show route from attraction'
-                            : 'Open details in new tab'}
-                    </span>
-                </div>
-            </div>
-        </button>
-    )
-}
+    // Filter options - categories for nearby places
+    const filterOptions = [
+        { key: 'all', label: 'All', color: '#6B7280' },
+        { key: 'transit', label: 'Transit', color: '#3B82F6' },
+        { key: 'restaurant', label: 'Restaurant', color: '#F97316' },
+        { key: 'convenience', label: 'Convenience Store', color: '#10B981' },
+        { key: 'gas', label: 'Gas', color: '#EF4444' },
+        { key: 'atm', label: 'ATM', color: '#8B5CF6' },
+        { key: 'shopping', label: 'Shopping', color: '#EC4899' },
+        { key: 'poi', label: 'POI', color: '#F59E0B' },
+    ]
 
-function AttractionMapSection({
-    mapRef,
-    nearby,
-    onOpenHotel,
-    onOpenAttraction,
-    onFocusRestaurantRoute,
-}) {
-    const [activeFilter, setActiveFilter] = useState('all') // all | hotels | attractions | restaurants
+    // Initialize map
+    useEffect(() => {
+        if (!hasCoordinates || !mapContainerRef.current || mapInstance.current) return
 
-    const hotels = nearby?.hotels || []
-    const attractions = nearby?.attractions || []
-    const restaurants = nearby?.restaurants || []
+        const { latitude, longitude } = attraction.gpsCoordinates
 
-    const filteredList = (() => {
-        if (activeFilter === 'hotels') return hotels.map(p => ({ ...p, _type: 'hotel' }))
-        if (activeFilter === 'attractions') return attractions.map(p => ({ ...p, _type: 'attraction' }))
-        if (activeFilter === 'restaurants') return restaurants.map(p => ({ ...p, _type: 'restaurant' }))
-        return [
-            ...hotels.map(p => ({ ...p, _type: 'hotel' })),
-            ...attractions.map(p => ({ ...p, _type: 'attraction' })),
-            ...restaurants.map(p => ({ ...p, _type: 'restaurant' })),
-        ]
-    })()
+        // Create map instance
+        mapInstance.current = L.map(mapContainerRef.current).setView([latitude, longitude], 15)
 
-    const handleClickPlace = (place) => {
-        if (place._type === 'hotel') {
-            onOpenHotel?.(place)
-            return
+        // Add tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(mapInstance.current)
+
+        // Create custom attraction marker icon
+        const attractionIcon = L.divIcon({
+            className: 'custom-attraction-marker',
+            html: `<div style="
+                background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+                color: white;
+                border-radius: 50%;
+                width: 44px;
+                height: 44px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 20px;
+                border: 3px solid white;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            ">📍</div>`,
+            iconSize: [44, 44],
+            iconAnchor: [22, 22],
+            popupAnchor: [0, -22]
+        })
+
+        // Add attraction marker
+        L.marker([latitude, longitude], { icon: attractionIcon })
+            .addTo(mapInstance.current)
+
+        return () => {
+            if (mapInstance.current) {
+                mapInstance.current.remove()
+                mapInstance.current = null
+            }
         }
-        if (place._type === 'attraction') {
-            onOpenAttraction?.(place)
-            return
-        }
-        if (place._type === 'restaurant') {
-            onFocusRestaurantRoute?.(place)
-            return
-        }
-    }
+    }, [hasCoordinates, attraction?.gpsCoordinates?.latitude, attraction?.gpsCoordinates?.longitude])
 
-    const filterBtnClass = (key) =>
-        `px-3 py-1 rounded-full flex flex-row items-center text-sm border ${activeFilter === key
-            ? 'bg-blue-600 text-white border-blue-600'
-            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-        }`
+    // Fetch nearby places using Overpass API
+    useEffect(() => {
+        if (!hasCoordinates) return
+
+        const { latitude, longitude } = attraction.gpsCoordinates
+
+        // Helper to calculate distance between two coordinates
+        const calculateDistance = (lat1, lon1, lat2, lon2) => {
+            const R = 6371e3 // Earth's radius in metres
+            const φ1 = lat1 * Math.PI / 180
+            const φ2 = lat2 * Math.PI / 180
+            const Δφ = (lat2 - lat1) * Math.PI / 180
+            const Δλ = (lon2 - lon1) * Math.PI / 180
+
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                Math.cos(φ1) * Math.cos(φ2) *
+                Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+            return Math.round(R * c)
+        }
+
+        // Format distance for display
+        const formatDistance = (meters) => {
+            if (meters >= 1000) {
+                return `${(meters / 1000).toFixed(1)} km`
+            }
+            return `${meters} m`
+        }
+
+        const fetchNearbyPlaces = async () => {
+            setLoadingPlaces(true)
+            try {
+                const query = `
+                    [out:json][timeout:25];
+                    (
+                        // Transit
+                        node["highway"="bus_stop"](around:1000, ${latitude}, ${longitude});
+                        node["public_transport"="platform"](around:1000, ${latitude}, ${longitude});
+                        node["railway"="station"](around:1000, ${latitude}, ${longitude});
+                        node["railway"="subway_entrance"](around:1000, ${latitude}, ${longitude});
+                        // Restaurants & Cafes
+                        node["amenity"="restaurant"](around:1000, ${latitude}, ${longitude});
+                        node["amenity"="cafe"](around:1000, ${latitude}, ${longitude});
+                        node["amenity"="fast_food"](around:1000, ${latitude}, ${longitude});
+                        // Convenience stores
+                        node["shop"="convenience"](around:1000, ${latitude}, ${longitude});
+                        node["shop"="supermarket"](around:1000, ${latitude}, ${longitude});
+                        // Gas stations
+                        node["amenity"="fuel"](around:1000, ${latitude}, ${longitude});
+                        // ATM & Banks
+                        node["amenity"="atm"](around:1000, ${latitude}, ${longitude});
+                        node["amenity"="bank"](around:1000, ${latitude}, ${longitude});
+                        // Shopping
+                        node["shop"="mall"](around:1000, ${latitude}, ${longitude});
+                        node["shop"="department_store"](around:1000, ${latitude}, ${longitude});
+                        // POI / Attractions
+                        node["tourism"~"attraction|museum|viewpoint|artwork"](around:1000, ${latitude}, ${longitude});
+                        node["historic"](around:1000, ${latitude}, ${longitude});
+                        node["leisure"="park"](around:1000, ${latitude}, ${longitude});
+                        node["amenity"="place_of_worship"](around:1000, ${latitude}, ${longitude});
+                    );
+                    out body;
+                `
+
+                const response = await fetch('https://overpass-api.de/api/interpreter', {
+                    method: 'POST',
+                    body: query
+                })
+                const data = await response.json()
+
+                const places = []
+                const seenNames = new Set()
+
+                data.elements.forEach(el => {
+                    const name = el.tags?.['name:en'] || el.tags?.name
+                    if (!name) return
+
+                    const nameKey = name.toLowerCase()
+                    if (seenNames.has(nameKey)) return
+                    seenNames.add(nameKey)
+
+                    const distanceMeters = calculateDistance(latitude, longitude, el.lat, el.lon)
+                    if (distanceMeters > 1000) return
+
+                    let category, icon, color, displayType
+
+                    if (el.tags.highway === 'bus_stop' || el.tags.public_transport === 'platform') {
+                        category = 'transit'
+                        icon = '🚌'
+                        color = '#3B82F6'
+                        displayType = 'Bus Stop'
+                    } else if (el.tags.railway === 'station' || el.tags.railway === 'subway_entrance') {
+                        category = 'transit'
+                        icon = '🚇'
+                        color = '#3B82F6'
+                        displayType = 'Station'
+                    } else if (el.tags.amenity === 'restaurant') {
+                        category = 'restaurant'
+                        icon = '🍽️'
+                        color = '#F97316'
+                        displayType = 'Restaurant'
+                    } else if (el.tags.amenity === 'cafe') {
+                        category = 'restaurant'
+                        icon = '☕'
+                        color = '#F97316'
+                        displayType = 'Cafe'
+                    } else if (el.tags.amenity === 'fast_food') {
+                        category = 'restaurant'
+                        icon = '🍔'
+                        color = '#F97316'
+                        displayType = 'Fast Food'
+                    } else if (el.tags.shop === 'convenience' || el.tags.shop === 'supermarket') {
+                        category = 'convenience'
+                        icon = '🏪'
+                        color = '#10B981'
+                        displayType = el.tags.shop === 'supermarket' ? 'Supermarket' : 'Convenience Store'
+                    } else if (el.tags.amenity === 'fuel') {
+                        category = 'gas'
+                        icon = '⛽'
+                        color = '#EF4444'
+                        displayType = 'Gas Station'
+                    } else if (el.tags.amenity === 'atm') {
+                        category = 'atm'
+                        icon = '🏧'
+                        color = '#8B5CF6'
+                        displayType = 'ATM'
+                    } else if (el.tags.amenity === 'bank') {
+                        category = 'atm'
+                        icon = '🏦'
+                        color = '#8B5CF6'
+                        displayType = 'Bank'
+                    } else if (el.tags.shop === 'mall' || el.tags.shop === 'department_store') {
+                        category = 'shopping'
+                        icon = '🛍️'
+                        color = '#EC4899'
+                        displayType = 'Shopping'
+                    } else if (el.tags.tourism || el.tags.historic || el.tags.leisure === 'park' || el.tags.amenity === 'place_of_worship') {
+                        category = 'poi'
+                        icon = '📍'
+                        color = '#F59E0B'
+                        if (el.tags.tourism === 'museum') {
+                            icon = '🏛️'
+                            displayType = 'Museum'
+                        } else if (el.tags.leisure === 'park') {
+                            icon = '🌳'
+                            displayType = 'Park'
+                        } else if (el.tags.amenity === 'place_of_worship') {
+                            icon = '⛩️'
+                            displayType = 'Temple/Shrine'
+                        } else if (el.tags.historic) {
+                            icon = '🏛️'
+                            displayType = 'Historic Site'
+                        } else {
+                            displayType = 'Attraction'
+                        }
+                    } else {
+                        return
+                    }
+
+                    places.push({
+                        name,
+                        type: displayType,
+                        distance: formatDistance(distanceMeters),
+                        distanceMeters,
+                        lat: el.lat,
+                        lng: el.lon,
+                        icon,
+                        color,
+                        category,
+                    })
+                })
+
+                places.sort((a, b) => a.distanceMeters - b.distanceMeters)
+
+                const limitedPlaces = []
+                const categoryCount = {}
+                const maxPerCategory = 5
+
+                places.forEach(place => {
+                    categoryCount[place.category] = (categoryCount[place.category] || 0) + 1
+                    if (categoryCount[place.category] <= maxPerCategory) {
+                        limitedPlaces.push(place)
+                    }
+                })
+
+                setAllPlaces(limitedPlaces)
+            } catch (error) {
+                console.error('Error fetching nearby places from Overpass API:', error)
+                setAllPlaces([])
+            } finally {
+                setLoadingPlaces(false)
+            }
+        }
+
+        fetchNearbyPlaces()
+    }, [hasCoordinates, attraction?.gpsCoordinates?.latitude, attraction?.gpsCoordinates?.longitude])
+
+    // Filter places and update markers when filter changes
+    useEffect(() => {
+        if (!mapInstance.current || allPlaces.length === 0) return
+
+        markersRef.current.forEach(marker => marker.remove())
+        markersRef.current = []
+
+        const filteredPlaces = activeFilter === 'all' 
+            ? allPlaces 
+            : allPlaces.filter(place => place.category === activeFilter)
+
+        setDisplayPlaces(filteredPlaces)
+
+        filteredPlaces.forEach(place => {
+            const placeIcon = L.divIcon({
+                className: 'custom-place-marker',
+                html: `<div style="
+                    background-color: ${place.color};
+                    color: white;
+                    border-radius: 50%;
+                    width: 32px;
+                    height: 32px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 14px;
+                    border: 2px solid white;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+                ">${place.icon}</div>`,
+                iconSize: [32, 32],
+                iconAnchor: [16, 16],
+                popupAnchor: [0, -16]
+            })
+
+            const marker = L.marker([place.lat, place.lng], { icon: placeIcon })
+                .addTo(mapInstance.current)
+                .bindPopup(`
+                    <div style="min-width: 150px;">
+                        <h4 style="margin: 0 0 4px 0; font-weight: bold; font-size: 13px;">${place.name}</h4>
+                        <p style="margin: 0; font-size: 11px; color: #666; text-transform: capitalize;">${place.type}</p>
+                        ${place.distance ? `<p style="margin: 4px 0 0 0; font-size: 11px; color: #888;">📍 ${place.distance}</p>` : ''}
+                    </div>
+                `)
+
+            markersRef.current.push(marker)
+        })
+    }, [allPlaces, activeFilter])
 
     return (
         <SectionCard
             id='attraction-map'
             title='Location & Nearby Places'
-            subtitle='Google Map of the attraction with filters for nearby hotels, restaurants and other attractions.'
-            rightSlot={
-                <div className='hidden md:flex gap-2 text-xs text-gray-500'>
-                    <span className='inline-flex items-center gap-1'>
-                        <span className='h-2 w-2 rounded-full bg-blue-500' /> Hotels
-                    </span>
-                    <span className='inline-flex items-center gap-1'>
-                        <span className='h-2 w-2 rounded-full bg-green-500' /> Attractions
-                    </span>
-                    <span className='inline-flex items-center gap-1'>
-                        <span className='h-2 w-2 rounded-full bg-pink-500' /> Restaurants
-                    </span>
-                </div>
-            }
+            subtitle='Real-time data from OpenStreetMap'
         >
-            <div className='grid md:grid-cols-2 gap-4'>
-                {/* LEFT: Map + filter buttons overlay */}
-                <div className='space-y-3'>
-                    <div className='relative w-full h-72 md:h-80 rounded-lg border bg-gray-100 overflow-hidden'>
-                        {/* Filter buttons (custom buttons on the map) */}
-                        <div className='absolute top-3 left-3 flex flex-wrap gap-2 z-10'>
-                            <button
-                                type='button'
-                                className={filterBtnClass('all')}
-                                onClick={() => setActiveFilter('all')}
-                            >
-                                All
-                            </button>
-                            <button
-                                type='button'
-                                className={filterBtnClass('hotels')}
-                                onClick={() => setActiveFilter('hotels')}
-                            >
-                                <BedDouble className='h-3 w-3 mr-1' />
-                                Hotels
-                            </button>
-                            <button
-                                type='button'
-                                className={filterBtnClass('attractions')}
-                                onClick={() => setActiveFilter('attractions')}
-                            >
-                                <Landmark className='h-3 w-3 mr-1' />
-                                Attractions
-                            </button>
-                            <button
-                                type='button'
-                                className={filterBtnClass('restaurants')}
-                                onClick={() => setActiveFilter('restaurants')}
-                            >
-                                <UtensilsCrossed className='h-3 w-3 mr-1' />
-                                Restaurants
-                            </button>
-                        </div>
+            <div className='space-y-4'>
+                {/* Loading indicator */}
+                {loadingPlaces && (
+                    <div className='flex items-center gap-2 text-sm text-blue-600'>
+                        <svg className='animate-spin h-4 w-4' xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'>
+                            <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4'></circle>
+                            <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z'></path>
+                        </svg>
+                        Loading nearby places...
+                    </div>
+                )}
 
-                        {/* Map container */}
-                        <div
-                            ref={mapRef}
-                            className='w-full h-full flex items-center justify-center text-center text-xs text-gray-400 px-6'
+                {/* Filter buttons */}
+                <div className='flex flex-wrap gap-2'>
+                    {filterOptions.map(option => (
+                        <button
+                            key={option.key}
+                            onClick={() => setActiveFilter(option.key)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                                activeFilter === option.key
+                                    ? 'text-white shadow-md'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                            style={activeFilter === option.key ? { backgroundColor: option.color } : {}}
                         >
-                            {/* TODO: Replace this with actual Google Maps JS API + Directions.
-                  Use the `mapRef` and `activeFilter` / selected place to control markers & routes. */}
-                            Google Map will be rendered here with the attraction marker, nearby
-                            places and routes when a restaurant is selected.
-                        </div>
-                    </div>
-
-                    <div className='text-xs text-gray-500'>
-                        When you click a restaurant in the list, a route from the attraction to that
-                        restaurant will be drawn on the map (using Google Directions API). Clicking on
-                        nearby hotels or attractions will open their detailed pages in a new tab.
-                    </div>
+                            <span 
+                                className='h-2 w-2 rounded-full'
+                                style={{ backgroundColor: activeFilter === option.key ? 'white' : option.color }}
+                            />
+                            {option.label}
+                            {option.key !== 'all' && (
+                                <span className={`text-xs ${activeFilter === option.key ? 'text-white/80' : 'text-gray-400'}`}>
+                                    ({allPlaces.filter(p => p.category === option.key).length})
+                                </span>
+                            )}
+                            {option.key === 'all' && (
+                                <span className={`text-xs ${activeFilter === option.key ? 'text-white/80' : 'text-gray-400'}`}>
+                                    ({allPlaces.length})
+                                </span>
+                            )}
+                        </button>
+                    ))}
                 </div>
 
-                {/* RIGHT: Nearby list */}
-                <div className='space-y-3'>
-                    <h4 className='font-semibold text-sm text-gray-800'>
-                        Nearby Places
-                    </h4>
-
-                    {filteredList.length === 0 ? (
-                        <p className='text-sm text-gray-400'>
-                            Nearby hotels, attractions and restaurants will be displayed here after integrating
-                            Google Places / SerpAPI.
-                        </p>
-                    ) : (
-                        <div className='space-y-2 max-h-80 overflow-auto pr-1'>
-                            {filteredList.map((place, idx) => (
-                                <NearbyPlaceItem
-                                    key={place.id || `${place._type}-${idx}`}
-                                    place={place}
-                                    type={place._type}
-                                    onClick={handleClickPlace}
-                                />
-                            ))}
+                {/* Map container */}
+                {hasCoordinates ? (
+                    <div 
+                        ref={mapContainerRef} 
+                        className='w-full h-80 md:h-96 rounded-lg border overflow-hidden z-0'
+                        style={{ position: 'relative' }}
+                    />
+                ) : (
+                    <div className='w-full h-80 md:h-96 rounded-lg border bg-gray-100 flex items-center justify-center text-gray-400 text-sm'>
+                        <div className='text-center'>
+                            <MapPin className='h-8 w-8 mx-auto mb-2 opacity-50' />
+                            <p>Location coordinates not available for this attraction.</p>
                         </div>
-                    )}
-                </div>
+                    </div>
+                )}
+
+                {/* Nearby places list */}
+                {displayPlaces.length > 0 && (
+                    <div className='grid grid-cols-2 md:grid-cols-3 gap-3'>
+                        {displayPlaces.map((place, idx) => (
+                            <div 
+                                key={idx}
+                                className='flex items-center gap-2 p-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer text-sm'
+                                onClick={() => {
+                                    if (mapInstance.current) {
+                                        mapInstance.current.setView([place.lat, place.lng], 17)
+                                        markersRef.current[idx]?.openPopup()
+                                    }
+                                }}
+                            >
+                                <span 
+                                    className='w-7 h-7 rounded-full flex items-center justify-center text-white text-xs'
+                                    style={{ backgroundColor: place.color }}
+                                >
+                                    {place.icon}
+                                </span>
+                                <div className='flex-1 min-w-0'>
+                                    <p className='font-medium text-gray-800 truncate'>{place.name}</p>
+                                    <p className='text-xs text-gray-500 capitalize'>
+                                        {place.type}
+                                        {place.distance && ` • ${place.distance}`}
+                                    </p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
         </SectionCard>
     )
@@ -784,12 +1465,9 @@ export default function ManualAttractionDetailsPage() {
     const activityFromState = location.state?.activity || null
     const tripContext = location.state?.tripContext || null
 
-    const mapRef = useRef(null)
-
     const {
         attraction,
         tickets,
-        nearby,
         rating,
         ratingCount,
         ratingBreakdown,
@@ -819,35 +1497,6 @@ export default function ManualAttractionDetailsPage() {
         if (el) {
             el.scrollIntoView({ behavior: 'smooth', block: 'start' })
         }
-    }
-
-    const handleSelectAttractionForTrip = () => {
-        // TODO: implement logic:
-        // - navigate back to EditTrip with selected hotel info in state
-        console.log('Use attraction in trip (placeholder)', {
-            activityFromState,
-            tripContext,
-        })
-    }
-
-    const handleOpenHotel = (hotel) => {
-        const slug = encodeURIComponent(hotel.name || 'hotel')
-        window.open(`/manual/hotel/${slug}`, '_blank')
-        console.log('Open nearby hotel in new tab (placeholder)', { hotel, tripContext })
-    }
-
-    const handleOpenAttraction = (place) => {
-        const slug = encodeURIComponent(place.name || 'attraction')
-        window.open(`/manual/attraction/${slug}`, '_blank')
-        console.log('Open nearby attraction in new tab (placeholder)', { place, tripContext })
-    }
-
-    const handleFocusRestaurantRoute = (restaurant) => {
-        // Later: use mapRef + Directions API to draw route
-        console.log('Highlight route from attraction to restaurant on map (placeholder)', {
-            restaurant,
-            attraction,
-        })
     }
 
     if (error) {
@@ -883,11 +1532,8 @@ export default function ManualAttractionDetailsPage() {
         )
     }
 
-    const ratingNumber = (() => {
-        const raw = attraction?.Rating
-        const num = typeof raw === 'number' ? raw : parseFloat(raw ?? '0')
-        return Number.isFinite(num) ? num : null
-    })()
+    const ratingNumber = toSafeNumber(attraction?.Rating, null)
+    const reviewCount = toSafeNumber(ratingCount, null)
 
     return (
         <div className='p-6 mx-auto md:px-20 lg:w-7xl space-y-6'>
@@ -903,55 +1549,91 @@ export default function ManualAttractionDetailsPage() {
                 </Button>
             </div>
 
-            {/* Header + photos */}
+            {/* Header + photos + description (merged like hotel) */}
             <SectionCard header={false} className='space-y-5'>
-                <PhotoCarousel photos={attraction?.Photos} altPrefix='Attraction photo' />
-
-                <div className='flex flex-col md:flex-row md:items-center md:justify-between gap-3'>
-                    <div>
-                        <h1 className='text-2xl md:text-3xl font-bold flex items-center gap-2'>
-                            {displayAttractionName}
-                            {ratingNumber && (
-                                <span className='inline-flex items-center gap-1 text-sm text-yellow-500'>
-                                    <Star className='h-4 w-4 fill-yellow-400' />
-                                    <span>{ratingNumber.toFixed(1)}</span>
-                                </span>
-                            )}
-                        </h1>
-                        {/* <div className='text-xs md:text-sm flex flex-col md:flex-row md:items-center text-gray-600 mt-1 gap-1'>
-                            <div className='flex items-center gap-1'>
-                                <MapPin className='h-4 w-4' />
-                                <span>{attraction?.Address || 'Address will be loaded from Google / SerpAPI.'}</span>
-                            </div>
-                            <button
-                                type='button'
-                                onClick={scrollToMap}
-                                className='md:pl-2 text-blue-600 hover:underline font-semibold text-xs md:text-sm flex items-center gap-1'
-                            >
-                                View on map
-                                <Navigation2 className='h-3 w-3' />
-                            </button>
-                        </div> */}
-                    </div>
-
-                    <div className='flex justify-end'>
-                        <Button
-                            onClick={handleSelectAttractionForTrip}
-                            className='text-md rounded-sm md:py-5 md:text-base bg-blue-600 hover:bg-blue-700 cursor-pointer'
-                        >
-                            Use this attraction in trip
-                        </Button>
-                    </div>
+                {/* Name, type/category and rating at top, above photos */}
+                <div className='space-y-1'>
+                    <h1 className='text-2xl md:text-3xl font-bold flex items-center gap-2'>
+                        {displayAttractionName}
+                        {ratingNumber && (
+                            <span className='inline-flex items-center gap-1 text-sm font-normal'>
+                                <Star className='h-4 w-4 md:h-5 md:w-5 fill-yellow-400 text-yellow-400' />
+                                <span className='text-gray-700'>{ratingNumber.toFixed(1)}</span>
+                                {reviewCount && (
+                                    <span className='text-gray-400'>({reviewCount.toLocaleString()} reviews)</span>
+                                )}
+                            </span>
+                        )}
+                    </h1>
+                    {/* Type/Category with icon */}
+                    {attraction?.type && (
+                        <div className='flex items-center gap-2 text-sm text-gray-600'>
+                            <Landmark className='h-4 w-4 text-gray-500' />
+                            <span>{attraction.type}</span>
+                        </div>
+                    )}
                 </div>
 
-                <hr className='w-full bg-gray-500' />
+                <PhotoCarousel photos={attraction?.Photos} altPrefix='Attraction photo' />
 
-                <AttractionInfoCard attraction={attraction} onScrollToMap={scrollToMap} />
+                {/* Description section merged into header (like hotel) */}
+                <div className='bg-gray-50 rounded-lg p-4 md:p-6 space-y-4'>
+                    {/* Location row */}
+                    <div className='flex flex-col md:flex-row md:items-center md:justify-between gap-2'>
+                        <div className='flex items-start gap-2'>
+                            <MapPin className='h-5 w-5 text-gray-500 flex-shrink-0 mt-0.5' />
+                            <span className='text-sm md:text-base text-gray-700'>
+                                {attraction?.Address || 'Address not available'}
+                            </span>
+                        </div>
+                        {attraction?.gpsCoordinates && (
+                            <a 
+                                href={`https://www.google.com/maps/search/?api=1&query=${attraction.gpsCoordinates.latitude},${attraction.gpsCoordinates.longitude}`}
+                                target='_blank'
+                                rel='noopener noreferrer'
+                                className='inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:underline cursor-pointer'
+                            >
+                                <Navigation className='h-4 w-4' />
+                                View on Google Maps
+                            </a>
+                        )}
+                    </div>
+
+                    {/* Contact info row */}
+                    <div className='flex flex-wrap gap-4 text-sm'>
+                        {attraction?.Contacts?.phone && (
+                            <div className='flex items-center gap-2'>
+                                <Phone className='h-4 w-4 text-gray-500' />
+                                <span className='text-gray-500'>Phone:</span>
+                                <span className='text-gray-700'>{attraction.Contacts.phone}</span>
+                            </div>
+                        )}
+                        {attraction?.Contacts?.website && (
+                            <a 
+                                href={attraction.Contacts.website} 
+                                target='_blank' 
+                                rel='noopener noreferrer'
+                                className='flex items-center gap-2 text-blue-600 hover:underline'
+                            >
+                                <Globe className='h-4 w-4' />
+                                <span>Website</span>
+                            </a>
+                        )}
+                    </div>
+
+                    {/* Description */}
+                    {(attraction?.PlaceDetails || attraction?.description) && (
+                        <div className='space-y-2 text-sm text-gray-700 leading-relaxed pt-2 border-t border-gray-200'>
+                            <p>{attraction?.PlaceDetails || attraction?.description}</p>
+                        </div>
+                    )}
+                </div>
             </SectionCard>
 
-            <AttractionDescriptionCard attraction={attraction} />
+            {/* Operating Hours - separate section */}
+            <OperatingHoursCard attraction={attraction} />
 
-            <TicketsPassesSection tickets={tickets} />
+            <TicketsPassesSection tickets={tickets} attraction={attraction} />
 
             <AttractionReviewsSection
                 rating={rating}
@@ -960,13 +1642,7 @@ export default function ManualAttractionDetailsPage() {
                 reviews={reviews}
             />
 
-            <AttractionMapSection
-                mapRef={mapRef}
-                nearby={nearby}
-                onOpenHotel={handleOpenHotel}
-                onOpenAttraction={handleOpenAttraction}
-                onFocusRestaurantRoute={handleFocusRestaurantRoute}
-            />
+            <AttractionMapSection attraction={attraction} />
         </div>
     )
 }

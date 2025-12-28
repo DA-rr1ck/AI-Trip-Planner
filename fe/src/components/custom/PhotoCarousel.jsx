@@ -4,13 +4,34 @@ import { handleBadImage } from '@/lib/imageUtils'
 
 /** Cleanup & fallback so only usable images show */
 function normalizePhotos(photos) {
-    const cleaned = (photos || [])
-        .filter(Boolean)
-        .map(p => (typeof p === 'string' ? p.trim() : ''))
-        .filter(p => p && p !== 'null' && p !== 'undefined')
+    const PLACEHOLDER = '/placeholder.jpg'
 
-    const unique = Array.from(new Set(cleaned))
-    return unique.length ? unique : ['/placeholder.jpg']
+    const input = Array.isArray(photos) ? photos : []
+    if (input.length === 0) return [PLACEHOLDER]
+
+    // Preserve order and count to keep "fetched" vs "rotatable" in sync.
+    // Convert supported objects (SerpAPI-style) to URLs; replace invalid entries with placeholders.
+    return input.map((p) => {
+        let src = ''
+
+        if (typeof p === 'string') {
+            src = p.trim()
+        } else if (p && typeof p === 'object') {
+            // Common shapes: { original, thumbnail }, { url }, { src }, { image }, etc.
+            src = String(
+                p.original ||
+                p.thumbnail ||
+                p.url ||
+                p.src ||
+                p.image ||
+                p.link ||
+                ''
+            ).trim()
+        }
+
+        if (!src || src === 'null' || src === 'undefined') return PLACEHOLDER
+        return src
+    })
 }
 
 /**
@@ -21,7 +42,11 @@ export default function PhotoCarousel({ photos, altPrefix = 'Photo' }) {
     const [validPhotos, setValidPhotos] = useState(() =>
         normalizePhotos(photos)
     )
-    const [index, setIndex] = useState(0)
+    // position is the index in the rendered track (includes clones)
+    // track: [lastClone, ...validPhotos, firstClone]
+    // so the first real slide starts at position = 1
+    const [position, setPosition] = useState(1)
+    const [transitionEnabled, setTransitionEnabled] = useState(true)
 
     // layout.base: offset to center a slide
     // layout.step: distance between slide centers
@@ -48,7 +73,10 @@ export default function PhotoCarousel({ photos, altPrefix = 'Photo' }) {
 
             if (!cancelled) {
                 setValidPhotos(cleaned)
-                setIndex(0)
+                setTransitionEnabled(false)
+                setPosition(1)
+                // re-enable transition on next frame so the snap isn't animated
+                requestAnimationFrame(() => setTransitionEnabled(true))
             }
         }
 
@@ -61,25 +89,42 @@ export default function PhotoCarousel({ photos, altPrefix = 'Photo' }) {
 
     const total = validPhotos.length
 
+    // Derive the "real" index (0..total-1) from the track position
+    const index = (() => {
+        if (total <= 0) return 0
+        if (position === 0) return total - 1
+        if (position === total + 1) return 0
+        return Math.min(Math.max(position - 1, 0), total - 1)
+    })()
+
     const goPrev = () => {
         if (total <= 1) return
-        setIndex(i => (i - 1 + total) % total)
+        setPosition(p => {
+            const next = p - 1
+            return next < 0 ? 0 : next
+        })
     }
 
     const goNext = () => {
         if (total <= 1) return
-        setIndex(i => (i + 1) % total)
+        setPosition(p => {
+            const next = p + 1
+            return next > total + 1 ? total + 1 : next
+        })
     }
 
     const goTo = i => {
         if (i < 0 || i >= total) return
-        setIndex(i)
+        setPosition(i + 1)
     }
 
     useEffect(() => {
         if (total <= 1) return
         const id = setInterval(() => {
-            setIndex(i => (i + 1) % total)
+            setPosition(p => {
+                const next = p + 1
+                return next > total + 1 ? total + 1 : next
+            })
         }, 10000)
         return () => clearInterval(id)
     }, [total])
@@ -103,9 +148,25 @@ export default function PhotoCarousel({ photos, altPrefix = 'Photo' }) {
         return () => window.removeEventListener('resize', measure)
     }, [validPhotos.length])
 
-    // Because we add a clone at the start, the "visual" position is index + 1
+    // Seamless looping:
+    // - If we land on the first clone (position=0), snap to last real slide (position=total)
+    // - If we land on the last clone (position=total+1), snap to first real slide (position=1)
+    useEffect(() => {
+        if (total <= 1) return
+        if (position === 0) {
+            setTransitionEnabled(false)
+            setPosition(total)
+            requestAnimationFrame(() => setTransitionEnabled(true))
+        } else if (position === total + 1) {
+            setTransitionEnabled(false)
+            setPosition(1)
+            requestAnimationFrame(() => setTransitionEnabled(true))
+        }
+    }, [position, total])
+
+    // translate by the current track position (includes clones)
     const translateX =
-        layout.step === 0 ? 0 : layout.base - (index + 1) * layout.step
+        layout.step === 0 ? 0 : layout.base - position * layout.step
 
     if (!total) return null
 
@@ -125,20 +186,22 @@ export default function PhotoCarousel({ photos, altPrefix = 'Photo' }) {
                     className="flex h-full items-center"
                     style={{
                         transform: `translateX(${translateX}px)`,
-                        transition: 'transform 500ms ease-out',
+                        transition: transitionEnabled
+                            ? 'transform 500ms ease-out'
+                            : 'none',
                         gap: 16, // must match gap used in layout measurement
                     }}
                 >
                     {trackPhotos.map((src, i) => (
                         <div
                             key={`${src}-${i}`}
-                            ref={i === 0 ? firstSlideRef : null}
+                            ref={i === 1 ? firstSlideRef : null}
                             className="shrink-0 h-full w-full md:w-[72%]"
                         >
                             <div className="h-full rounded-xl overflow-hidden shadow-md">
                                 <img
                                     src={src}
-                                    alt={`${altPrefix} ${i + 1}`}
+                                    alt={`${altPrefix} ${Math.min(Math.max(i - 1, 0), total - 1) + 1}`}
                                     loading="lazy"
                                     referrerPolicy="no-referrer"
                                     onError={e => {

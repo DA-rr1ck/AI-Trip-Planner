@@ -24,8 +24,6 @@ import ProfilePage from '@/pages/profile/index.jsx'
 import SmartTripPage from './pages/smart-trip'
 import HotelDetails from '@/pages/hotel-details/index.jsx'
 import AttractionDetails from '@/pages/attraction-details/index.jsx'
-import ManualHotelDetails from '@/pages/manual/hotel-details/index.jsx'
-import ManualAttractionDetails from '@/pages/manual/attraction-details/index.jsx'
 
 import TripTracking from '@/pages/trip-tracking/index.jsx'
 import ViewSmartTrip from './pages/smart-trip/view'
@@ -134,7 +132,7 @@ export default function App() {
                   path="manual/hotel/:slug"
                   element={
                     <ProtectedRoute>
-                      <ManualHotelDetails />
+                      <HotelDetails />
                     </ProtectedRoute>
                   }
                 />
@@ -143,7 +141,7 @@ export default function App() {
                   path="manual/attraction/:slug"
                   element={
                     <ProtectedRoute>
-                      <ManualAttractionDetails />
+                      <AttractionDetails />
                     </ProtectedRoute>
                   }
                 />
