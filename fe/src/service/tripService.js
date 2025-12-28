@@ -1,132 +1,92 @@
+// fe/src/service/tripService.js
+import { api } from '../lib/api';
+
+/**
+ * Generate AI trip using backend API
+ */
 export async function generateAITrip(formData) {
     try {
-        const response = await fetch('/api/trip/generate-ai', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(formData)
-        });
+        console.log('=== Calling /trip/generate-ai ===');
+        console.log('Form data:', formData);
 
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to generate trip');
-        }
+        const response = await api.post('/trip/generate-ai', formData);
 
-        const result = await response.json();
-        return result;
+        console.log('Response:', response.data);
+        return response.data;
     } catch (error) {
         console.error('Error generating AI trip:', error);
-        throw error;
-    }
-}
-
-export async function saveTripToFirestore(tripData) {
-    try {
-        const response = await fetch('/api/trip/save', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(tripData)
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to save trip');
-        }
-
-        const result = await response.json();
-        return result;
-    } catch (error) {
-        console.error('Error saving trip:', error);
-        throw error;
-    }
-}
-
-
-export async function getTripById(tripId) {
-    try {
-        const response = await fetch(`/api/trip/${tripId}`);
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to load trip');
-        }
-
-        const result = await response.json();
-        return result;
-    } catch (error) {
-        console.error('Error fetching trip:', error);
-        throw error;
+        
+        // Extract error message from axios error
+        const errorMessage = error.response?.data?.error || error.message || 'Failed to generate trip';
+        throw new Error(errorMessage);
     }
 }
 
 /**
- * Get all trips for a user using backend API
+ * Save trip to Firestore
+ */
+export async function saveTripToFirestore(tripData) {
+    try {
+        console.log('=== Calling /trip/save ===');
+        console.log('Trip data:', tripData);
+
+        const response = await api.post('/trip/save', tripData);
+
+        console.log('Response:', response.data);
+        return response.data;
+    } catch (error) {
+        console.error('Error saving trip:', error);
+        
+        const errorMessage = error.response?.data?.error || error.message || 'Failed to save trip';
+        throw new Error(errorMessage);
+    }
+}
+
+/**
+ * Get trip by ID
+ */
+export async function getTripById(tripId) {
+    try {
+        const response = await api.get(`/trip/${tripId}`);
+        return response.data;
+    } catch (error) {
+        console.error('Error fetching trip:', error);
+        
+        const errorMessage = error.response?.data?.error || error.message || 'Failed to fetch trip';
+        throw new Error(errorMessage);
+    }
+}
+
+/**
+ * Get all trips for a user
  */
 export async function getUserTrips(userEmail) {
     try {
-        const response = await fetch(`/api/trip/user/${userEmail}`);
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to load trips');
-        }
-
-        const result = await response.json();
-        return result;
+        console.log('Fetching trips for:', userEmail);
+        
+        const response = await api.get(`/trip/user/${userEmail}`);
+        
+        console.log('User trips response:', response.data);
+        return response.data;
     } catch (error) {
         console.error('Error fetching user trips:', error);
-        throw error;
+        
+        const errorMessage = error.response?.data?.error || error.message || 'Failed to fetch trips';
+        throw new Error(errorMessage);
     }
 }
 
 /**
- * Delete trip using backend API
+ * Delete trip
  */
 export async function deleteTrip(tripId) {
     try {
-        const response = await fetch(`/api/trip/${tripId}`, {
-            method: 'DELETE'
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to delete trip');
-        }
-
-        const result = await response.json();
-        return result;
+        const response = await api.delete(`/trip/${tripId}`);
+        return response.data;
     } catch (error) {
         console.error('Error deleting trip:', error);
-        throw error;
+        
+        const errorMessage = error.response?.data?.error || error.message || 'Failed to delete trip';
+        throw new Error(errorMessage);
     }
 }
-
-/**
- * Update trip using backend API
- */
-export async function updateTrip(tripId, updateData) {
-    try {
-        const response = await fetch(`/api/trip/${tripId}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(updateData)
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to update trip');
-        }
-
-        const result = await response.json();
-        return result;
-    } catch (error) {
-        console.error('Error updating trip:', error);
-        throw error;
-    }
-}
-

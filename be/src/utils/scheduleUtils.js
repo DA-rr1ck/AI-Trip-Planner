@@ -1,5 +1,5 @@
 // be/src/utils/scheduleUtils.js
-const { toZonedTime, format: formatTZ } = require('date-fns-tz');
+const { Timestamp } = require('firebase-admin/firestore');
 
 function addScheduleToItinerary(itinerary, timezone = 'Asia/Ho_Chi_Minh') {
     const result = {};
@@ -20,60 +20,99 @@ function addScheduleToItinerary(itinerary, timezone = 'Asia/Ho_Chi_Minh') {
 function addScheduleToSlot(slot, dateKey, timezone) {
     if (!slot) return null;
 
-    const startTime = slot.StartTime || '00:00';
-    const endTime = slot.EndTime || '23:59';
-
     const result = {
         ...slot,
-        StartTime: startTime,
-        EndTime: endTime,
+        StartTime: slot.StartTime || '00:00',
+        EndTime: slot.EndTime || '23:59',
     };
 
-    // Add schedule to activities
+    // Process Activities array
     if (slot.Activities && Array.isArray(slot.Activities)) {
-        result.Activities = slot.Activities.map((activity) => ({
-            ...activity,
-            Schedule: activity.TimeSlot 
-                ? createScheduleFromTimeSlot(activity.TimeSlot, dateKey, timezone)
-                : null,
-        }));
+        result.Activities = slot.Activities.map((activity) => {
+            // ✅ Convert ISO strings to Firestore Timestamps
+            let scheduleStart = activity.ScheduleStart;
+            let scheduleEnd = activity.ScheduleEnd;
+            
+            // If already strings (from frontend), convert to Timestamp
+            if (typeof scheduleStart === 'string') {
+                scheduleStart = Timestamp.fromDate(new Date(scheduleStart));
+            }
+            if (typeof scheduleEnd === 'string') {
+                scheduleEnd = Timestamp.fromDate(new Date(scheduleEnd));
+            }
+            
+            // If null/undefined, generate from TimeSlot
+            if (!scheduleStart || !scheduleEnd) {
+                const generated = activity.TimeSlot 
+                    ? createScheduleTimestamps(activity.TimeSlot, dateKey, timezone)
+                    : { ScheduleStart: null, ScheduleEnd: null };
+                scheduleStart = generated.ScheduleStart;
+                scheduleEnd = generated.ScheduleEnd;
+            }
+            
+            return {
+                ...activity,
+                ScheduleStart: scheduleStart,
+                ScheduleEnd: scheduleEnd
+            };
+        });
     }
 
-    // Add schedule to single activity (Lunch)
+    // Process single Activity (Lunch)
     if (slot.Activity) {
+        let scheduleStart = slot.Activity.ScheduleStart;
+        let scheduleEnd = slot.Activity.ScheduleEnd;
+        
+        // Convert strings to Timestamps
+        if (typeof scheduleStart === 'string') {
+            scheduleStart = Timestamp.fromDate(new Date(scheduleStart));
+        }
+        if (typeof scheduleEnd === 'string') {
+            scheduleEnd = Timestamp.fromDate(new Date(scheduleEnd));
+        }
+        
+        // Generate if missing
+        if (!scheduleStart || !scheduleEnd) {
+            const generated = slot.Activity.TimeSlot
+                ? createScheduleTimestamps(slot.Activity.TimeSlot, dateKey, timezone)
+                : { ScheduleStart: null, ScheduleEnd: null };
+            scheduleStart = generated.ScheduleStart;
+            scheduleEnd = generated.ScheduleEnd;
+        }
+        
         result.Activity = {
             ...slot.Activity,
-            Schedule: slot.Activity.TimeSlot
-                ? createScheduleFromTimeSlot(slot.Activity.TimeSlot, dateKey, timezone)
-                : null,
+            ScheduleStart: scheduleStart,
+            ScheduleEnd: scheduleEnd
         };
     }
 
     return result;
 }
 
-function createScheduleFromTimeSlot(timeSlot, dateKey, timezone) {
+function createScheduleTimestamps(timeSlot, dateKey, timezone) {
     const match = timeSlot.match(/(\d{1,2}:\d{2}\s*(?:AM|PM)?)\s*-\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)/i);
-    if (!match) return null;
+    if (!match) {
+        return { ScheduleStart: null, ScheduleEnd: null };
+    }
 
     try {
         const startTime = match[1].trim();
         const endTime = match[2].trim();
-
+        
         const baseDate = new Date(dateKey + 'T00:00:00');
-        const zonedDate = toZonedTime(baseDate, timezone);
-
-        const startDateTime = parseTime(startTime, zonedDate, timezone);
-        const endDateTime = parseTime(endTime, zonedDate, timezone);
-
+        
+        const startDateTime = parseTime(startTime, baseDate, timezone);
+        const endDateTime = parseTime(endTime, baseDate, timezone);
+        
+        // Return Firestore Timestamps
         return {
-            StartDateTime: formatTZ(startDateTime, "yyyy-MM-dd'T'HH:mm:ssXXX", { timeZone: timezone }),
-            EndDateTime: formatTZ(endDateTime, "yyyy-MM-dd'T'HH:mm:ssXXX", { timeZone: timezone }),
-            Timezone: timezone,
+            ScheduleStart: Timestamp.fromDate(startDateTime),
+            ScheduleEnd: Timestamp.fromDate(endDateTime)
         };
     } catch (error) {
-        console.error('Error creating schedule:', error);
-        return null;
+        console.error('Error creating schedule timestamps:', error);
+        return { ScheduleStart: null, ScheduleEnd: null };
     }
 }
 
@@ -85,7 +124,7 @@ function parseTime(timeStr, baseDate, timezone) {
     const timeOnly = timeStr.replace(/\s*(AM|PM)/gi, '').trim();
     const [hoursStr, minutesStr] = timeOnly.split(':');
     let hours = parseInt(hoursStr, 10);
-    const minutes = parseInt(minutesStr, 10);
+    const minutes = parseInt(minutesStr, 10) || 0;
 
     if (isAM && hours === 12) hours = 0;
     if (isPM && hours !== 12) hours += 12;
@@ -93,7 +132,7 @@ function parseTime(timeStr, baseDate, timezone) {
     const result = new Date(baseDate);
     result.setHours(hours, minutes, 0, 0);
     
-    return toZonedTime(result, timezone);
+    return result;
 }
 
 module.exports = {

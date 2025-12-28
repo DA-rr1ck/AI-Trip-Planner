@@ -18,7 +18,7 @@ import HotelSearch from './components/manual/HotelSearch'
 import DayManager from './components/manual/DayManager'
 import { saveManualTrip } from './utils/manual/tripSaver'
 import { Capacitor, CapacitorHttp } from '@capacitor/core'
-
+import { generateAITrip } from '@/service/tripService'
 // Base URL for Nominatim
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 
