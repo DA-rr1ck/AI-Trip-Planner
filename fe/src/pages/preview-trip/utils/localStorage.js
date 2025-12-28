@@ -1,4 +1,6 @@
+// fe/src/pages/preview-trip/utils/localStorage.js
 const TEMP_TRIP_KEY = 'temp_trip_changes'
+const TEMP_TRIP_ID_KEY = 'current_temp_trip_id'
 
 export const saveTempChanges = (tripId, updatedTripData) => {
   if (!tripId) return
@@ -36,14 +38,24 @@ export const clearTempChanges = (tripId) => {
 }
 
 export const getTempTripId = () => {
-  let tempId = sessionStorage.getItem('current_temp_trip_id')
+  let tempId = sessionStorage.getItem(TEMP_TRIP_ID_KEY)
   if (!tempId) {
     tempId = `temp_${Date.now()}`
-    sessionStorage.setItem('current_temp_trip_id', tempId)
+    sessionStorage.setItem(TEMP_TRIP_ID_KEY, tempId)
   }
   return tempId
 }
 
+export const saveTempTripId = (tripId) => {
+  if (!tripId) return
+  try {
+    sessionStorage.setItem(TEMP_TRIP_ID_KEY, tripId)
+    console.log('Temp trip ID saved:', tripId)
+  } catch (error) {
+    console.error('Error saving temp trip ID:', error)
+  }
+}
+
 export const clearTempTripId = () => {
-  sessionStorage.removeItem('current_temp_trip_id')
+  sessionStorage.removeItem(TEMP_TRIP_ID_KEY)
 }

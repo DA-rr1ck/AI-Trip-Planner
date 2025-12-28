@@ -80,6 +80,13 @@ function Header() {
                   </Button>
                 </Link>
 
+                <Link to="/smart-trip">
+                  <Button variant="outline" className="rounded-full">
+                    <Map className="h-4 w-4 mr-1" />
+                    Smart Trip Generator
+                  </Button>
+                </Link>
+
                 {/* Profile (desktop/tablet) */}
                 <Popover open={openPopover} onOpenChange={setOpenPopover}>
                   <PopoverTrigger asChild>

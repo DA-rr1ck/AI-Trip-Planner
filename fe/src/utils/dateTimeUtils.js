@@ -4,7 +4,7 @@ import { Timestamp } from 'firebase/firestore'
 /**
  * Parse time string like "2:00 PM" to { hours, minutes }
  */
-export function parseTime(timeStr) {
+export function parseTimeToObject(timeStr) {
   if (!timeStr) return { hours: 0, minutes: 0 }
   
   const match = timeStr.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM)/i)
@@ -21,34 +21,61 @@ export function parseTime(timeStr) {
 }
 
 /**
- * Convert TimeSlot and date to Firebase Timestamps
+ * Parse time string to Date object
+ */
+function parseTimeToDate(timeStr, baseDate) {
+  const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+  if (!match) throw new Error('Invalid time format')
+  
+  let hours = parseInt(match[1])
+  const minutes = parseInt(match[2])
+  const period = match[3].toUpperCase()
+  
+  if (period === 'PM' && hours !== 12) hours += 12
+  if (period === 'AM' && hours === 12) hours = 0
+  
+  const result = new Date(baseDate)
+  result.setHours(hours, minutes, 0, 0)
+  
+  return result
+}
+
+/**
+ * Convert TimeSlot and date to ISO date strings
  * @param {string} dateKey - Format: "2025-12-04"
  * @param {string} timeSlot - Format: "2:00 PM - 5:30 PM"
  * @param {string} timezone - Format: "Asia/Ho_Chi_Minh"
- * @returns {{ ScheduleStart: Timestamp, ScheduleEnd: Timestamp }}
+ * @returns {{ ScheduleStart: string, ScheduleEnd: string }} - ISO date strings
  */
 export function createScheduleTimestamps(dateKey, timeSlot, timezone = 'Asia/Ho_Chi_Minh') {
   if (!dateKey || !timeSlot) {
     return { ScheduleStart: null, ScheduleEnd: null }
   }
 
-  // Parse the TimeSlot: "2:00 PM - 5:30 PM"
-  const [startTimeStr, endTimeStr] = timeSlot.split('-').map(s => s.trim())
+  const match = timeSlot.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM)?\s*-\s*(\d{1,2}):?(\d{2})?\s*(AM|PM)?/i)
   
-  const startTime = parseTime(startTimeStr)
-  const endTime = parseTime(endTimeStr)
-  
-  // Create Date objects
-  // dateKey format: "2025-12-04"
-  const [year, month, day] = dateKey.split('-').map(Number)
-  
-  const startDate = new Date(year, month - 1, day, startTime.hours, startTime.minutes, 0)
-  const endDate = new Date(year, month - 1, day, endTime.hours, endTime.minutes, 0)
-  
-  // Convert to Firebase Timestamps
-  return {
-    ScheduleStart: Timestamp.fromDate(startDate),
-    ScheduleEnd: Timestamp.fromDate(endDate)
+  if (!match) {
+    console.warn('Invalid time slot format:', timeSlot)
+    return { ScheduleStart: null, ScheduleEnd: null }
+  }
+
+  try {
+    const startTimeStr = `${match[1]}:${match[2] || '00'} ${match[3] || 'AM'}`
+    const endTimeStr = `${match[4]}:${match[5] || '00'} ${match[6] || 'PM'}`
+    
+    const baseDate = new Date(dateKey + 'T00:00:00')
+    
+    const startDate = parseTimeToDate(startTimeStr, baseDate)
+    const endDate = parseTimeToDate(endTimeStr, baseDate)
+    
+    // Return ISO strings (serializable for API calls)
+    return {
+      ScheduleStart: startDate.toISOString(),
+      ScheduleEnd: endDate.toISOString()
+    }
+  } catch (error) {
+    console.error('Error creating schedule timestamps:', error)
+    return { ScheduleStart: null, ScheduleEnd: null }
   }
 }
 

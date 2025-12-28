@@ -1,4 +1,3 @@
-// fe/src/pages/edit-trip/hooks/useDragAndDrop.js
 import { useState } from 'react'
 import { useSensors, useSensor, PointerSensor, KeyboardSensor } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable'
@@ -172,11 +171,22 @@ export function useDragAndDrop(tripData, updateTripData) {
       if (oldIndex !== -1 && newIndex !== -1) {
         const reorderedActivities = arrayMove(slotActivities, oldIndex, newIndex)
         
-        // UPDATE TimeSlots for all activities in this slot
-        const updatedActivities = reorderedActivities.map((activity, idx) => ({
-          ...activity,
-          TimeSlot: calculateNewTimeSlot(activeLocation.dateKey, slot, idx, reorderedActivities.length)
-        }))
+        // ✅ FIX: Add ScheduleStart and ScheduleEnd when reordering
+        const updatedActivities = reorderedActivities.map((activity, idx) => {
+          const newTimeSlot = calculateNewTimeSlot(activeLocation.dateKey, slot, idx, reorderedActivities.length)
+          const { ScheduleStart, ScheduleEnd } = createScheduleTimestamps(
+            activeLocation.dateKey,
+            newTimeSlot,
+            tripData.tripData.Timezone || 'Asia/Ho_Chi_Minh'
+          )
+          
+          return {
+            ...activity,
+            TimeSlot: newTimeSlot,
+            ScheduleStart,
+            ScheduleEnd
+          }
+        })
         
         newItinerary[activeLocation.dateKey] = {
           ...newItinerary[activeLocation.dateKey],
@@ -214,11 +224,22 @@ export function useDragAndDrop(tripData, updateTripData) {
         const sourceActivities = [...newItinerary[activeLocation.dateKey][sourceSlot].Activities]
         sourceActivities.splice(activeLocation.index, 1)
         
-        // UPDATE TimeSlots for remaining activities in source slot
-        const updatedSourceActivities = sourceActivities.map((activity, idx) => ({
-          ...activity,
-          TimeSlot: calculateNewTimeSlot(activeLocation.dateKey, sourceSlot, idx, sourceActivities.length)
-        }))
+        // ✅ FIX: Update ScheduleStart and ScheduleEnd for remaining activities
+        const updatedSourceActivities = sourceActivities.map((activity, idx) => {
+          const newTimeSlot = calculateNewTimeSlot(activeLocation.dateKey, sourceSlot, idx, sourceActivities.length)
+          const { ScheduleStart, ScheduleEnd } = createScheduleTimestamps(
+            activeLocation.dateKey,
+            newTimeSlot,
+            tripData.tripData.Timezone || 'Asia/Ho_Chi_Minh'
+          )
+          
+          return {
+            ...activity,
+            TimeSlot: newTimeSlot,
+            ScheduleStart,
+            ScheduleEnd
+          }
+        })
         
         newItinerary[activeLocation.dateKey] = {
           ...newItinerary[activeLocation.dateKey],
@@ -234,6 +255,11 @@ export function useDragAndDrop(tripData, updateTripData) {
       
       if (targetSlot === 'Lunch') {
         const newTimeSlot = calculateNewTimeSlot(overLocation.dateKey, targetSlot, 0, 1)
+        const { ScheduleStart, ScheduleEnd } = createScheduleTimestamps(
+          overLocation.dateKey,
+          newTimeSlot,
+          tripData.tripData.Timezone || 'Asia/Ho_Chi_Minh'
+        )
         
         newItinerary[overLocation.dateKey] = {
           ...newItinerary[overLocation.dateKey],
@@ -242,7 +268,9 @@ export function useDragAndDrop(tripData, updateTripData) {
             Activity: {
               ...activeLocation.activity,
               id: `${overLocation.dateKey}-lunch-${Date.now()}-${Math.random()}`,
-              TimeSlot: newTimeSlot
+              TimeSlot: newTimeSlot,
+              ScheduleStart,
+              ScheduleEnd
             }
           }
         }
@@ -258,7 +286,7 @@ export function useDragAndDrop(tripData, updateTripData) {
           id: `${overLocation.dateKey}-${targetSlot.toLowerCase()}-${Date.now()}-${Math.random()}`
         })
         
-        // UPDATE TimeSlots for ALL activities in target slot
+        // ✅ UPDATE TimeSlots AND timestamps for ALL activities in target slot
         const updatedTargetActivities = targetActivities.map((activity, idx) => {
           const newTimeSlot = calculateNewTimeSlot(overLocation.dateKey, targetSlot, idx, targetActivities.length)
           const { ScheduleStart, ScheduleEnd } = createScheduleTimestamps(

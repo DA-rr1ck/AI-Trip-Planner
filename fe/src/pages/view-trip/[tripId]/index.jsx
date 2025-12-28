@@ -1,49 +1,72 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { doc, getDoc } from "firebase/firestore";
-import { db } from '@/service/firebaseConfig';
-import { toast } from 'sonner';
-import { useEffect, useState } from 'react';
-import { Loader2, Edit } from 'lucide-react';
-import Button from '@/components/ui/Button';
-import InfoSection from '../components/InfoSection';
-import Hotels from '../components/Hotels';
-import PlacesToVisit from '../components/PlacesToVisit';
+import { toast } from 'sonner'
+import { Loader2, Edit } from 'lucide-react'
+import Button from '@/components/ui/Button'
+import InfoSection from '../components/InfoSection'
+import Hotels from '../components/Hotels'
+import PlacesToVisit from '../components/PlacesToVisit'
+import MapRoute from '@/components/MapRoute'
+import { getTripById } from '@/service/tripService' // NEW
 
 function ViewTrip() {
-    const { tripId } = useParams();
-    const navigate = useNavigate();
-    const [trip, setTrip] = useState({});
+    const { tripId } = useParams()
+    const navigate = useNavigate()
+    const [trip, setTrip] = useState({})
     const [loading, setLoading] = useState(true)
 
     const GetTripData = async () => {
         try {
-            const docRef = doc(db, 'AITrips', tripId)
-            const docSnap = await getDoc(docRef)
-            if (docSnap.exists()) {
-                setTrip({ id: docSnap.id, ...docSnap.data() })
+            const result = await getTripById(tripId)
+            
+            if (result.success) {
+                setTrip(result.trip)
             } else {
                 toast.error('Trip not found')
             }
-        } catch (e) {
-            console.error(e)
-            toast.error('Failed to load trip')
+        } catch (error) {
+            console.error('Error loading trip:', error)
+            toast.error(error.message || 'Failed to load trip')
         } finally {
             setLoading(false)
         }
     }
 
     const handleEditTrip = () => {
-        // navigate('/edit-trip', {
-        //     state: {
-        //         tripData: trip
-        //     }
-        // })
+        // Pass trip data to edit page via state
+        navigate(`/edit-trip/${tripId}`, {
+            state: {
+                tripData: {
+                    userSelection: trip.userSelection,
+                    tripData: trip.tripData
+                }
+            }
+        })
     }
 
     useEffect(() => {
-        tripId && GetTripData();
+        if (tripId) {
+            GetTripData()
+        }
     }, [tripId])
+
+    // Collect all activities from itinerary for the map
+    const getAllActivities = () => {
+        if (!trip?.tripData?.Itinerary) return []
+        
+        const itinerary = trip.tripData.Itinerary
+        const dateKeys = Object.keys(itinerary).sort()
+        
+        return dateKeys.flatMap(dateKey => {
+            const dayData = itinerary[dateKey]
+            return [
+                ...(dayData.Morning?.Activities || []),
+                ...(dayData.Lunch?.Activity ? [dayData.Lunch.Activity] : []),
+                ...(dayData.Afternoon?.Activities || []),
+                ...(dayData.Evening?.Activities || [])
+            ]
+        }).filter(activity => activity.GeoCoordinates)
+    }
 
     if (loading) {
         return (
@@ -61,6 +84,8 @@ function ViewTrip() {
             </div>
         )
     }
+
+    const allActivities = getAllActivities()
 
     return (
         <div className='p-10 md:px-20 lg:px-44 xl:px-56'>
@@ -81,6 +106,22 @@ function ViewTrip() {
             
             {/* Daily plan */}
             <PlacesToVisit trip={trip} />
+
+            {/* Map Section */}
+            {allActivities.length > 0 && (
+                <div className='mb-8'>
+                    <h2 className='font-bold text-2xl mb-4'>Complete Trip Route</h2>
+                    <p className='text-sm text-gray-600 mb-4'>
+                        🗺️ View all {allActivities.length} activities across your entire trip
+                    </p>
+                    <div className='bg-white rounded-xl p-4 shadow-md border border-gray-200'>
+                        <MapRoute
+                            activities={allActivities}
+                            locationName={trip?.tripData?.Location}
+                        />
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
