@@ -18,7 +18,13 @@ import {
     ArrowRight,
     Hotel,
     Users,
+    Navigation,
+    Train,
+    Coffee,
+    ShoppingBag,
 } from 'lucide-react'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 
 import { slugToTitle } from '@/lib/slugToTitle'
 import SectionCard from '@/components/custom/SectionCard'
@@ -44,6 +50,32 @@ function useHotelDetails(initialHotel, tripContext) {
     const checkInDate = tripContext?.userSelection?.startDate
     const checkOutDate = tripContext?.userSelection?.endDate
 
+    // Helper to format date to YYYY-MM-DD
+    const formatDateToYYYYMMDD = (date) => {
+        if (!date) return null
+        // If already a string in YYYY-MM-DD format, return as is
+        if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            return date
+        }
+        // Handle Date object or date string
+        let d
+        if (date instanceof Date) {
+            d = date
+        } else if (typeof date === 'string') {
+            // Try parsing the string - handles formats like "Wed Dec 03 2025 00:00:00 GMT+0700"
+            d = new Date(date)
+        } else {
+            return null
+        }
+        // Validate the date
+        if (isNaN(d.getTime())) return null
+        // Format as YYYY-MM-DD using local date parts to avoid timezone issues
+        const year = d.getFullYear()
+        const month = String(d.getMonth() + 1).padStart(2, '0')
+        const day = String(d.getDate()).padStart(2, '0')
+        return `${year}-${month}-${day}`
+    }
+
     useEffect(() => {
         if (!hotelName) {
             setIsLoading(false)
@@ -67,9 +99,15 @@ function useHotelDetails(initialHotel, tripContext) {
                 const dayAfter = new Date(tomorrow)
                 dayAfter.setDate(dayAfter.getDate() + 1)
 
-                const formatDate = (d) => d.toISOString().split('T')[0]
-                params.set('check_in_date', checkInDate || formatDate(tomorrow))
-                params.set('check_out_date', checkOutDate || formatDate(dayAfter))
+                const formattedCheckIn = formatDateToYYYYMMDD(checkInDate) || formatDateToYYYYMMDD(tomorrow)
+                const formattedCheckOut = formatDateToYYYYMMDD(checkOutDate) || formatDateToYYYYMMDD(dayAfter)
+
+                // Debug log
+                console.log('useHotelDetails - raw dates:', { checkInDate, checkOutDate })
+                console.log('useHotelDetails - formatted dates:', { formattedCheckIn, formattedCheckOut })
+
+                params.set('check_in_date', formattedCheckIn)
+                params.set('check_out_date', formattedCheckOut)
 
                 params.set('gl', 'vn')
                 params.set('hl', 'en')
@@ -117,7 +155,16 @@ function useHotelDetails(initialHotel, tripContext) {
         // From API
         Description: apiData?.descriptionParagraphs?.join('\n\n') || null,
         numberOfRooms: apiData?.numberOfRooms || null,
-        hotelClass: apiData?.hotelClass || null,
+        // Handle hotel_class which could be number or string like "4-star"
+        hotelClass: (() => {
+            const hc = apiData?.hotelClass
+            if (typeof hc === 'number') return hc
+            if (typeof hc === 'string') {
+                const match = hc.match(/(\d+)/)
+                return match ? parseInt(match[1], 10) : null
+            }
+            return null
+        })(),
         
         // Contact info
         Contact: {
@@ -126,8 +173,7 @@ function useHotelDetails(initialHotel, tripContext) {
             website: apiData?.locationInfo?.link || null,
         },
 
-        // Amenities - convert to ID-based format for the ServicesAmenitiesCard
-        amenities: normalizeAmenities(apiData?.amenities || []),
+        // Amenities - raw array from SerpAPI
         rawAmenities: apiData?.amenities || [],
 
         // Policies
@@ -138,11 +184,17 @@ function useHotelDetails(initialHotel, tripContext) {
             rating: apiData?.overallRating || null,
             ratingCount: apiData?.reviewsCount || null,
             ratingBreakdown: apiData?.ratingBreakdown || {},
-            reviews: (apiData?.userReviews || []).slice(0, 2), // Limit to 2 comments as requested
+            reviews: (apiData?.userReviews || []).slice(0, 3), // Load 3 comments
         },
 
         // Photos - use images from API if available, otherwise fall back to initial
         Photos: buildPhotoArray(initialHotel, apiData?.images),
+
+        // GPS Coordinates for map
+        gpsCoordinates: apiData?.locationInfo?.gpsCoordinates || null,
+
+        // Nearby places from API
+        nearbyPlaces: apiData?.nearbyPlaces || [],
     }
 
     return {
@@ -150,99 +202,6 @@ function useHotelDetails(initialHotel, tripContext) {
         isLoading,
         error,
     }
-}
-
-/**
- * Convert SerpAPI amenities array to our ID-based system.
- * Maps common amenity strings to our predefined IDs.
- */
-function normalizeAmenities(amenitiesArray) {
-    if (!Array.isArray(amenitiesArray) || amenitiesArray.length === 0) {
-        return null // null means show demo mode
-    }
-
-    const amenityMapping = {
-        // WiFi variations
-        'wi-fi': 'wifi_public_areas_free',
-        'wifi': 'wifi_public_areas_free',
-        'free wi-fi': 'wifi_public_areas_free',
-        'free wifi': 'wifi_public_areas_free',
-        'wireless internet': 'wifi_public_areas_free',
-        
-        // Parking
-        'parking': 'parking',
-        'free parking': 'parking',
-        'valet parking': 'parking',
-        
-        // Front desk
-        'front desk': 'front_desk_limited_hours',
-        '24-hour front desk': 'front_desk_limited_hours',
-        'concierge': 'front_desk_limited_hours',
-        
-        // Wake up
-        'wake-up call': 'wake_up_call',
-        'wake up call': 'wake_up_call',
-        
-        // Currency
-        'currency exchange': 'currency_exchange',
-        
-        // Tour
-        'tour desk': 'tour_ticket_booking',
-        'tour services': 'tour_ticket_booking',
-        
-        // Languages
-        'english': 'lang_en',
-        'japanese': 'lang_ja',
-        'vietnamese': 'lang_vi',
-        
-        // Health
-        'spa': 'beauty_and_makeup',
-        'beauty salon': 'beauty_and_makeup',
-        'massage': 'beauty_and_makeup',
-        
-        // Smoking
-        'smoking area': 'smoking_area',
-        'designated smoking area': 'smoking_area',
-        
-        // Cleaning
-        'laundry': 'dry_cleaning',
-        'laundry service': 'dry_cleaning',
-        'dry cleaning': 'dry_cleaning',
-        'ironing service': 'ironing_service',
-        
-        // Business
-        'postal service': 'postal_service',
-        'business center': 'postal_service',
-        
-        // Safety
-        'smoke detector': 'smoke_detector',
-        'fire extinguisher': 'fire_extinguisher',
-        'security': 'security_personnel',
-        '24-hour security': 'security_personnel',
-    }
-
-    const matchedIds = []
-    
-    amenitiesArray.forEach(amenity => {
-        const lower = amenity.toLowerCase().trim()
-        
-        // Direct match
-        if (amenityMapping[lower]) {
-            matchedIds.push(amenityMapping[lower])
-            return
-        }
-        
-        // Partial match
-        for (const [key, id] of Object.entries(amenityMapping)) {
-            if (lower.includes(key) || key.includes(lower)) {
-                matchedIds.push(id)
-                return
-            }
-        }
-    })
-
-    // Return unique IDs only
-    return [...new Set(matchedIds)]
 }
 
 /**
@@ -289,10 +248,51 @@ function useHotelRooms({
     const [rooms, setRooms] = useState(null)
     const [error, setError] = useState(null)
 
+    // Helper to format date to YYYY-MM-DD
+    const formatDateToYYYYMMDD = (date) => {
+        if (!date) return null
+        // If already a string in YYYY-MM-DD format, return as is
+        if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            return date
+        }
+        // Handle Date object or date string
+        let d
+        if (date instanceof Date) {
+            d = date
+        } else if (typeof date === 'string') {
+            // Try parsing the string - handles formats like "Wed Dec 03 2025 00:00:00 GMT+0700"
+            d = new Date(date)
+        } else {
+            return null
+        }
+        // Validate the date
+        if (isNaN(d.getTime())) return null
+        // Format as YYYY-MM-DD using local date parts to avoid timezone issues
+        const year = d.getFullYear()
+        const month = String(d.getMonth() + 1).padStart(2, '0')
+        const day = String(d.getDate()).padStart(2, '0')
+        return `${year}-${month}-${day}`
+    }
+
     useEffect(() => {
         if (!hotelName) {
             setRooms([])
             setError(null)
+            return
+        }
+
+        // Format dates properly
+        const formattedCheckIn = formatDateToYYYYMMDD(checkInDate)
+        const formattedCheckOut = formatDateToYYYYMMDD(checkOutDate)
+
+        // Debug log
+        console.log('useHotelRooms - raw dates:', { checkInDate, checkOutDate })
+        console.log('useHotelRooms - formatted dates:', { formattedCheckIn, formattedCheckOut })
+
+        // Skip if dates are not properly formatted
+        if (!formattedCheckIn || !formattedCheckOut) {
+            console.warn('Invalid check-in or check-out date for rooms API')
+            setRooms([])
             return
         }
 
@@ -305,8 +305,8 @@ function useHotelRooms({
 
                 const params = new URLSearchParams()
                 params.set('q', hotelName)
-                params.set('check_in_date', checkInDate)
-                params.set('check_out_date', checkOutDate)
+                params.set('check_in_date', formattedCheckIn)
+                params.set('check_out_date', formattedCheckOut)
 
                 if (adults) params.set('adults', String(adults))
                 if (children) params.set('children', String(children))
@@ -389,261 +389,215 @@ function useHotelRooms({
     return { rooms, error }
 }
 
-// Services and Amenities card
-function ServicesAmenitiesCard({ amenities, rawAmenities }) {
-    // amenities: array of ids from the API. If null/empty => show all as demo
-    const amenitySet =
-        Array.isArray(amenities) && amenities.length > 0 ? new Set(amenities) : null
+// Category icons for section headers
+const CATEGORY_ICONS = {
+    'Internet': '📶',
+    'Parking': '🅿️',
+    'Transportation': '🚐',
+    'Front desk services': '🛎️',
+    'Languages spoken': '🗣️',
+    'Food & drink': '🍽️',
+    'Public areas': '🏢',
+    'Cleaning services': '🧹',
+    'Facilities for children': '👶',
+    'Business services': '💼',
+    'Accessibility': '♿',
+    'Safety & security': '🔒',
+}
 
-    // Check if we have raw amenities but no mapped ones
-    const hasRawOnly = !amenitySet && Array.isArray(rawAmenities) && rawAmenities.length > 0
+// Keywords to match amenities to categories
+const CATEGORY_KEYWORDS = {
+    'Internet': ['wifi', 'wi-fi', 'internet', 'wireless', 'broadband', 'ethernet', 'lan'],
+    'Parking': ['parking', 'garage', 'valet', 'car park'],
+    'Transportation': ['shuttle', 'airport', 'transfer', 'taxi', 'transportation', 'car rental', 'bicycle', 'bike'],
+    'Front desk services': ['front desk', 'reception', 'concierge', '24-hour', 'check-in', 'check-out', 'express', 'luggage', 'storage', 'tour', 'ticket', 'currency', 'exchange', 'wake-up', 'wake up'],
+    'Languages spoken': ['english', 'japanese', 'chinese', 'korean', 'french', 'german', 'spanish', 'vietnamese', 'thai', 'language', 'multilingual'],
+    'Food & drink': ['restaurant', 'bar', 'breakfast', 'lunch', 'dinner', 'dining', 'cafe', 'coffee', 'tea', 'room service', 'minibar', 'mini-bar', 'snack', 'vending', 'buffet', 'meal', 'food', 'drink', 'lounge'],
+    'Public areas': ['lobby', 'garden', 'terrace', 'pool', 'swimming', 'gym', 'fitness', 'spa', 'sauna', 'steam', 'jacuzzi', 'hot tub', 'outdoor', 'indoor', 'beach', 'library', 'game room', 'recreation', 'lounge', 'smoking area', 'non-smoking', 'air conditioning', 'heating', 'elevator', 'lift'],
+    'Cleaning services': ['laundry', 'dry cleaning', 'ironing', 'housekeeping', 'cleaning', 'shoe shine', 'pressing'],
+    'Facilities for children': ['kids', 'children', 'child', 'baby', 'crib', 'cot', 'babysitting', 'playground', 'family', 'kids club', 'highchair'],
+    'Business services': ['business', 'meeting', 'conference', 'fax', 'printer', 'computer', 'photocopying', 'secretary', 'work', 'office'],
+    'Accessibility': ['wheelchair', 'accessible', 'disability', 'disabled', 'mobility', 'hearing', 'visual', 'braille', 'accessible bathroom', 'ramp'],
+    'Safety & security': ['safe', 'safety', 'security', 'cctv', 'camera', 'fire', 'smoke detector', 'extinguisher', 'first aid', 'doctor', 'medical', '24-hour security', 'key card', 'safe deposit'],
+}
 
-    const shouldShow = (id) => !amenitySet || amenitySet.has(id)
+// Categorize amenities into the specified groups
+function categorizeAmenities(amenities) {
+    const categories = {}
+    
+    // Initialize only categories that will have items
+    Object.keys(CATEGORY_KEYWORDS).forEach(cat => {
+        categories[cat] = []
+    })
 
-    const renderItem = (item) => {
-        if (!shouldShow(item.id)) return null
+    const usedAmenities = new Set()
 
-        const muted = amenitySet ? false : item.muted
+    amenities.forEach(amenity => {
+        const lower = amenity.toLowerCase()
+        
+        for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+            if (keywords.some(kw => lower.includes(kw))) {
+                if (!usedAmenities.has(amenity)) {
+                    categories[category].push(amenity)
+                    usedAmenities.add(amenity)
+                }
+                break
+            }
+        }
+    })
 
-        return (
-            <li
-                key={item.id}
-                className={`flex items-center gap-2 text-sm ${muted ? 'text-gray-400' : 'text-gray-700'
-                    }`}
-            >
-                <span className='text-base leading-none'>{item.icon}</span>
-                <span>{item.label}</span>
-                {item.badge && (
-                    <span className='ml-2 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-100'>
-                        {item.badge}
-                    </span>
-                )}
-            </li>
-        )
-    }
-
-    const chunkIntoColumns = (items, cols = 3) => {
-        const visible = items.filter((i) => shouldShow(i.id))
-        if (visible.length === 0) return []
-
-        const result = Array.from({ length: cols }, () => [])
-        visible.forEach((item, idx) => {
-            result[idx % cols].push(item)
-        })
-        return result
-    }
-
-    const mostPopularCols = chunkIntoColumns(
-        HOTEL_AMENITIES_CONFIG.mostPopular.items,
-        3
+    // Remove empty categories - only return categories that have items from the API
+    return Object.fromEntries(
+        Object.entries(categories).filter(([_, items]) => items.length > 0)
     )
+}
 
-    // Distribute categories into 3 columns (like the screenshot: 3 big columns)
-    const categoryColumns = (() => {
-        const cols = [[], [], []]
-        HOTEL_AMENITIES_CONFIG.categories.forEach((cat, idx) => {
-            const visibleItems = cat.items.filter((i) => shouldShow(i.id))
-            if (visibleItems.length === 0) return
-            cols[idx % 3].push({ ...cat, items: visibleItems })
-        })
-        return cols
-    })()
+// Services and Amenities card - displays only what the API returns
+function ServicesAmenitiesCard({ rawAmenities }) {
+    // Use raw amenities from API - only display what we receive
+    const allAmenities = Array.isArray(rawAmenities) && rawAmenities.length > 0 
+        ? rawAmenities 
+        : []
 
-    const hasAny =
-        mostPopularCols.length > 0 ||
-        categoryColumns.some((col) => col.length > 0) ||
-        hasRawOnly
-
-    // Chunk raw amenities into 3 columns
-    const rawAmenitiesColumns = hasRawOnly ? (() => {
-        const cols = [[], [], []]
-        rawAmenities.forEach((amenity, idx) => {
-            cols[idx % 3].push(amenity)
-        })
-        return cols
-    })() : []
+    const hasAmenities = allAmenities.length > 0
+    const categorizedAmenities = hasAmenities ? categorizeAmenities(allAmenities) : {}
+    const categoryEntries = Object.entries(categorizedAmenities)
 
     return (
         <SectionCard
             title='Services & Amenities'
-            subtitle='All services and amenities available at this property.'
+            subtitle={hasAmenities ? `${allAmenities.length} amenities available at this property.` : 'Services and amenities available at this property.'}
         >
-            {!hasAny ? (
-                <p className='text-sm text-gray-400'>N/A</p>
+            {!hasAmenities ? (
+                <p className='text-sm text-gray-400'>No amenity information available</p>
             ) : (
-                <div className='space-y-8'>
-                    {/* If we have raw amenities only, show them in a simple grid */}
-                    {hasRawOnly && (
-                        <div className='space-y-3'>
-                            <h3 className='font-semibold text-sm'>Available Amenities</h3>
-                            <div className='grid md:grid-cols-3 gap-4'>
-                                {rawAmenitiesColumns.map((col, colIdx) => (
-                                    <ul key={colIdx} className='space-y-1'>
-                                        {col.map((amenity, idx) => (
-                                            <li key={idx} className='flex items-center gap-2 text-sm text-gray-700'>
-                                                <span className='text-base leading-none'>✓</span>
-                                                <span>{amenity}</span>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Row 1: Most popular amenities (only if we have mapped amenities) */}
-                    {!hasRawOnly && mostPopularCols.length > 0 && (
-                        <div className='space-y-3'>
-                            <h3 className='font-semibold text-sm'>
-                                {HOTEL_AMENITIES_CONFIG.mostPopular.title}
+                <div className='grid md:grid-cols-2 lg:grid-cols-3 gap-6'>
+                    {categoryEntries.map(([category, items]) => (
+                        <div key={category} className='space-y-2'>
+                            {/* Category header with icon */}
+                            <h3 className='font-semibold text-sm text-gray-800 flex items-center gap-2 pb-1 border-b border-gray-100'>
+                                <span className='text-lg'>{CATEGORY_ICONS[category] || '📋'}</span>
+                                <span>{category}</span>
                             </h3>
-                            <div className='grid md:grid-cols-3 gap-4'>
-                                {mostPopularCols.map((group, colIdx) => (
-                                    <ul key={colIdx} className='space-y-1'>
-                                        {group.map(renderItem)}
-                                    </ul>
+                            {/* Amenity items with check icons */}
+                            <ul className='space-y-1'>
+                                {items.map((amenity, idx) => (
+                                    <li 
+                                        key={idx} 
+                                        className='flex items-center gap-2 text-sm text-gray-700'
+                                    >
+                                        <span className='text-green-500 flex-shrink-0'>✓</span>
+                                        <span>{amenity}</span>
+                                    </li>
                                 ))}
-                            </div>
+                            </ul>
                         </div>
-                    )}
-
-                    {/* Row 2: More amenities (only if we have mapped amenities) */}
-                    {!hasRawOnly && categoryColumns.some((col) => col.length > 0) && (
-                        <div className='space-y-3'>
-                            <h3 className='font-semibold text-sm'>
-                                {HOTEL_AMENITIES_CONFIG.moreAmenitiesTitle}
-                            </h3>
-                            <div className='grid md:grid-cols-3 gap-6'>
-                                {categoryColumns.map((col, colIdx) => (
-                                    <div key={colIdx} className='space-y-4'>
-                                        {col.map((cat) => (
-                                            <div key={cat.id} className='space-y-1'>
-                                                <h4 className='font-semibold text-sm'>{cat.title}</h4>
-                                                <ul className='space-y-1'>
-                                                    {cat.items.map(renderItem)}
-                                                </ul>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
+                    ))}
                 </div>
             )}
         </SectionCard>
     )
 }
 
-// Property Policies card
-function PolicyValue({ value }) {
-    if (!value) {
-        return <span className='text-sm text-gray-400'>N/A</span>
-    }
+// Policy field configuration
+const POLICY_FIELDS = [
+    { id: 'check_in_out', label: 'Check-in and Check-out Times', field: 'checkInOut' },
+    { id: 'child_policies', label: 'Child policies', field: 'childPolicies' },
+    { id: 'cribs_extra_beds', label: 'Cribs and Extra Beds', field: 'cribsAndExtraBeds' },
+    { id: 'breakfast', label: 'Breakfast', field: 'breakfast' },
+    { id: 'deposit_policy', label: 'Deposit Policy', field: 'depositPolicy' },
+    { id: 'pets', label: 'Pets', field: 'pets' },
+    { id: 'service_animals', label: 'Service animals', field: 'serviceAnimals' },
+    { id: 'age_requirements', label: 'Age Requirements', field: 'ageRequirements' },
+    { id: 'paying_at_hotel', label: 'Paying at the hotel', field: 'paymentMethods' },
+]
 
-    // Array of lines -> show each as separate <p>
-    if (Array.isArray(value)) {
+// Render policy content - handles various data formats, splits into multiple lines
+function PolicyContent({ content }) {
+    // Array of strings
+    if (Array.isArray(content)) {
         return (
-            <div className='space-y-1 text-sm text-gray-700'>
-                {value.map((line, idx) => (
-                    <p key={idx}>{line}</p>
+            <ul className='space-y-1'>
+                {content.map((item, idx) => (
+                    <li key={idx} className='text-sm text-gray-700'>
+                        {typeof item === 'object' ? (item.name || item.title || JSON.stringify(item)) : item}
+                    </li>
                 ))}
-            </div>
+            </ul>
         )
     }
 
-    // Object e.g. { label: 'Deposit', text: 'No deposit required...' }
-    if (typeof value === 'object') {
+    // Object with text property
+    if (typeof content === 'object' && content !== null) {
+        if (content.text) {
+            // Split by common delimiters and display as multiple lines
+            const lines = content.text.split(/[,;]|\s*-\s*/).map(s => s.trim()).filter(Boolean)
+            if (lines.length > 1) {
+                return (
+                    <ul className='space-y-1'>
+                        {lines.map((line, idx) => (
+                            <li key={idx} className='text-sm text-gray-700'>{line}</li>
+                        ))}
+                    </ul>
+                )
+            }
+            return <p className='text-sm text-gray-700'>{content.text}</p>
+        }
+    }
+
+    // Plain string - try to split into multiple lines
+    const text = String(content)
+    // Split by comma, semicolon, or " - " pattern while preserving time formats like "Check-in: 2:00 PM"
+    const lines = text.split(/,(?!\s*\d)|;/).map(s => s.trim()).filter(Boolean)
+    
+    if (lines.length > 1) {
         return (
-            <div className='text-sm text-gray-700'>
-                {value.label && <span className='font-semibold mr-2'>{value.label}</span>}
-                <span>{value.text || 'N/A'}</span>
-            </div>
+            <ul className='space-y-1'>
+                {lines.map((line, idx) => (
+                    <li key={idx} className='text-sm text-gray-700'>{line}</li>
+                ))}
+            </ul>
         )
     }
-
-    // Plain string
-    return <p className='text-sm text-gray-700'>{value}</p>
+    
+    return <p className='text-sm text-gray-700'>{text}</p>
 }
 
+// Property Policies card - displays only available policy data
 function PropertyPoliciesCard({ policies }) {
-    const data = policies || {} // later: hotel.policies from Google
+    const data = policies || {}
+    
+    // Filter to only show policies that have values (not null/undefined)
+    const availablePolicies = POLICY_FIELDS.filter(policy => {
+        const value = data[policy.field]
+        return value !== null && value !== undefined && value !== ''
+    })
+
+    const hasItems = availablePolicies.length > 0
 
     return (
         <SectionCard
             title='Property Policies'
-            subtitle='Important information about check-in, children, pets and more.'
+            subtitle={hasItems ? 'Important information about this property.' : 'Policy information for this property.'}
         >
-            <div className='space-y-4'>
-                {PROPERTY_POLICY_FIELDS.map((row) => (
-                    <div
-                        key={row.id}
-                        className='grid md:grid-cols-4 gap-4 text-sm items-start'
-                    >
-                        <div className='font-semibold text-gray-800'>
-                            {row.label}
+            {!hasItems ? (
+                <p className='text-sm text-gray-400'>No policy information available</p>
+            ) : (
+                <div className='grid md:grid-cols-2 gap-6'>
+                    {availablePolicies.map((policy) => (
+                        <div key={policy.id} className='space-y-2'>
+                            {/* Policy header */}
+                            <h3 className='font-semibold text-sm text-gray-800 pb-1 border-b border-gray-100'>
+                                {policy.label}
+                            </h3>
+                            {/* Policy content */}
+                            <div>
+                                <PolicyContent content={data[policy.field]} />
+                            </div>
                         </div>
-                        <div className='col-span-3'>
-                            <PolicyValue value={data[row.field]} />
-                        </div>
-                    </div>
-                ))}
-            </div>
-        </SectionCard>
-    )
-}
-
-// Property Description card: combines contact info + description
-function PropertyDescriptionCard({ description }) {
-    // expected shape:
-    // {
-    //   numberOfRooms: number | string | null,
-    //   phone: string | null,
-    //   email: string | null,
-    //   paragraphs: string[] | null
-    // }
-
-    const renderFieldRow = (label, value) => (
-        <div className='flex flex-wrap gap-2 text-sm'>
-            <span className='font-semibold'>{label}:</span>
-            <span className={value ? 'text-gray-800' : 'text-gray-400'}>
-                {value || 'N/A'}
-            </span>
-        </div>
-    )
-
-    const paragraphs =
-        Array.isArray(description?.paragraphs) && description.paragraphs.length > 0
-            ? description.paragraphs
-            : null
-
-    return (
-        <SectionCard
-            title='Property Description'
-            subtitle='General information and a detailed description of this property.'
-        >
-            <div className='space-y-5'>
-                {/* Top: fields each on its own row */}
-                <div className='space-y-2'>
-                    <div className=''>
-                        {renderFieldRow('Number of Rooms', description?.numberOfRooms ?? null)}
-                    </div>
-
-                    <div className='flex md:flex-row md:gap-6'>
-                        {renderFieldRow('Phone', description?.phone ?? null)}
-                        {renderFieldRow('Email', description?.email ?? null)}
-                    </div>
+                    ))}
                 </div>
-
-                {/* Body text */}
-                <div className='space-y-3 text-sm text-gray-700 leading-relaxed'>
-                    {paragraphs ? (
-                        paragraphs.map((p, idx) => <p key={idx}>{p}</p>)
-                    ) : (
-                        <p className='text-gray-400'>N/A</p>
-                    )}
-                </div>
-            </div>
+            )}
         </SectionCard>
     )
 }
@@ -968,52 +922,47 @@ function HotelReviewsSection({
     const totalReviews =
         ratingCount ??
         (Array.isArray(reviews) ? reviews.length : null) ??
-        124;
+        0;
 
     // Breakdown: counts of each star 1–5
-    const breakdown = ratingBreakdown || {
-        5: 70,
-        4: 30,
-        3: 15,
-        2: 6,
-        1: 3,
+    // Only use breakdown data if it actually has values
+    const hasBreakdownData = ratingBreakdown && Object.keys(ratingBreakdown).length > 0;
+    
+    // Generate simulated breakdown based on average rating if no real data
+    const generateSimulatedBreakdown = (avg, total) => {
+        if (total === 0 || avg === 0) return null;
+        
+        // Create a distribution that peaks around the average rating
+        const breakdown = {};
+        const distributions = {
+            5: [0.02, 0.03, 0.10, 0.25, 0.60], // For ~5 star avg
+            4: [0.03, 0.07, 0.15, 0.45, 0.30], // For ~4 star avg
+            3: [0.10, 0.15, 0.40, 0.25, 0.10], // For ~3 star avg
+            2: [0.25, 0.40, 0.20, 0.10, 0.05], // For ~2 star avg
+            1: [0.55, 0.25, 0.12, 0.05, 0.03], // For ~1 star avg
+        };
+        
+        const roundedAvg = Math.max(1, Math.min(5, Math.round(avg)));
+        const dist = distributions[roundedAvg];
+        
+        for (let i = 1; i <= 5; i++) {
+            breakdown[i] = Math.round(total * dist[i - 1]);
+        }
+        
+        return breakdown;
     };
+    
+    const breakdown = hasBreakdownData 
+        ? ratingBreakdown 
+        : generateSimulatedBreakdown(avgRating, totalReviews);
 
-    const breakdownTotal =
-        Object.values(breakdown).reduce((sum, v) => sum + v, 0) || 1;
+    const breakdownTotal = breakdown
+        ? Object.values(breakdown).reduce((sum, v) => sum + v, 0) || 1
+        : 1;
 
-    // Reviews list (right column)
-    const fallbackReviews = [
-        {
-            user: 'Traveler A',
-            date: '2 days ago',
-            rating: 5,
-            text: 'Real user comments from Google / SerpAPI will appear here later.',
-        },
-        {
-            user: 'Traveler B',
-            date: '1 week ago',
-            rating: 4,
-            text: 'Placeholder review. You can replace this with actual review text.',
-        },
-        {
-            user: 'Traveler C',
-            date: '3 weeks ago',
-            rating: 5,
-            text: 'Another sample comment to demonstrate the layout.',
-        },
-        {
-            user: 'Traveler D',
-            date: '1 month ago',
-            rating: 3,
-            text: 'This will be loaded when clicking on "Load more comments".',
-        },
-    ];
-
-    const reviewList =
-        (Array.isArray(reviews) && reviews.length > 0
-            ? reviews
-            : fallbackReviews) || [];
+    // Reviews list (right column) - only show real reviews from API
+    const reviewList = Array.isArray(reviews) && reviews.length > 0 ? reviews : [];
+    const hasReviews = reviewList.length > 0;
 
     const [visibleCount, setVisibleCount] = useState(3);
 
@@ -1046,65 +995,75 @@ function HotelReviewsSection({
                         </div>
                     </div>
 
-                    {/* Breakdown 1–5 stars */}
-                    <div className="space-y-1">
-                        {[5, 4, 3, 2, 1].map((star) => {
-                            const count = breakdown[star] ?? 0;
-                            const percent = (count / breakdownTotal) * 100;
+                    {/* Breakdown 1–5 stars - only show if we have data */}
+                    {breakdown && (
+                        <div className="space-y-1">
+                            {[5, 4, 3, 2, 1].map((star) => {
+                                const count = breakdown[star] ?? 0;
+                                const percent = (count / breakdownTotal) * 100;
 
-                            return (
-                                <div
-                                    key={star}
-                                    className="flex items-center gap-3 text-xs text-gray-600"
-                                >
-                                    <div className="w-10 flex items-center justify-end gap-0.5">
-                                        <span className="font-semibold">{star}</span>
-                                        <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                                return (
+                                    <div
+                                        key={star}
+                                        className="flex items-center gap-3 text-xs text-gray-600"
+                                    >
+                                        <div className="w-10 flex items-center justify-end gap-0.5">
+                                            <span className="font-semibold">{star}</span>
+                                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                                        </div>
+                                        <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                                            <div
+                                                className="h-full bg-yellow-400"
+                                                style={{ width: `${percent}%` }}
+                                            />
+                                        </div>
+                                        <div className="w-10 text-right">{count}</div>
                                     </div>
-                                    <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
-                                        <div
-                                            className="h-full bg-yellow-400"
-                                            style={{ width: `${percent}%` }}
-                                        />
-                                    </div>
-                                    <div className="w-10 text-right">{count}</div>
-                                </div>
-                            );
-                        })}
-                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
 
                 {/* RIGHT: comments list */}
                 <div className="space-y-3">
-                    {reviewList.slice(0, visibleCount).map((r, idx) => (
-                        <div
-                            key={idx}
-                            className="border rounded-lg p-3 bg-gray-50 text-sm text-gray-700"
-                        >
-                            <div className="flex justify-between items-center mb-1">
-                                <div className="flex items-center gap-2">
-                                    <span className="font-medium">{r.user}</span>
-                                    {r.rating && (
-                                        <span className="inline-flex items-center gap-0.5 text-xs text-yellow-500">
-                                            <Star className="h-3 w-3 fill-yellow-400" />
-                                            <span>{r.rating}</span>
-                                        </span>
-                                    )}
+                    {hasReviews ? (
+                        <>
+                            {reviewList.slice(0, visibleCount).map((r, idx) => (
+                                <div
+                                    key={idx}
+                                    className="border rounded-lg p-3 bg-gray-50 text-sm text-gray-700"
+                                >
+                                    <div className="flex justify-between items-center mb-1">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-medium">{r.user}</span>
+                                            {r.rating && (
+                                                <span className="inline-flex items-center gap-0.5 text-xs text-yellow-500">
+                                                    <Star className="h-3 w-3 fill-yellow-400" />
+                                                    <span>{r.rating}</span>
+                                                </span>
+                                            )}
+                                        </div>
+                                        <span className="text-xs text-gray-500">{r.date}</span>
+                                    </div>
+                                    <p>{r.text}</p>
                                 </div>
-                                <span className="text-xs text-gray-500">{r.date}</span>
-                            </div>
-                            <p>{r.text}</p>
-                        </div>
-                    ))}
+                            ))}
 
-                    {canLoadMore && (
-                        <button
-                            type="button"
-                            onClick={handleLoadMore}
-                            className="text-xs text-blue-600 hover:underline font-medium"
-                        >
-                            Load more comments
-                        </button>
+                            {canLoadMore && (
+                                <button
+                                    type="button"
+                                    onClick={handleLoadMore}
+                                    className="text-xs text-blue-600 hover:underline font-medium"
+                                >
+                                    Load more comments
+                                </button>
+                            )}
+                        </>
+                    ) : (
+                        <div className="text-sm text-gray-500 italic p-4 bg-gray-50 rounded-lg text-center">
+                            No reviews available for this hotel.
+                        </div>
                     )}
                 </div>
             </div>
@@ -1113,203 +1072,645 @@ function HotelReviewsSection({
 }
 
 /**
- * Map card: Google Map placeholder with room for:
- * - Hotel marker
- * - Transit / POI / shopping markers
- * - Path from hotel to selected pin
+ * Map card with Leaflet map showing:
+ * - Hotel marker with popup
+ * - Nearby places markers (transit, POI, shopping)
  */
-function HotelMapSection({ mapRef }) {
+function HotelMapSection({ hotel }) {
+    const mapContainerRef = useRef(null)
+    const mapInstance = useRef(null)
+    const markersRef = useRef([])
+    const [allPlaces, setAllPlaces] = useState([])
+    const [displayPlaces, setDisplayPlaces] = useState([])
+    const [activeFilter, setActiveFilter] = useState('all') // 'all', 'transit', 'poi', 'shopping'
+    const [loadingPlaces, setLoadingPlaces] = useState(false)
+
+    const hasCoordinates = hotel?.gpsCoordinates?.latitude && hotel?.gpsCoordinates?.longitude
+
+    // Filter options - categories for nearby places
+    const filterOptions = [
+        { key: 'all', label: 'All', color: '#6B7280' },
+        { key: 'transit', label: 'Transit', color: '#3B82F6' },
+        { key: 'restaurant', label: 'Restaurant', color: '#F97316' },
+        { key: 'convenience', label: 'Convenience Store', color: '#10B981' },
+        { key: 'gas', label: 'Gas', color: '#EF4444' },
+        { key: 'atm', label: 'ATM', color: '#8B5CF6' },
+        { key: 'shopping', label: 'Shopping', color: '#EC4899' },
+        { key: 'poi', label: 'POI', color: '#F59E0B' },
+    ]
+
+    // Helper to determine icon and color based on place type
+    const getPlaceStyle = (type) => {
+        const typeLC = (type || '').toLowerCase()
+        // Transit
+        if (typeLC.includes('transit') || typeLC.includes('train') || typeLC.includes('bus') || typeLC.includes('metro') || typeLC.includes('subway') || typeLC.includes('station')) {
+            return { icon: '🚇', color: '#3B82F6', category: 'transit', displayType: 'Transit' }
+        }
+        // Restaurant (unified: includes cafe, food, dining)
+        if (typeLC.includes('restaurant') || typeLC.includes('food') || typeLC.includes('dining') || typeLC.includes('cafe') || typeLC.includes('coffee') || typeLC.includes('eatery') || typeLC.includes('bistro')) {
+            return { icon: '🍽️', color: '#F97316', category: 'restaurant', displayType: 'Restaurant' }
+        }
+        // Convenience store
+        if (typeLC.includes('conbini') || typeLC.includes('convenience') || typeLC.includes('7-eleven') || typeLC.includes('lawson') || typeLC.includes('familymart') || typeLC.includes('mini market')) {
+            return { icon: '🏪', color: '#10B981', category: 'convenience', displayType: 'Convenience Store' }
+        }
+        // Gas station
+        if (typeLC.includes('gas') || typeLC.includes('fuel') || typeLC.includes('petrol') || typeLC.includes('gas_station')) {
+            return { icon: '⛽', color: '#EF4444', category: 'gas', displayType: 'Gas Station' }
+        }
+        // ATM / Bank
+        if (typeLC.includes('atm') || typeLC.includes('bank') || typeLC.includes('cash')) {
+            return { icon: '🏧', color: '#8B5CF6', category: 'atm', displayType: 'ATM' }
+        }
+        // Pharmacy
+        if (typeLC.includes('pharmacy') || typeLC.includes('drug') || typeLC.includes('medical')) {
+            return { icon: '💊', color: '#06B6D4', category: 'pharmacy', displayType: 'Pharmacy' }
+        }
+        // Parking
+        if (typeLC.includes('parking') || typeLC.includes('car park') || typeLC.includes('garage')) {
+            return { icon: '🅿️', color: '#0EA5E9', category: 'parking', displayType: 'Parking' }
+        }
+        // Shopping
+        if (typeLC.includes('shop') || typeLC.includes('mall') || typeLC.includes('market') || typeLC.includes('store') || typeLC.includes('supermarket')) {
+            return { icon: '🛍️', color: '#EC4899', category: 'shopping', displayType: 'Shopping' }
+        }
+        // POI / Attraction / Landmark
+        if (typeLC.includes('attraction') || typeLC.includes('landmark') || typeLC.includes('museum') || typeLC.includes('park') || typeLC.includes('temple') || typeLC.includes('shrine') || typeLC.includes('poi') || typeLC.includes('monument') || typeLC.includes('historic')) {
+            return { icon: '📍', color: '#F59E0B', category: 'poi', displayType: 'POI' }
+        }
+        // Default
+        return { icon: '📍', color: '#6B7280', category: 'other', displayType: type || 'Place' }
+    }
+
+    // Helper to parse distance string to meters for filtering
+    const parseDistanceToMeters = (distanceStr) => {
+        if (!distanceStr) return null
+        const str = distanceStr.toLowerCase()
+        // Match patterns like "500 m", "0.5 km", "500m", "0.5km"
+        const mMatch = str.match(/([\d.]+)\s*m(?:eter)?s?(?!i)/i)
+        const kmMatch = str.match(/([\d.]+)\s*km/i)
+        const minMatch = str.match(/([\d.]+)\s*min/i)
+        
+        if (kmMatch) return parseFloat(kmMatch[1]) * 1000
+        if (mMatch) return parseFloat(mMatch[1])
+        if (minMatch) return parseFloat(minMatch[1]) * 80 // ~80m per minute walking
+        return null
+    }
+
+    // Initialize map
+    useEffect(() => {
+        if (!hasCoordinates || !mapContainerRef.current || mapInstance.current) return
+
+        const { latitude, longitude } = hotel.gpsCoordinates
+
+        // Create map instance
+        mapInstance.current = L.map(mapContainerRef.current).setView([latitude, longitude], 15)
+
+        // Add tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(mapInstance.current)
+
+        // Create custom hotel marker icon
+        const hotelIcon = L.divIcon({
+            className: 'custom-hotel-marker',
+            html: `<div style="
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border-radius: 50%;
+                width: 44px;
+                height: 44px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 20px;
+                border: 3px solid white;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            ">🏨</div>`,
+            iconSize: [44, 44],
+            iconAnchor: [22, 22],
+            popupAnchor: [0, -22]
+        })
+
+        // Add hotel marker (no popup - just the marker)
+        L.marker([latitude, longitude], { icon: hotelIcon })
+            .addTo(mapInstance.current)
+
+        return () => {
+            if (mapInstance.current) {
+                mapInstance.current.remove()
+                mapInstance.current = null
+            }
+        }
+    }, [hasCoordinates, hotel?.HotelName, hotel?.HotelAddress, hotel?.Rating])
+
+    // Fetch nearby places using Overpass API
+    useEffect(() => {
+        if (!hasCoordinates) return
+
+        const { latitude, longitude } = hotel.gpsCoordinates
+
+        // Helper to calculate distance between two coordinates
+        const calculateDistance = (lat1, lon1, lat2, lon2) => {
+            const R = 6371e3 // Earth's radius in metres
+            const φ1 = lat1 * Math.PI / 180
+            const φ2 = lat2 * Math.PI / 180
+            const Δφ = (lat2 - lat1) * Math.PI / 180
+            const Δλ = (lon2 - lon1) * Math.PI / 180
+
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                Math.cos(φ1) * Math.cos(φ2) *
+                Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+            return Math.round(R * c) // Distance in metres
+        }
+
+        // Format distance for display
+        const formatDistance = (meters) => {
+            if (meters >= 1000) {
+                return `${(meters / 1000).toFixed(1)} km`
+            }
+            return `${meters} m`
+        }
+
+        const fetchNearbyPlaces = async () => {
+            setLoadingPlaces(true)
+            try {
+                // Overpass API query for various amenities within 1km
+                const query = `
+                    [out:json][timeout:25];
+                    (
+                        // Transit
+                        node["highway"="bus_stop"](around:1000, ${latitude}, ${longitude});
+                        node["public_transport"="platform"](around:1000, ${latitude}, ${longitude});
+                        node["railway"="station"](around:1000, ${latitude}, ${longitude});
+                        node["railway"="subway_entrance"](around:1000, ${latitude}, ${longitude});
+                        // Restaurants & Cafes
+                        node["amenity"="restaurant"](around:1000, ${latitude}, ${longitude});
+                        node["amenity"="cafe"](around:1000, ${latitude}, ${longitude});
+                        node["amenity"="fast_food"](around:1000, ${latitude}, ${longitude});
+                        // Convenience stores
+                        node["shop"="convenience"](around:1000, ${latitude}, ${longitude});
+                        node["shop"="supermarket"](around:1000, ${latitude}, ${longitude});
+                        // Gas stations
+                        node["amenity"="fuel"](around:1000, ${latitude}, ${longitude});
+                        // ATM & Banks
+                        node["amenity"="atm"](around:1000, ${latitude}, ${longitude});
+                        node["amenity"="bank"](around:1000, ${latitude}, ${longitude});
+                        // Shopping
+                        node["shop"="mall"](around:1000, ${latitude}, ${longitude});
+                        node["shop"="department_store"](around:1000, ${latitude}, ${longitude});
+                        // POI / Attractions
+                        node["tourism"~"attraction|museum|viewpoint|artwork"](around:1000, ${latitude}, ${longitude});
+                        node["historic"](around:1000, ${latitude}, ${longitude});
+                        node["leisure"="park"](around:1000, ${latitude}, ${longitude});
+                        node["amenity"="place_of_worship"](around:1000, ${latitude}, ${longitude});
+                    );
+                    out body;
+                `
+
+                const response = await fetch('https://overpass-api.de/api/interpreter', {
+                    method: 'POST',
+                    body: query
+                })
+                const data = await response.json()
+
+                const places = []
+                const seenNames = new Set()
+
+                data.elements.forEach(el => {
+                    const name = el.tags?.['name:en'] || el.tags?.name
+                    if (!name) return // Skip places without names
+                    
+                    // Skip duplicates
+                    const nameKey = name.toLowerCase()
+                    if (seenNames.has(nameKey)) return
+                    seenNames.add(nameKey)
+
+                    const distanceMeters = calculateDistance(latitude, longitude, el.lat, el.lon)
+                    
+                    // Only include places within 1km
+                    if (distanceMeters > 1000) return
+
+                    // Determine category and style based on tags
+                    let category, icon, color, displayType
+
+                    if (el.tags.highway === 'bus_stop' || el.tags.public_transport === 'platform') {
+                        category = 'transit'
+                        icon = '🚌'
+                        color = '#3B82F6'
+                        displayType = 'Bus Stop'
+                    } else if (el.tags.railway === 'station' || el.tags.railway === 'subway_entrance') {
+                        category = 'transit'
+                        icon = '🚇'
+                        color = '#3B82F6'
+                        displayType = 'Station'
+                    } else if (el.tags.amenity === 'restaurant') {
+                        category = 'restaurant'
+                        icon = '🍽️'
+                        color = '#F97316'
+                        displayType = 'Restaurant'
+                    } else if (el.tags.amenity === 'cafe') {
+                        category = 'restaurant'
+                        icon = '☕'
+                        color = '#F97316'
+                        displayType = 'Cafe'
+                    } else if (el.tags.amenity === 'fast_food') {
+                        category = 'restaurant'
+                        icon = '🍔'
+                        color = '#F97316'
+                        displayType = 'Fast Food'
+                    } else if (el.tags.shop === 'convenience' || el.tags.shop === 'supermarket') {
+                        category = 'convenience'
+                        icon = '🏪'
+                        color = '#10B981'
+                        displayType = el.tags.shop === 'supermarket' ? 'Supermarket' : 'Convenience Store'
+                    } else if (el.tags.amenity === 'fuel') {
+                        category = 'gas'
+                        icon = '⛽'
+                        color = '#EF4444'
+                        displayType = 'Gas Station'
+                    } else if (el.tags.amenity === 'atm') {
+                        category = 'atm'
+                        icon = '🏧'
+                        color = '#8B5CF6'
+                        displayType = 'ATM'
+                    } else if (el.tags.amenity === 'bank') {
+                        category = 'atm'
+                        icon = '🏦'
+                        color = '#8B5CF6'
+                        displayType = 'Bank'
+                    } else if (el.tags.shop === 'mall' || el.tags.shop === 'department_store') {
+                        category = 'shopping'
+                        icon = '🛍️'
+                        color = '#EC4899'
+                        displayType = 'Shopping'
+                    } else if (el.tags.tourism || el.tags.historic || el.tags.leisure === 'park' || el.tags.amenity === 'place_of_worship') {
+                        category = 'poi'
+                        icon = '📍'
+                        color = '#F59E0B'
+                        if (el.tags.tourism === 'museum') {
+                            icon = '🏛️'
+                            displayType = 'Museum'
+                        } else if (el.tags.leisure === 'park') {
+                            icon = '🌳'
+                            displayType = 'Park'
+                        } else if (el.tags.amenity === 'place_of_worship') {
+                            icon = '⛩️'
+                            displayType = 'Temple/Shrine'
+                        } else if (el.tags.historic) {
+                            icon = '🏛️'
+                            displayType = 'Historic Site'
+                        } else {
+                            displayType = 'Attraction'
+                        }
+                    } else {
+                        return // Skip unknown types
+                    }
+
+                    places.push({
+                        name,
+                        type: displayType,
+                        distance: formatDistance(distanceMeters),
+                        distanceMeters,
+                        lat: el.lat,
+                        lng: el.lon,
+                        icon,
+                        color,
+                        category,
+                    })
+                })
+
+                // Sort by distance
+                places.sort((a, b) => a.distanceMeters - b.distanceMeters)
+
+                // Limit to reasonable number per category to avoid clutter
+                const limitedPlaces = []
+                const categoryCount = {}
+                const maxPerCategory = 5
+
+                places.forEach(place => {
+                    categoryCount[place.category] = (categoryCount[place.category] || 0) + 1
+                    if (categoryCount[place.category] <= maxPerCategory) {
+                        limitedPlaces.push(place)
+                    }
+                })
+
+                setAllPlaces(limitedPlaces)
+            } catch (error) {
+                console.error('Error fetching nearby places from Overpass API:', error)
+                // No fallback - just show empty if API fails
+                setAllPlaces([])
+            } finally {
+                setLoadingPlaces(false)
+            }
+        }
+
+        fetchNearbyPlaces()
+    }, [hasCoordinates, hotel?.gpsCoordinates?.latitude, hotel?.gpsCoordinates?.longitude])
+
+    // Filter places and update markers when filter changes
+    useEffect(() => {
+        if (!mapInstance.current || allPlaces.length === 0) return
+
+        // Clear existing markers
+        markersRef.current.forEach(marker => marker.remove())
+        markersRef.current = []
+
+        // Filter places based on active filter
+        const filteredPlaces = activeFilter === 'all' 
+            ? allPlaces 
+            : allPlaces.filter(place => place.category === activeFilter)
+
+        setDisplayPlaces(filteredPlaces)
+
+        // Add markers to map
+        filteredPlaces.forEach(place => {
+            const placeIcon = L.divIcon({
+                className: 'custom-place-marker',
+                html: `<div style="
+                    background-color: ${place.color};
+                    color: white;
+                    border-radius: 50%;
+                    width: 32px;
+                    height: 32px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 14px;
+                    border: 2px solid white;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+                ">${place.icon}</div>`,
+                iconSize: [32, 32],
+                iconAnchor: [16, 16],
+                popupAnchor: [0, -16]
+            })
+
+            const marker = L.marker([place.lat, place.lng], { icon: placeIcon })
+                .addTo(mapInstance.current)
+                .bindPopup(`
+                    <div style="min-width: 150px;">
+                        <h4 style="margin: 0 0 4px 0; font-weight: bold; font-size: 13px;">${place.name}</h4>
+                        <p style="margin: 0; font-size: 11px; color: #666; text-transform: capitalize;">${place.type}</p>
+                        ${place.distance ? `<p style="margin: 4px 0 0 0; font-size: 11px; color: #888;">📍 ${place.distance}</p>` : ''}
+                        ${place.duration ? `<p style="margin: 2px 0 0 0; font-size: 11px; color: #888;">🚶 ${place.duration}</p>` : ''}
+                    </div>
+                `)
+
+            markersRef.current.push(marker)
+        })
+    }, [allPlaces, activeFilter])
+
     return (
         <SectionCard
             id='hotel-map'
             title='Location & Nearby Places'
-            subtitle='Google Maps with transits, POIs and shopping areas around the hotel.'
-            rightSlot={
-                <div className='flex gap-2 text-xs text-gray-500'>
-                    <span className='inline-flex items-center gap-1'>
-                        <span className='h-2 w-2 rounded-full bg-blue-500' /> Transit
-                    </span>
-                    <span className='inline-flex items-center gap-1'>
-                        <span className='h-2 w-2 rounded-full bg-green-500' /> POI
-                    </span>
-                    <span className='inline-flex items-center gap-1'>
-                        <span className='h-2 w-2 rounded-full bg-pink-500' /> Shopping
-                    </span>
-                </div>
-            }
+            subtitle='Real-time data from OpenStreetMap'
         >
-            <div ref={mapRef} className='space-y-4'>
-                {/* Map container */}
-                <div className='w-full h-72 md:h-80 rounded-lg border bg-gray-100 flex items-center justify-center text-gray-400 text-sm'>
-                    {/* TODO: replace this div with actual Google Maps JS API implementation */}
-                    Google Map will be rendered here (hotel marker, nearby places & routes).
-                </div>
-
-                {/* Placeholder list of pins / route info */}
-                <div className='grid md:grid-cols-2 gap-4 text-sm'>
-                    <div className='space-y-2'>
-                        <h4 className='font-semibold text-gray-800'>Nearby Highlights</h4>
-                        <ul className='space-y-1 text-gray-600'>
-                            <li>• Closest transit station will appear here.</li>
-                            <li>• Nearby attractions and landmarks from Google Places.</li>
-                            <li>• Shopping malls & markets around the hotel.</li>
-                        </ul>
-                    </div>
-                    <div className='space-y-2'>
-                        <h4 className='font-semibold text-gray-800'>Route Preview</h4>
-                        <p className='text-gray-600'>
-                            When user clicks on a pinned place, a walking / driving route from the hotel to that
-                            place will be drawn on the map. Summary (distance, duration) can be shown here.
-                        </p>
-                    </div>
-                </div>
-            </div>
-        </SectionCard>
-    )
-}
-
-/**
- * Nearby hotels section.
- */
-function NearbyHotelCard({ hotel }) {
-    const openInNewTab = (hotel) => {
-        const slug = encodeURIComponent(hotel.name || 'hotel')
-        window.open(`/manual/hotel/${slug}`, '_blank')
-        console.log('Open nearby hotel detail (placeholder):', hotel)
-    }
-
-    return (
-        <div
-            className='border rounded-lg bg-gray-50 flex flex-col justify-between gap-4 hover:cursor-pointer hover:-translate-y-2 transition-all duration-300'
-            onClick={() => openInNewTab(hotel)}
-        >
-            <img
-                src='/placeholder.jpg'
-                alt='Hotel photo'
-                className='relative top-0 rounded-t-lg'
-            />
-            <div className='px-3 pb-3 flex flex-col justify-between gap-10'>
-                <div>
-                    <h4 className='font-semibold text-md'>{hotel.name}</h4>
-                    <p className='text-sm text-gray-500 mt-1'>{hotel.distance}</p>
-                </div>
-                <button
-                    type='button'
-                    className='inline-flex items-center justify-end gap-1 text-xs text-blue-600 hover:underline'
-                >
-                    Open details in new tab
-                    <ArrowRight className='h-3 w-3' />
-                </button>
-            </div>
-        </div>
-    )
-}
-
-/**
- * Nearby hotels section with smooth horizontal slide between pages of 4 cards
- */
-function NearbyHotelsSection({ hotels }) {
-    // TODO: real nearby hotels from Google Places / SerpAPI
-    const placeholderNearby = [
-        { name: 'Nearby Hotel 1', distance: '300m away' },
-        { name: 'Nearby Hotel 2', distance: '700m away' },
-        { name: 'Nearby Hotel 3', distance: '1.2km away' },
-        { name: 'Nearby Hotel 4', distance: '1.5km away' },
-        { name: 'Nearby Hotel 5', distance: '2.0km away' },
-        { name: 'Nearby Hotel 6', distance: '2.5km away' },
-    ]
-
-    const data = Array.isArray(hotels) && hotels.length > 0 ? hotels : placeholderNearby
-    const VISIBLE_PER_PAGE = 4
-
-    // Chunk hotels into pages of 4
-    const pages = React.useMemo(() => {
-        if (!data.length) return []
-        const chunks = []
-        for (let i = 0; i < data.length; i += VISIBLE_PER_PAGE) {
-            chunks.push(data.slice(i, i + VISIBLE_PER_PAGE))
-        }
-        return chunks
-    }, [data])
-
-    const total = data.length
-    const totalPages = pages.length
-    const [pageIndex, setPageIndex] = React.useState(0)
-
-    const handleNext = () => {
-        if (totalPages <= 1) return
-        setPageIndex((prev) => (prev + 1) % totalPages)
-    }
-
-    const handlePrev = () => {
-        if (totalPages <= 1) return
-        setPageIndex((prev) => (prev - 1 + totalPages) % totalPages)
-    }
-
-    if (!total) {
-        return (
-            <SectionCard
-                title='Other Nearby Hotels'
-                subtitle='Explore alternative options around this area.'
-            >
-                <p className='text-sm text-gray-400'>N/A</p>
-            </SectionCard>
-        )
-    }
-
-    return (
-        <SectionCard
-            title='Other Nearby Hotels'
-            subtitle='Explore alternative options around this area.'
-        >
-            <div className='flex items-center justify-between mb-3'>
-                <p className='text-xs text-gray-500'>
-                    Showing {Math.min((pageIndex + 1) * VISIBLE_PER_PAGE, total)} of {total}
-                </p>
-
-                {totalPages > 1 && (
-                    <div className='flex gap-2'>
-                        <button
-                            type='button'
-                            onClick={handlePrev}
-                            className='p-1.5 rounded-full border bg-white hover:bg-gray-50'
-                        >
-                            <ChevronLeft className='h-4 w-4' />
-                        </button>
-                        <button
-                            type='button'
-                            onClick={handleNext}
-                            className='p-1.5 rounded-full border bg-white hover:bg-gray-50'
-                        >
-                            <ChevronRight className='h-4 w-4' />
-                        </button>
+            <div className='space-y-4'>
+                {/* Loading indicator */}
+                {loadingPlaces && (
+                    <div className='flex items-center gap-2 text-sm text-blue-600'>
+                        <svg className='animate-spin h-4 w-4' xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'>
+                            <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4'></circle>
+                            <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z'></path>
+                        </svg>
+                        Loading nearby places...
                     </div>
                 )}
-            </div>
 
-            <div className='relative overflow-hidden py-3'>
-                <div
-                    className='flex transition-transform duration-500 ease-out'
-                    style={{ transform: `translateX(-${pageIndex * 100}%)` }}
-                >
-                    {pages.map((pageHotels, idx) => (
-                        <div
-                            key={idx}
-                            className='min-w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3'
+                {/* Filter buttons */}
+                <div className='flex flex-wrap gap-2'>
+                    {filterOptions.map(option => (
+                        <button
+                            key={option.key}
+                            onClick={() => setActiveFilter(option.key)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                                activeFilter === option.key
+                                    ? 'text-white shadow-md'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                            style={activeFilter === option.key ? { backgroundColor: option.color } : {}}
                         >
-                            {pageHotels.map((h, i) => (
-                                <NearbyHotelCard
-                                    key={h.id || h.name || i}
-                                    hotel={h}
-                                />
-                            ))}
-                        </div>
+                            <span 
+                                className='h-2 w-2 rounded-full'
+                                style={{ backgroundColor: activeFilter === option.key ? 'white' : option.color }}
+                            />
+                            {option.label}
+                            {option.key !== 'all' && (
+                                <span className={`text-xs ${activeFilter === option.key ? 'text-white/80' : 'text-gray-400'}`}>
+                                    ({allPlaces.filter(p => p.category === option.key).length})
+                                </span>
+                            )}
+                            {option.key === 'all' && (
+                                <span className={`text-xs ${activeFilter === option.key ? 'text-white/80' : 'text-gray-400'}`}>
+                                    ({allPlaces.length})
+                                </span>
+                            )}
+                        </button>
                     ))}
                 </div>
+
+                {/* Map container */}
+                {hasCoordinates ? (
+                    <div 
+                        ref={mapContainerRef} 
+                        className='w-full h-80 md:h-96 rounded-lg border overflow-hidden z-0'
+                        style={{ position: 'relative' }}
+                    />
+                ) : (
+                    <div className='w-full h-80 md:h-96 rounded-lg border bg-gray-100 flex items-center justify-center text-gray-400 text-sm'>
+                        <div className='text-center'>
+                            <MapPin className='h-8 w-8 mx-auto mb-2 opacity-50' />
+                            <p>Location coordinates not available for this hotel.</p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Nearby places list */}
+                {displayPlaces.length > 0 && (
+                    <div className='grid grid-cols-2 md:grid-cols-3 gap-3'>
+                        {displayPlaces.map((place, idx) => (
+                            <div 
+                                key={idx}
+                                className='flex items-center gap-2 p-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer text-sm'
+                                onClick={() => {
+                                    if (mapInstance.current) {
+                                        mapInstance.current.setView([place.lat, place.lng], 17)
+                                        // Find and open the marker popup
+                                        markersRef.current[idx]?.openPopup()
+                                    }
+                                }}
+                            >
+                                <span 
+                                    className='w-7 h-7 rounded-full flex items-center justify-center text-white text-xs'
+                                    style={{ backgroundColor: place.color }}
+                                >
+                                    {place.icon}
+                                </span>
+                                <div className='flex-1 min-w-0'>
+                                    <p className='font-medium text-gray-800 truncate'>{place.name}</p>
+                                    <p className='text-xs text-gray-500 capitalize'>
+                                        {place.type}
+                                        {place.distance && ` • ${place.distance}`}
+                                    </p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+
             </div>
         </SectionCard>
     )
 }
+
+/* COMMENTED OUT - Nearby Hotels Section (to be decided later)
+**
+ * Nearby hotels section.
+ */
+// function NearbyHotelCard({ hotel }) {
+//     const openInNewTab = (hotel) => {
+//         const slug = encodeURIComponent(hotel.name || 'hotel')
+//         window.open(`/manual/hotel/${slug}`, '_blank')
+//         console.log('Open nearby hotel detail (placeholder):', hotel)
+//     }
+
+//     return (
+//         <div
+//             className='border rounded-lg bg-gray-50 flex flex-col justify-between gap-4 hover:cursor-pointer hover:-translate-y-2 transition-all duration-300'
+//             onClick={() => openInNewTab(hotel)}
+//         >
+//             <img
+//                 src='/placeholder.jpg'
+//                 alt='Hotel photo'
+//                 className='relative top-0 rounded-t-lg'
+//             />
+//             <div className='px-3 pb-3 flex flex-col justify-between gap-10'>
+//                 <div>
+//                     <h4 className='font-semibold text-md'>{hotel.name}</h4>
+//                     <p className='text-sm text-gray-500 mt-1'>{hotel.distance}</p>
+//                 </div>
+//                 <button
+//                     type='button'
+//                     className='inline-flex items-center justify-end gap-1 text-xs text-blue-600 hover:underline'
+//                 >
+//                     Open details in new tab
+//                     <ArrowRight className='h-3 w-3' />
+//                 </button>
+//             </div>
+//         </div>
+//     )
+// }
+
+// /**
+//  * Nearby hotels section with smooth horizontal slide between pages of 4 cards
+//  */
+// function NearbyHotelsSection({ hotels }) {
+//     // TODO: real nearby hotels from Google Places / SerpAPI
+//     const placeholderNearby = [
+//         { name: 'Nearby Hotel 1', distance: '300m away' },
+//         { name: 'Nearby Hotel 2', distance: '700m away' },
+//         { name: 'Nearby Hotel 3', distance: '1.2km away' },
+//         { name: 'Nearby Hotel 4', distance: '1.5km away' },
+//         { name: 'Nearby Hotel 5', distance: '2.0km away' },
+//         { name: 'Nearby Hotel 6', distance: '2.5km away' },
+//     ]
+
+//     const data = Array.isArray(hotels) && hotels.length > 0 ? hotels : placeholderNearby
+//     const VISIBLE_PER_PAGE = 4
+
+//     // Chunk hotels into pages of 4
+//     const pages = React.useMemo(() => {
+//         if (!data.length) return []
+//         const chunks = []
+//         for (let i = 0; i < data.length; i += VISIBLE_PER_PAGE) {
+//             chunks.push(data.slice(i, i + VISIBLE_PER_PAGE))
+//         }
+//         return chunks
+//     }, [data])
+
+//     const total = data.length
+//     const totalPages = pages.length
+//     const [pageIndex, setPageIndex] = React.useState(0)
+
+//     const handleNext = () => {
+//         if (totalPages <= 1) return
+//         setPageIndex((prev) => (prev + 1) % totalPages)
+//     }
+
+//     const handlePrev = () => {
+//         if (totalPages <= 1) return
+//         setPageIndex((prev) => (prev - 1 + totalPages) % totalPages)
+//     }
+
+//     if (!total) {
+//         return (
+//             <SectionCard
+//                 title='Other Nearby Hotels'
+//                 subtitle='Explore alternative options around this area.'
+//             >
+//                 <p className='text-sm text-gray-400'>N/A</p>
+//             </SectionCard>
+//         )
+//     }
+
+//     return (
+//         <SectionCard
+//             title='Other Nearby Hotels'
+//             subtitle='Explore alternative options around this area.'
+//         >
+//             <div className='flex items-center justify-between mb-3'>
+//                 <p className='text-xs text-gray-500'>
+//                     Showing {Math.min((pageIndex + 1) * VISIBLE_PER_PAGE, total)} of {total}
+//                 </p>
+
+//                 {totalPages > 1 && (
+//                     <div className='flex gap-2'>
+//                         <button
+//                             type='button'
+//                             onClick={handlePrev}
+//                             className='p-1.5 rounded-full border bg-white hover:bg-gray-50'
+//                         >
+//                             <ChevronLeft className='h-4 w-4' />
+//                         </button>
+//                         <button
+//                             type='button'
+//                             onClick={handleNext}
+//                             className='p-1.5 rounded-full border bg-white hover:bg-gray-50'
+//                         >
+//                             <ChevronRight className='h-4 w-4' />
+//                         </button>
+//                     </div>
+//                 )}
+//             </div>
+
+//             <div className='relative overflow-hidden py-3'>
+//                 <div
+//                     className='flex transition-transform duration-500 ease-out'
+//                     style={{ transform: `translateX(-${pageIndex * 100}%)` }}
+//                 >
+//                     {pages.map((pageHotels, idx) => (
+//                         <div
+//                             key={idx}
+//                             className='min-w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3'
+//                         >
+//                             {pageHotels.map((h, i) => (
+//                                 <NearbyHotelCard
+//                                     key={h.id || h.name || i}
+//                                     hotel={h}
+//                                 />
+//                             ))}
+//                         </div>
+//                     ))}
+//                 </div>
+//             </div>
+//         </SectionCard>
+//     )
+// }
+/* END COMMENTED OUT - Nearby Hotels Section */
 
 /**
  * MAIN PAGE: ManualHotelDetailsPage
@@ -1323,8 +1724,6 @@ export default function ManualHotelDetailsPage() {
     const { slug } = useParams()
     const hotelFromState = location.state?.hotel || null
     const tripContext = location.state?.tripContext || null
-
-    const mapRef = useRef(null)
 
     const { hotel, isLoading, error } = useHotelDetails(hotelFromState, tripContext)
 
@@ -1366,16 +1765,6 @@ export default function ManualHotelDetailsPage() {
             console.error('Error updating session:', e)
             navigate(-1)
         }
-    }
-
-    const propertyDescriptionData = {
-        numberOfRooms: hotel.numberOfRooms ?? null,
-        phone: hotel.Contact?.phone ?? null,
-        email: hotel.Contact?.email ?? null,
-        // Split description by double newlines if present, otherwise single paragraph
-        paragraphs: hotel.Description
-            ? hotel.Description.split('\n\n').filter(p => p.trim())
-            : null,
     }
 
     useEffect(() => {
@@ -1434,43 +1823,85 @@ export default function ManualHotelDetailsPage() {
                 header={false}
                 className="space-y-5"
             >
-                <div className='flex flex-col md:flex-row md:items-center md:justify-between gap-3'>
-                    <div className='md:text-center'>
-                        <h1 className='text-2xl md:text-3xl font-bold flex items-center'>
-                            {displayHotelName}
-                            {/* add right next to the hotel name the number of star icons based on star rating */}
-                        </h1>
-                        <div className='text-xs md:text-sm flex flex-col md:flex-row md:items-center text-gray-600 mt-1'>
-                            <p className='flex flex-row items-center'>
-                                <MapPin className='h-4 w-4' />
-                                {hotel.HotelAddress}
-                            </p>
-
-                            <span onClick={scrollToMap} className='md:pl-1 md:inline font-semibold text-blue-600 hover:underline cursor-pointer'>View on map</span>
-                        </div>
-                    </div>
-
-                    <div className='flex justify-end'>
-                        <Button
-                            onClick={handleSelectHotelForTrip}
-                            className='text-md rounded-sm md:py-5 md:text-base bg-blue-600 hover:bg-blue-700 cursor-pointer'
-                        >
-                            Use this hotel in trip
-                        </Button>
-                    </div>
+                <div className='space-y-1'>
+                    <h1 className='text-2xl md:text-3xl font-bold flex items-center'>
+                        {displayHotelName}
+                        {hotel.hotelClass && typeof hotel.hotelClass === 'number' && hotel.hotelClass > 0 && (
+                            <span className='ml-2 flex items-center'>
+                                {[...Array(Math.min(Math.floor(hotel.hotelClass), 5))].map((_, i) => (
+                                    <Star key={i} className='h-4 w-4 md:h-5 md:w-5 fill-yellow-400 text-yellow-400' />
+                                ))}
+                            </span>
+                        )}
+                    </h1>
                 </div>
 
                 <PhotoCarousel photos={hotel.Photos} altPrefix="Hotel photo" />
+
+                {/* Property Description - moved below photos */}
+                <div className='bg-gray-50 rounded-lg p-4 md:p-6 space-y-4'>
+                    {/* Location row */}
+                    <div className='flex flex-col md:flex-row md:items-center md:justify-between gap-2'>
+                        <div className='flex items-start gap-2'>
+                            <MapPin className='h-5 w-5 text-gray-500 flex-shrink-0 mt-0.5' />
+                            <span className='text-sm md:text-base text-gray-700'>{hotel.HotelAddress}</span>
+                        </div>
+                        {hotel.gpsCoordinates && (
+                            <a 
+                                href={`https://www.google.com/maps/search/?api=1&query=${hotel.gpsCoordinates.latitude},${hotel.gpsCoordinates.longitude}`}
+                                target='_blank'
+                                rel='noopener noreferrer'
+                                className='inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:underline cursor-pointer'
+                            >
+                                <Navigation className='h-4 w-4' />
+                                View on Google Maps
+                            </a>
+                        )}
+                    </div>
+
+                    {/* Contact info row */}
+                    <div className='flex flex-wrap gap-4 text-sm'>
+                        {hotel.numberOfRooms && (
+                            <div className='flex items-center gap-2'>
+                                <Hotel className='h-4 w-4 text-gray-500' />
+                                <span className='text-gray-700'>{hotel.numberOfRooms} rooms</span>
+                            </div>
+                        )}
+                        {hotel.Contact?.phone && (
+                            <div className='flex items-center gap-2'>
+                                <span className='text-gray-500'>📞</span>
+                                <span className='text-gray-700'>{hotel.Contact.phone}</span>
+                            </div>
+                        )}
+                        {hotel.Contact?.website && (
+                            <a 
+                                href={hotel.Contact.website} 
+                                target='_blank' 
+                                rel='noopener noreferrer'
+                                className='flex items-center gap-2 text-blue-600 hover:underline'
+                            >
+                                <span>🌐</span>
+                                <span>Website</span>
+                            </a>
+                        )}
+                    </div>
+
+                    {/* Description */}
+                    {hotel.Description && (
+                        <div className='space-y-2 text-sm text-gray-700 leading-relaxed pt-2 border-t border-gray-200'>
+                            {hotel.Description.split('\n\n').filter(p => p.trim()).map((p, idx) => (
+                                <p key={idx}>{p}</p>
+                            ))}
+                        </div>
+                    )}
+                </div>
             </SectionCard>
 
             {/* Services & Amenities */}
-            <ServicesAmenitiesCard amenities={hotel.amenities} rawAmenities={hotel.rawAmenities} />
+            <ServicesAmenitiesCard rawAmenities={hotel.rawAmenities} />
 
             {/* Property Policies */}
             <PropertyPoliciesCard policies={hotel.policies} />
-
-            {/* Property Description (contact + text) */}
-            <PropertyDescriptionCard description={propertyDescriptionData} />
 
             {/* Rooms & prices */}
             <HotelRoomsSection
@@ -1494,10 +1925,11 @@ export default function ManualHotelDetailsPage() {
             />
 
             {/* Map & nearby places */}
-            <HotelMapSection mapRef={mapRef} />
+            <HotelMapSection hotel={hotel} />
 
-            {/* Nearby hotels */}
+            {/* Nearby hotels - COMMENTED OUT for now
             <NearbyHotelsSection />
+            */}
         </div>
     )
 }

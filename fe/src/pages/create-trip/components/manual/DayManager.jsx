@@ -22,6 +22,49 @@ import { CSS } from '@dnd-kit/utilities'
 import { GripVertical } from 'lucide-react'
 import MapRoute from '@/components/MapRoute'
 
+const TIME_SLOTS = [
+  { key: 'Morning', start: '8:00 AM', end: '12:00 PM', icon: '🌅', gradient: 'from-amber-50 to-yellow-50 border-amber-200' },
+  { key: 'Lunch', start: '12:00 PM', end: '1:30 PM', icon: '🍽️', gradient: 'from-green-50 to-emerald-50 border-green-200' },
+  { key: 'Afternoon', start: '1:30 PM', end: '6:00 PM', icon: '☀️', gradient: 'from-blue-50 to-cyan-50 border-blue-200' },
+  { key: 'Evening', start: '6:00 PM', end: '10:00 PM', icon: '🌆', gradient: 'from-purple-50 to-pink-50 border-purple-200' },
+]
+
+function createEmptySlots() {
+  return {
+    Morning: [],
+    Lunch: [],
+    Afternoon: [],
+    Evening: [],
+  }
+}
+
+function normalizeDaySlots(day) {
+  if (day?.slots) return day
+
+  const empty = createEmptySlots()
+  const existingPlaces = Array.isArray(day?.places) ? day.places : []
+
+  return {
+    ...day,
+    slots: {
+      ...empty,
+      Morning: existingPlaces,
+    },
+  }
+}
+
+function getAllPlacesForDay(day) {
+  if (day?.slots) {
+    const ordered = []
+    for (const slot of TIME_SLOTS) {
+      ordered.push(...(day.slots?.[slot.key] || []))
+    }
+    return ordered
+  }
+
+  return Array.isArray(day?.places) ? day.places : []
+}
+
 // Fallback to Pixabay if SerpAPI fails
 async function getImageFromPixabay(query) {
   const API_KEY = import.meta.env.VITE_PIXABAY_API_KEY;
@@ -88,29 +131,35 @@ function SortablePlace({ place, index, onRemove }) {
     opacity: isDragging ? 0.5 : 1,
   }
 
+  const handleViewDetails = () => {
+    const slug = encodeURIComponent(place.name || 'attraction');
+    navigate(`/manual/attraction/${slug}`, {
+      state: {
+        activity: {
+          // Keep both legacy/manual keys and AI-friendly keys for compatibility
+          name: place.name,
+          address: place.address,
+          lat: Number.isFinite(Number(place.lat)) ? Number(place.lat) : place.lat,
+          lon: Number.isFinite(Number(place.lon)) ? Number(place.lon) : place.lon,
+          PlaceName: place.name,
+          PlaceDetails: place.address,
+          Address: place.address,
+          GeoCoordinates: {
+              Latitude: Number.isFinite(Number(place.lat)) ? Number(place.lat) : place.lat,
+              Longitude: Number.isFinite(Number(place.lon)) ? Number(place.lon) : place.lon
+          },
+          Rating: 4.5,
+          imageUrl: imageUrl
+        }
+      },
+    })
+  }
+
   return (
     <div
       ref={setNodeRef}
       style={style}
-      onClick={() => {
-        const slug = encodeURIComponent(place.name || 'attraction');
-        navigate(`/manual/attraction/${slug}`, {
-          state: {
-            activity: {
-              PlaceName: place.name,
-              PlaceDetails: place.address,
-              Address: place.address,
-              GeoCoordinates: {
-                  Latitude: place.lat,
-                  Longitude: place.lon
-              },
-              Rating: 4.5,
-              imageUrl: imageUrl
-            }
-          },
-        })
-      }}
-      className='flex items-start justify-between p-3 bg-green-50 border border-green-200 rounded-lg group cursor-pointer hover:bg-green-100 transition-colors'
+      className='flex items-start justify-between p-3 bg-white border border-gray-200 rounded-lg group'
     >
       <div className='flex items-start gap-3 flex-1'>
         <button
@@ -130,28 +179,35 @@ function SortablePlace({ place, index, onRemove }) {
 
         <div className='flex-1 min-w-0'>
           <div className='flex items-center gap-2'>
-            <span className='text-sm font-semibold text-green-700'>
+            <span className='text-sm font-semibold text-gray-700'>
               {index + 1}.
             </span>
-            <p className='font-medium text-green-900 text-sm line-clamp-1'>{place.name}</p>
+            <p className='font-medium text-gray-900 text-sm line-clamp-1'>{place.name}</p>
           </div>
-          <p className='text-xs text-green-700 mt-0.5 capitalize'>{place.type.replace(/_/g, ' ')}</p>
-          <p className='text-xs text-green-600 mt-0.5 line-clamp-1'>{place.address}</p>
-          <p className='text-[10px] text-green-500 mt-0.5'>
-            {parseFloat(place.lat).toFixed(4)}, {parseFloat(place.lon).toFixed(4)}
-          </p>
-          <a 
-            href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className='flex items-center gap-1 text-[10px] text-green-600 hover:text-green-800 hover:underline mt-1'
-            onClick={(e) => e.stopPropagation()}
-          >
-            Open in Google Maps
-            <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14' />
-            </svg>
-          </a>
+          <p className='text-xs text-gray-700 mt-0.5 capitalize'>{place.type.replace(/_/g, ' ')}</p>
+          <p className='text-xs text-gray-600 mt-0.5 line-clamp-1'>{place.address}</p>
+          <div className='flex items-center gap-3 mt-1.5'>
+            <button
+              onClick={handleViewDetails}
+              className='flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800 hover:underline font-medium'
+            >
+              View Details
+              <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' />
+              </svg>
+            </button>
+            <a 
+              href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className='flex items-center gap-1 text-[10px] text-green-600 hover:text-green-800 hover:underline'
+            >
+              Google Maps
+              <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14' />
+              </svg>
+            </a>
+          </div>
         </div>
       </div>
       <button
@@ -169,9 +225,50 @@ function SortablePlace({ place, index, onRemove }) {
   )
 }
 
+function TimeSlotContainer({
+  day,
+  slot,
+  onRemovePlace,
+}) {
+  const slotId = `${day.id}::${slot.key}`
+  const { setNodeRef } = useSortable({ id: slotId })
+  const slotPlaces = day.slots?.[slot.key] || []
+
+  return (
+    <div ref={setNodeRef} className='rounded-lg border border-gray-200 bg-gray-50'>
+      <div className={`bg-gradient-to-r ${slot.gradient} border-l-4 px-4 py-2 rounded-lg mb-3`}>
+        <div className='flex items-center gap-2'>
+          <span className='text-xl'>{slot.icon}</span>
+          <h4 className='font-semibold text-lg'>{slot.key}</h4>
+          <span className='text-sm text-gray-600 ml-auto'>{slot.start} - {slot.end}</span>
+        </div>
+      </div>
+
+      <div className='space-y-2 px-4 pb-4'>
+        {slotPlaces.length === 0 ? (
+          <div className='text-center py-4 text-gray-500 text-sm'>
+            Drag a place here
+          </div>
+        ) : (
+          slotPlaces.map((place, index) => (
+            <SortablePlace
+              key={place.id}
+              place={place}
+              index={index}
+              onRemove={() => onRemovePlace(day.id, place.id)}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
 // Droppable Day Component
-function DroppableDay({ day, children, onRemoveDay, daySearchQuery, onSearchQueryChange, searching, searchResults, onAddPlace, onHoverPlace, onRemovePlace }) {
+function DroppableDay({ day, onRemoveDay, daySearchQuery, onSearchQueryChange, searching, searchResults, onAddPlace, onHoverPlace, onRemovePlace }) {
   const { setNodeRef } = useSortable({ id: day.id })
+
+  const allPlaces = getAllPlacesForDay(day)
 
   return (
     <div ref={setNodeRef} className='border-2 border-gray-200 rounded-xl p-6 bg-white shadow-sm'>
@@ -245,14 +342,22 @@ function DroppableDay({ day, children, onRemoveDay, daySearchQuery, onSearchQuer
         </div>
       )}
 
-      <div className='space-y-2 min-h-[50px]'>
-        {children}
+      {/* Time slots */}
+      <div className='space-y-4 min-h-[50px]'>
+        {TIME_SLOTS.map((slot) => (
+          <TimeSlotContainer
+            key={slot.key}
+            day={day}
+            slot={slot}
+            onRemovePlace={onRemovePlace}
+          />
+        ))}
       </div>
 
-      {day.places.length > 0 && (
+      {allPlaces.length > 0 && (
         <div className='mt-4'>
           <MapRoute 
-            activities={day.places.map(p => ({
+            activities={allPlaces.map(p => ({
               GeoCoordinates: {
                 Latitude: parseFloat(p.lat),
                 Longitude: parseFloat(p.lon)
@@ -267,7 +372,7 @@ function DroppableDay({ day, children, onRemoveDay, daySearchQuery, onSearchQuer
         </div>
       )}
 
-      {day.places.length === 0 && !daySearchQuery && (
+      {allPlaces.length === 0 && !daySearchQuery && (
         <div className='text-center py-6 text-gray-500 text-sm'>
           Search and add places to visit on this day
         </div>
@@ -277,6 +382,10 @@ function DroppableDay({ day, children, onRemoveDay, daySearchQuery, onSearchQuer
 }
 
 function DayManager({ location, tripDays, onDaysChange }) {
+  // Hover preview feature (hover popup + hover-triggered nearby fetch)
+  // Keep the implementation, but disable for now.
+  const ENABLE_HOVER_PREVIEW = false
+
   const [daySearchQueries, setDaySearchQueries] = useState({})
   const [dayPlaceResults, setDayPlaceResults] = useState({})
   const [searchingDayPlaces, setSearchingDayPlaces] = useState({})
@@ -294,6 +403,16 @@ function DayManager({ location, tripDays, onDaysChange }) {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   )
+
+  // Backward-compat: older sessions had only day.places; normalize into day.slots once.
+  useEffect(() => {
+    const needsNormalize = Array.isArray(tripDays) && tripDays.some(d => !d?.slots && Array.isArray(d?.places))
+    if (!needsNormalize) return
+
+    const normalized = tripDays.map(normalizeDaySlots)
+    onDaysChange(normalized)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripDays])
 
   const handleMouseMove = (e) => {
     const popupHeight = 400 
@@ -316,22 +435,42 @@ function DayManager({ location, tripDays, onDaysChange }) {
 
   // Fetch nearby amenities using Overpass API
   useEffect(() => {
+    if (!ENABLE_HOVER_PREVIEW) return
     if (!hoveredPlace) return
     if (nearbyData[hoveredPlace.id]) return
 
     const fetchNearby = async () => {
       setLoadingNearby(true)
       try {
+        // Same query as hotel search for consistency
         const query = `
           [out:json][timeout:25];
           (
-            node["tourism"~"attraction|museum|viewpoint|theme_park|zoo|aquarium"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            // Transit
             node["highway"="bus_stop"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
             node["public_transport"="platform"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
-            node["amenity"="fuel"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            node["railway"="station"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            node["railway"="subway_entrance"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            // Restaurants & Cafes
+            node["amenity"="restaurant"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            node["amenity"="cafe"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            node["amenity"="fast_food"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            // Convenience stores
             node["shop"="convenience"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
-            node["amenity"="pharmacy"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            node["shop"="supermarket"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            // Gas stations
+            node["amenity"="fuel"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            // ATM & Banks
             node["amenity"="atm"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            node["amenity"="bank"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            // Shopping
+            node["shop"="mall"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            node["shop"="department_store"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            // POI / Attractions
+            node["tourism"~"attraction|museum|viewpoint|artwork"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            node["historic"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            node["leisure"="park"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
+            node["amenity"="place_of_worship"](around:1000, ${hoveredPlace.lat}, ${hoveredPlace.lon});
           );
           out body;
         `
@@ -341,54 +480,70 @@ function DayManager({ location, tripDays, onDaysChange }) {
         })
         const data = await response.json()
         
-        // Process data
+        // Process data - matching hotel implementation with max 5 per category
+        const maxPerCategory = 5
         const attractions = []
         const seenAttractions = new Set()
+        const seenNames = new Set()
         const counts = {
-          bus_stop: 0,
-          gas_station: 0,
-          conbini: 0,
-          drug_store: 0,
-          atm: 0
+          transit: 0,
+          restaurant: 0,
+          convenience: 0,
+          gas: 0,
+          atm: 0,
+          shopping: 0,
+          poi: 0
         }
 
         data.elements.forEach(el => {
-          if (el.tags.tourism) {
-            const name = el.tags['name:en'] || el.tags.name
-            
-            if (!name) return
-            if (seenAttractions.has(name.toLowerCase())) return
-            if (['viewpoint', 'attraction', 'museum'].includes(name.toLowerCase())) return
-            
-            seenAttractions.add(name.toLowerCase())
-
-            // Calculate distance
-            const R = 6371e3 
-            const φ1 = hoveredPlace.lat * Math.PI/180
-            const φ2 = el.lat * Math.PI/180
-            const Δφ = (el.lat - hoveredPlace.lat) * Math.PI/180
-            const Δλ = (el.lon - hoveredPlace.lon) * Math.PI/180
-
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ/2) * Math.sin(Δλ/2)
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
-            const d = R * c 
-
-            attractions.push({
-              name: name,
-              distance: Math.round(d)
-            })
-          } else if (el.tags.highway === 'bus_stop' || el.tags.public_transport === 'platform') {
-            counts.bus_stop++
+          const name = el.tags?.['name:en'] || el.tags?.name
+          
+          // Only count places with names (matching hotel behavior)
+          if (!name) return
+          
+          // Skip duplicates
+          const nameKey = name.toLowerCase()
+          if (seenNames.has(nameKey)) return
+          seenNames.add(nameKey)
+          
+          // Categorize and count (with max limit per category)
+          if (el.tags.highway === 'bus_stop' || el.tags.public_transport === 'platform' || 
+              el.tags.railway === 'station' || el.tags.railway === 'subway_entrance') {
+            if (counts.transit < maxPerCategory) counts.transit++
+          } else if (el.tags.amenity === 'restaurant' || el.tags.amenity === 'cafe' || el.tags.amenity === 'fast_food') {
+            if (counts.restaurant < maxPerCategory) counts.restaurant++
+          } else if (el.tags.shop === 'convenience' || el.tags.shop === 'supermarket') {
+            if (counts.convenience < maxPerCategory) counts.convenience++
           } else if (el.tags.amenity === 'fuel') {
-            counts.gas_station++
-          } else if (el.tags.shop === 'convenience') {
-            counts.conbini++
-          } else if (el.tags.amenity === 'pharmacy') {
-            counts.drug_store++
-          } else if (el.tags.amenity === 'atm') {
-            counts.atm++
+            if (counts.gas < maxPerCategory) counts.gas++
+          } else if (el.tags.amenity === 'atm' || el.tags.amenity === 'bank') {
+            if (counts.atm < maxPerCategory) counts.atm++
+          } else if (el.tags.shop === 'mall' || el.tags.shop === 'department_store') {
+            if (counts.shopping < maxPerCategory) counts.shopping++
+          } else if (el.tags.tourism || el.tags.historic || el.tags.leisure === 'park' || el.tags.amenity === 'place_of_worship') {
+            if (counts.poi < maxPerCategory) counts.poi++
+            // POI / Attractions - also collect names for display
+            if (!seenAttractions.has(nameKey) && !['viewpoint', 'attraction', 'museum'].includes(nameKey)) {
+              seenAttractions.add(nameKey)
+              
+              // Calculate distance
+              const R = 6371e3 
+              const φ1 = hoveredPlace.lat * Math.PI/180
+              const φ2 = el.lat * Math.PI/180
+              const Δφ = (el.lat - hoveredPlace.lat) * Math.PI/180
+              const Δλ = (el.lon - hoveredPlace.lon) * Math.PI/180
+
+              const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                        Math.cos(φ1) * Math.cos(φ2) *
+                        Math.sin(Δλ/2) * Math.sin(Δλ/2)
+              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+              const d = R * c 
+
+              attractions.push({
+                name: name,
+                distance: Math.round(d)
+              })
+            }
           }
         })
 
@@ -410,11 +565,11 @@ function DayManager({ location, tripDays, onDaysChange }) {
 
     const timer = setTimeout(fetchNearby, 500)
     return () => clearTimeout(timer)
-  }, [hoveredPlace])
+  }, [ENABLE_HOVER_PREVIEW, hoveredPlace])
 
   const addNewDay = () => {
     const dayNumber = tripDays.length + 1
-    onDaysChange([...tripDays, { id: Date.now(), dayNumber, places: [] }])
+    onDaysChange([...tripDays, { id: Date.now(), dayNumber, places: [], slots: createEmptySlots() }])
   }
 
   const removeDay = (dayId) => {
@@ -480,8 +635,10 @@ function DayManager({ location, tripDays, onDaysChange }) {
   const addPlaceToDay = (dayId, place) => {
     const updated = tripDays.map(day => {
       if (day.id === dayId) {
+        const normalizedDay = normalizeDaySlots(day)
         // Check for duplicates using original ID if available, or just ID
-        if (day.places.find(p => (p.originalId || p.id) === place.id)) {
+        const allPlaces = getAllPlacesForDay(normalizedDay)
+        if (allPlaces.find(p => (p.originalId || p.id) === place.id)) {
           toast.info('This place is already in this day')
           return day
         }
@@ -491,8 +648,16 @@ function DayManager({ location, tripDays, onDaysChange }) {
           originalId: place.id,
           id: `place-${Date.now()}-${Math.random()}` 
         }
-        
-        return { ...day, places: [...day.places, newPlace] }
+
+        const nextSlots = {
+          ...(normalizedDay.slots || createEmptySlots()),
+          Morning: [...(normalizedDay.slots?.Morning || []), newPlace],
+        }
+
+        const nextDay = { ...normalizedDay, slots: nextSlots }
+        // Keep `places` in sync for compatibility with older code paths.
+        nextDay.places = getAllPlacesForDay(nextDay)
+        return nextDay
       }
       return day
     })
@@ -508,7 +673,14 @@ function DayManager({ location, tripDays, onDaysChange }) {
   const removePlaceFromDay = (dayId, placeId) => {
     const updated = tripDays.map(day => {
       if (day.id === dayId) {
-        return { ...day, places: day.places.filter(p => p.id !== placeId) }
+        const normalizedDay = normalizeDaySlots(day)
+        const nextSlots = {}
+        for (const slot of TIME_SLOTS) {
+          nextSlots[slot.key] = (normalizedDay.slots?.[slot.key] || []).filter(p => p.id !== placeId)
+        }
+        const nextDay = { ...normalizedDay, slots: nextSlots }
+        nextDay.places = getAllPlacesForDay(nextDay)
+        return nextDay
       }
       return day
     })
@@ -525,72 +697,97 @@ function DayManager({ location, tripDays, onDaysChange }) {
 
     if (!over || active.id === over.id) return
 
-    const findDayForPlace = (placeId) => {
+    const dayIds = new Set(tripDays.map(d => d.id))
+
+    const parseSlotId = (id) => {
+      if (typeof id !== 'string') return null
+      const parts = id.split('::')
+      if (parts.length !== 2) return null
+      return { dayId: Number(parts[0]) || parts[0], slotKey: parts[1] }
+    }
+
+    const findPlaceLocation = (placeId) => {
       for (const day of tripDays) {
-        if (day.places.find(p => p.id === placeId)) {
-          return day.id
+        const normalizedDay = normalizeDaySlots(day)
+        for (const slot of TIME_SLOTS) {
+          const idx = (normalizedDay.slots?.[slot.key] || []).findIndex(p => p.id === placeId)
+          if (idx !== -1) {
+            return { dayId: day.id, slotKey: slot.key, index: idx }
+          }
         }
       }
       return null
     }
 
-    const activeDayId = findDayForPlace(active.id)
-    let overDayId = findDayForPlace(over.id)
+    const activeLoc = findPlaceLocation(active.id)
+    if (!activeLoc) return
 
-    if (!overDayId) {
-        // Check if over.id is a day id
-        const overDay = tripDays.find(d => d.id === over.id)
-        if (overDay) {
-            overDayId = overDay.id
-        }
-    }
+    let target = null
 
-    if (!activeDayId || !overDayId) return
-
-    if (activeDayId === overDayId) {
-        // Reorder within same day
-        const dayIndex = tripDays.findIndex(d => d.id === activeDayId)
-        const day = tripDays[dayIndex]
-        const oldIndex = day.places.findIndex(p => p.id === active.id)
-        const newIndex = day.places.findIndex(p => p.id === over.id)
-
-        if (oldIndex !== -1 && newIndex !== -1) {
-            const newPlaces = arrayMove(day.places, oldIndex, newIndex)
-            const newTripDays = [...tripDays]
-            newTripDays[dayIndex] = { ...day, places: newPlaces }
-            onDaysChange(newTripDays)
-        }
+    // Over another place
+    const overPlaceLoc = findPlaceLocation(over.id)
+    if (overPlaceLoc) {
+      target = { ...overPlaceLoc }
     } else {
-        // Move to different day
-        const sourceDayIndex = tripDays.findIndex(d => d.id === activeDayId)
-        const targetDayIndex = tripDays.findIndex(d => d.id === overDayId)
-        
-        const sourceDay = tripDays[sourceDayIndex]
-        const targetDay = tripDays[targetDayIndex]
-
-        const sourcePlaces = [...sourceDay.places]
-        const targetPlaces = [...targetDay.places]
-
-        const activeIndex = sourcePlaces.findIndex(p => p.id === active.id)
-        if (activeIndex !== -1) {
-            const [movedPlace] = sourcePlaces.splice(activeIndex, 1)
-            
-            const overIndex = targetPlaces.findIndex(p => p.id === over.id)
-            if (overIndex !== -1) {
-                targetPlaces.splice(overIndex, 0, movedPlace)
-            } else {
-                targetPlaces.push(movedPlace)
-            }
-
-            const newTripDays = [...tripDays]
-            newTripDays[sourceDayIndex] = { ...sourceDay, places: sourcePlaces }
-            newTripDays[targetDayIndex] = { ...targetDay, places: targetPlaces }
-            onDaysChange(newTripDays)
-        }
+      // Over a slot container
+      const slotTarget = parseSlotId(over.id)
+      if (slotTarget) {
+        target = { dayId: slotTarget.dayId, slotKey: slotTarget.slotKey, index: -1 }
+      } else if (dayIds.has(over.id)) {
+        // Over a day container: default to Morning
+        target = { dayId: over.id, slotKey: 'Morning', index: -1 }
+      }
     }
+
+    if (!target) return
+
+    // Enforce AI-like lunch behavior: at most 1 lunch item.
+    if (target.slotKey === 'Lunch' && !(activeLoc.dayId === target.dayId && activeLoc.slotKey === 'Lunch')) {
+      const targetDay = normalizeDaySlots(tripDays.find(d => d.id === target.dayId))
+      const lunchCount = (targetDay?.slots?.Lunch || []).length
+      if (lunchCount >= 1) {
+        toast.info('Lunch can have only one place')
+        return
+      }
+    }
+
+    const newTripDays = tripDays.map(d => normalizeDaySlots(d))
+
+    const sourceDayIndex = newTripDays.findIndex(d => d.id === activeLoc.dayId)
+    const targetDayIndex = newTripDays.findIndex(d => d.id === target.dayId)
+    if (sourceDayIndex === -1 || targetDayIndex === -1) return
+
+    const sourceDay = { ...newTripDays[sourceDayIndex] }
+    const targetDayObj = sourceDayIndex === targetDayIndex ? sourceDay : { ...newTripDays[targetDayIndex] }
+
+    const sourceArr = [...(sourceDay.slots?.[activeLoc.slotKey] || [])]
+    const [moved] = sourceArr.splice(activeLoc.index, 1)
+    sourceDay.slots = { ...(sourceDay.slots || createEmptySlots()), [activeLoc.slotKey]: sourceArr }
+
+    const targetArr = [...(targetDayObj.slots?.[target.slotKey] || [])]
+    let insertIndex = target.index
+    if (insertIndex < 0 || insertIndex > targetArr.length) insertIndex = targetArr.length
+
+    // If moving within same slot and over a place, dnd-kit gives indices in the original array;
+    // after removal, adjust insertion index.
+    if (sourceDayIndex === targetDayIndex && activeLoc.slotKey === target.slotKey && target.index > activeLoc.index) {
+      insertIndex = Math.max(0, insertIndex - 1)
+    }
+
+    targetArr.splice(insertIndex, 0, moved)
+    targetDayObj.slots = { ...(targetDayObj.slots || createEmptySlots()), [target.slotKey]: targetArr }
+
+    // Sync flat `places` for compatibility.
+    sourceDay.places = getAllPlacesForDay(sourceDay)
+    targetDayObj.places = getAllPlacesForDay(targetDayObj)
+
+    newTripDays[sourceDayIndex] = sourceDay
+    newTripDays[targetDayIndex] = targetDayObj
+    onDaysChange(newTripDays)
   }
 
-  const allPlaceIds = tripDays.flatMap(day => day.places.map(p => p.id))
+  const allPlaceIds = tripDays.flatMap(day => getAllPlacesForDay(day).map(p => p.id))
+  const allSlotIds = tripDays.flatMap(day => TIME_SLOTS.map(slot => `${day.id}::${slot.key}`))
 
   return (
     <div className='mt-10'>
@@ -621,12 +818,12 @@ function DayManager({ location, tripDays, onDaysChange }) {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          <SortableContext items={[...allPlaceIds, ...tripDays.map(d => d.id)]} strategy={verticalListSortingStrategy}>
+          <SortableContext items={[...allPlaceIds, ...tripDays.map(d => d.id), ...allSlotIds]} strategy={verticalListSortingStrategy}>
             <div className='space-y-6'>
               {tripDays.map((day) => (
                 <DroppableDay
                   key={day.id}
-                  day={day}
+                  day={normalizeDaySlots(day)}
                   onRemoveDay={removeDay}
                   daySearchQuery={daySearchQueries[day.id]}
                   onSearchQueryChange={(val) => setDaySearchQueries({ ...daySearchQueries, [day.id]: val })}
@@ -634,6 +831,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
                   searchResults={dayPlaceResults[day.id]}
                   onAddPlace={addPlaceToDay}
                   onHoverPlace={(e, place, dayId, isMove) => {
+                    if (!ENABLE_HOVER_PREVIEW) return
                     if (isMove) {
                       handleMouseMove(e)
                     } else if (place) {
@@ -644,16 +842,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
                     }
                   }}
                   onRemovePlace={removePlaceFromDay}
-                >
-                  {day.places.map((place, index) => (
-                    <SortablePlace
-                      key={place.id}
-                      place={place}
-                      index={index}
-                      onRemove={() => removePlaceFromDay(day.id, place.id)}
-                    />
-                  ))}
-                </DroppableDay>
+                />
               ))}
             </div>
           </SortableContext>
@@ -661,7 +850,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
       )}
 
       {/* Hover Popup */}
-      {hoveredPlace && (
+      {ENABLE_HOVER_PREVIEW && hoveredPlace && (
         <div 
           className='fixed z-50 w-80 bg-white rounded-xl shadow-2xl border border-blue-100 p-5 animate-in fade-in zoom-in-95 duration-200 hidden xl:block'
           style={{ top: popupPosition.top, left: popupPosition.left }}
@@ -677,10 +866,6 @@ function DayManager({ location, tripDays, onDaysChange }) {
             <div className='flex items-start gap-2 text-sm text-gray-600'>
               <span className='min-w-[20px]'>📍</span>
               <p>{hoveredPlace.address}</p>
-            </div>
-            <div className='flex items-center gap-2 text-sm text-gray-600'>
-              <span className='min-w-[20px]'>🌍</span>
-              <p>{parseFloat(hoveredPlace.lat).toFixed(4)}, {parseFloat(hoveredPlace.lon).toFixed(4)}</p>
             </div>
 
             {/* Nearby Amenities for Hovered Place */}
@@ -704,27 +889,31 @@ function DayManager({ location, tripDays, onDaysChange }) {
                   </div>
                 )}
 
-                {/* Amenities Counts */}
-                <div className='grid grid-cols-5 gap-1.5'>
-                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Bus Stops">
-                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Bus</span>
-                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredPlace.id].counts.bus_stop}</span>
+                {/* Amenities Counts - matching hotel layout */}
+                <div className='grid grid-cols-6 gap-1.5'>
+                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Transit Stops">
+                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Transit</span>
+                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredPlace.id].counts.transit}</span>
                   </div>
-                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Gas Stations">
-                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Gas</span>
-                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredPlace.id].counts.gas_station}</span>
+                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Restaurants & Cafes">
+                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Food</span>
+                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredPlace.id].counts.restaurant}</span>
                   </div>
                   <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Convenience Stores">
                     <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Store</span>
-                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredPlace.id].counts.conbini}</span>
+                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredPlace.id].counts.convenience}</span>
                   </div>
-                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Pharmacies">
-                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Pharm</span>
-                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredPlace.id].counts.drug_store}</span>
+                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Gas Stations">
+                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>Gas</span>
+                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredPlace.id].counts.gas}</span>
                   </div>
-                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="ATMs">
+                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="ATMs & Banks">
                     <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>ATM</span>
                     <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredPlace.id].counts.atm}</span>
+                  </div>
+                  <div className='flex flex-col items-center justify-center p-1.5 bg-gray-50 rounded-md border border-gray-200' title="Points of Interest">
+                    <span className='text-[9px] font-semibold text-gray-500 uppercase tracking-tight'>POI</span>
+                    <span className='text-xs font-bold text-gray-800'>{nearbyData[hoveredPlace.id].counts.poi}</span>
                   </div>
                 </div>
               </div>

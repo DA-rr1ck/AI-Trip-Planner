@@ -30,10 +30,11 @@ function DestinationSelector({ label = 'What is your destination?', onLocationSe
         options={options}
         value={value}
         onChange={(v) => {
-          onLocationSelected?.(v?.label, v)
+          onLocationSelected?.(v?.label || null, v)
         }}
         onInputChange={setInputValue}
         placeholder='Search for a location...'
+        isClearable
       />
     </div>
   )

@@ -268,6 +268,72 @@ function CreateTrip() {
     })
   }
 
+  useEffect(() => {
+    if (!isManualMode) return
+
+    // Auto-calculate days from date range if dates are selected
+    const totalDays = getTotalDays()
+    if (totalDays > 0) {
+      setManualFormData(prev => ({ ...prev, noOfdays: totalDays.toString() }))
+    }
+
+    const n = parseInt(formData.noOfdays, 10)
+    if (!Number.isFinite(n) || n <= 0) return
+
+    setTripDays(prev => {
+      if (prev.length === n) {
+        return prev.map((day, index) => ({
+          ...day,
+          dayNumber: index + 1,
+          slots: day.slots || {
+            Morning: Array.isArray(day.places) ? day.places : [],
+            Lunch: [],
+            Afternoon: [],
+            Evening: [],
+          },
+        }))
+      }
+
+      const next = []
+      for (let i = 0; i < n; i++) {
+        const existing = prev[i]
+        if (existing) {
+          next.push({
+            ...existing,
+            dayNumber: i + 1,
+            slots: existing.slots || {
+              Morning: Array.isArray(existing.places) ? existing.places : [],
+              Lunch: [],
+              Afternoon: [],
+              Evening: [],
+            },
+          })
+        } else {
+          next.push({
+            id: Date.now() + i,
+            dayNumber: i + 1,
+            places: [],
+            slots: {
+              Morning: [],
+              Lunch: [],
+              Afternoon: [],
+              Evening: [],
+            },
+          })
+        }
+      }
+      return next
+    })
+  }, [formData.noOfdays, formData.startDate, formData.endDate, isManualMode])
+
+  useEffect(() => {
+    if (!isManualMode) return
+    if (!formData.noOfdays) {
+      setTripDays([])
+    }
+  }, [formData.noOfdays, isManualMode])
+
+  // Calculate number of days
   const getTotalDays = () => {
     if (!formData.startDate || !formData.endDate) return 0
     return differenceInDays(formData.endDate, formData.startDate) + 1
@@ -650,7 +716,7 @@ function CreateTrip() {
                 <div className='flex items-center justify-between'>
                   <button
                     type='button'
-                    onClick={() => handleInputChange('children', Math.max(0, formData.children - 1))}
+                    onClick={() => handleChildrenChange(Math.max(0, formData.children - 1))}
                     className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
                     disabled={formData.children === 0}
                   >
@@ -661,7 +727,7 @@ function CreateTrip() {
 
                   <button
                     type='button'
-                    onClick={() => handleInputChange('children', Math.min(10, formData.children + 1))}
+                    onClick={() => handleChildrenChange(Math.min(10, formData.children + 1))}
                     className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
                     disabled={formData.children === 10}
                   >
@@ -670,6 +736,40 @@ function CreateTrip() {
                 </div>
               </div>
             </div>
+
+            {/* Children Ages Selection */}
+            {formData.children > 0 && (
+              <div className='mt-6 p-6 border rounded-lg bg-gradient-to-br from-purple-50 to-pink-50'>
+                <h3 className='font-semibold text-lg mb-4 flex items-center gap-2'>
+                  <span>👶</span>
+                  Ages of Children
+                </h3>
+                <p className='text-xs text-gray-600 mb-4'>
+                  Please select the age of each child at the time of travel (0-17 years)
+                </p>
+
+                <div className='grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4'>
+                  {Array.from({ length: formData.children }).map((_, index) => (
+                    <div key={index} className='bg-white p-4 rounded-lg border border-purple-200'>
+                      <label className='block text-sm font-medium text-gray-700 mb-2'>
+                        Child {index + 1}
+                      </label>
+                      <select
+                        value={formData.childrenAges[index] ?? 5}
+                        onChange={(e) => handleChildAgeChange(index, Number(e.target.value))}
+                        className='w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500'
+                      >
+                        {Array.from({ length: 18 }, (_, i) => i).map((age) => (
+                          <option key={age} value={age}>
+                            {age} {age === 0 ? 'year (infant)' : age === 1 ? 'year' : 'years'}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Total Travelers Summary */}
             <div className='mt-4 p-3 bg-purple-50 border border-purple-200 rounded-lg'>

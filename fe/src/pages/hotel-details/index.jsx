@@ -93,9 +93,10 @@ function useHotelDetails(hotel, tripContext) {
 
                 const params = new URLSearchParams()
                 params.set('q', hotelName)
-                params.set('check_in_date', userSelection.startDate)
-                params.set('check_out_date', userSelection.endDate)
-                params.set('adults', userSelection.adults)
+                // Manual flow may not pass full tripContext; avoid sending "undefined" values.
+                if (userSelection.startDate) params.set('check_in_date', userSelection.startDate)
+                if (userSelection.endDate) params.set('check_out_date', userSelection.endDate)
+                params.set('adults', String(userSelection.adults ?? 1))
 
                 if (userSelection.children && userSelection.children > 0) {
                     params.set('children', userSelection.children)
@@ -2040,7 +2041,8 @@ function NearbyHotelCard({ hotel }) {
 // Nearby hotels section with pagination
 function NearbyHotelsSection({ nearbyHotels }) {
     const data = Array.isArray(nearbyHotels) ? nearbyHotels : []
-    const hasData = data.length > 0
+    const limitedData = data.slice(0, 3)
+    const hasData = limitedData.length > 0
 
     if (!hasData) {
         return (
@@ -2055,19 +2057,19 @@ function NearbyHotelsSection({ nearbyHotels }) {
         )
     }
 
-    const VISIBLE_PER_PAGE = 4
+    const VISIBLE_PER_PAGE = 3
 
     // Chunk hotels into pages of 4 (for desktop)
     const pages = React.useMemo(() => {
-        if (!data.length) return []
+        if (!limitedData.length) return []
         const chunks = []
-        for (let i = 0; i < data.length; i += VISIBLE_PER_PAGE) {
-            chunks.push(data.slice(i, i + VISIBLE_PER_PAGE))
+        for (let i = 0; i < limitedData.length; i += VISIBLE_PER_PAGE) {
+            chunks.push(limitedData.slice(i, i + VISIBLE_PER_PAGE))
         }
         return chunks
-    }, [data])
+    }, [limitedData])
 
-    const total = data.length
+    const total = limitedData.length
     const totalPages = pages.length
     const [pageIndex, setPageIndex] = React.useState(0)
 
@@ -2083,8 +2085,8 @@ function NearbyHotelsSection({ nearbyHotels }) {
         )
     }
 
-    // Mobile data: always just first 4
-    const mobileData = data.slice(0, 4)
+    // Mobile data: always just first 3
+    const mobileData = limitedData
 
     return (
         <SectionCard
