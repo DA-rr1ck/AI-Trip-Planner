@@ -6,7 +6,7 @@ const helmet = require('helmet');
 
 const { PORT = 8000 } = process.env;
 const { ALLOWED_ORIGINS } = require('./utils/clientOrigin');
-const authRoutes = require('./routes/auth');
+const authRoutes = require('./routes/authRoutes');
 const profileRoutes = require('./routes/profile');
 const serpHotelRoutes = require('./routes/hotelSerp');
 const placesRoutes = require('./routes/placesSerp');
