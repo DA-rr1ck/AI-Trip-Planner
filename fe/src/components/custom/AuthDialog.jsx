@@ -146,7 +146,9 @@ export default function AuthDialog({ open, onOpenChange, onSuccess }) {
                 <DialogHeader>
                     <DialogTitle>{mode === 'login' ? 'Sign in' : 'Create account'}</DialogTitle>
                     <DialogDescription>
-                        Use your email & password or continue with Google.
+                        {mode === 'login' 
+                            ? 'Use your email & password or continue with Google.' 
+                            : 'Enter your credentials for a new account.'}
                     </DialogDescription>
                 </DialogHeader>
 
