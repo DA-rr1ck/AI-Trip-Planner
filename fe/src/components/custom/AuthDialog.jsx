@@ -44,7 +44,9 @@ export default function AuthDialog({ open, onOpenChange, onSuccess }) {
     const [touched, setTouched] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
 
-    const [form, setForm] = useState({ username: '', email: '', phone: '', password: '' })
+    const INITIAL_FORM = { username: "", email: "", phone: "", password: "" };
+    const [form, setForm] = useState(INITIAL_FORM)
+
     const [err, setErr] = useState(null)
     const [loading, setLoading] = useState(false)
 
@@ -58,7 +60,7 @@ export default function AuthDialog({ open, onOpenChange, onSuccess }) {
         : "";
 
     const resetState = () => {
-        setForm({ password: "" });
+        setForm(INITIAL_FORM);
         setShowPassword(false);
         setTouched(false);
         setErr(null);
@@ -92,7 +94,7 @@ export default function AuthDialog({ open, onOpenChange, onSuccess }) {
         if (!validateEmail(form.email)) return false;
 
         if (mode === 'register') {
-            if (form.username.trim().length === 0) return false;
+            if ((form.username ?? "").trim().length === 0) return false;
             if (phoneError) return false; // invalid phone
         }
 
