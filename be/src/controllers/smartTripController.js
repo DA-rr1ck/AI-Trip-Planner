@@ -1,11 +1,12 @@
-// be/src/controllers/smartTripController.js
 const { 
     fetchAttractions, 
-    fetchRestaurants, 
+    fetchRestaurants,
+    fetchHotels, 
     getPriceRangesForBudget, 
     optimizeForAI 
 } = require('../services/databaseService');
 const { generateSmartTrip } = require('../services/geminiSmartService');
+const { db } = require('../config/firebase'); 
 
 /**
  * POST /api/smart-trip/generate
@@ -21,7 +22,8 @@ async function generateSmartTripController(req, res) {
             budgetMax, 
             adults, 
             children, 
-            childrenAges 
+            childrenAges
+            
         } = req.body;
 
         // Validate required fields
@@ -34,7 +36,7 @@ async function generateSmartTripController(req, res) {
 
         console.log(`Generating smart trip for ${location}...`);
 
-        // 1. Fetch attractions from database
+        // 1. Fetch attractions
         console.log('Fetching attractions...');
         const attractions = await fetchAttractions(location, 30);
         
@@ -45,17 +47,22 @@ async function generateSmartTripController(req, res) {
             });
         }
 
-        // 2. Fetch restaurants from database
+        // 2. Fetch restaurants
         console.log('Fetching restaurants...');
         const priceRanges = getPriceRangesForBudget(budgetMin || 500, budgetMax || 2000);
         const restaurants = await fetchRestaurants(location, priceRanges, 20);
 
-        // 3. Optimize data for AI (reduce tokens)
+        // 3. Fetch hotels
+        console.log('Fetching hotels...');
+        const hotels = await fetchHotels(location, priceRanges, 5);
+
+        // 4. Optimize data for AI
         console.log('Optimizing data for AI...');
         const optimizedAttractions = optimizeForAI(attractions);
         const optimizedRestaurants = optimizeForAI(restaurants);
+        const optimizedHotels = optimizeForAI(hotels);
 
-        // 4. Generate trip with Gemini
+        // 5. Generate trip with Gemini
         console.log('Calling Gemini API...');
         const tripPlan = await generateSmartTrip({
             location,
@@ -67,22 +74,26 @@ async function generateSmartTripController(req, res) {
             children: children || 0,
             childrenAges: childrenAges || [],
             attractions: optimizedAttractions,
-            restaurants: optimizedRestaurants
+            restaurants: optimizedRestaurants,
+            hotels: optimizedHotels
         });
 
-        // 5. Add metadata
+        // 6. Add metadata
         tripPlan.generationMethod = 'smart_database';
         tripPlan.databaseStats = {
             attractionsAvailable: attractions.length,
             restaurantsAvailable: restaurants.length,
+            hotelsAvailable: hotels.length,
             priceRangesUsed: priceRanges
         };
 
         console.log('Smart trip generated successfully!');
 
+        // ✅ 7. Return trip data WITHOUT saving to Firestore
+        // Frontend will handle preview and saving
         return res.json({
             success: true,
-            data: tripPlan,
+            tripData: tripPlan,  // Return the generated trip
             message: 'Trip generated successfully using database + AI'
         });
 

@@ -1,51 +1,32 @@
 
+import { api } from '@/lib/api'
+
+
 export async function generateSmartTrip(formData) {
     try {
-        const response = await fetch('/api/smart-trip/generate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                location: formData.location,
-                startDate: formData.startDate,
-                endDate: formData.endDate,
-                budgetMin: formData.budgetMin,
-                budgetMax: formData.budgetMax,
-                adults: formData.adults,
-                children: formData.children,
-                childrenAges: formData.childrenAges || []
-            })
-        });
+        console.log('=== Calling /smart-trip/generate ===')
+        console.log('Form data:', formData)
 
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to generate trip');
-        }
+        const response = await api.post('/smart-trip/generate', formData)
 
-        const result = await response.json();
-        return result.data;
+        console.log('Response:', response.data)
+        return response.data
     } catch (error) {
-        console.error('Error generating smart trip:', error);
-        throw error;
+        console.error('Error generating smart trip:', error)
+        
+        
+        const errorMessage = error.response?.data?.error || error.message || 'Failed to generate smart trip'
+        throw new Error(errorMessage)
     }
 }
 
-/**
- * Get available locations from database
- */
+
 export async function getAvailableLocations() {
     try {
-        const response = await fetch('/api/smart-trip/locations');
-        
-        if (!response.ok) {
-            throw new Error('Failed to fetch locations');
-        }
-
-        const result = await response.json();
-        return result.locations || [];
+        const response = await api.get('/smart-trip/locations')
+        return response.data
     } catch (error) {
-        console.error('Error fetching locations:', error);
-        return [];
+        console.error('Error fetching locations:', error)
+        throw new Error(error.response?.data?.error || 'Failed to fetch locations')
     }
 }
