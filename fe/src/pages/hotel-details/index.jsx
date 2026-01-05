@@ -54,7 +54,7 @@ function toSafeNumber(value, fallback = null) {
 }
 
 // Fetch full hotel details from backend /api/serp/hotel/details and normalize for the UI.
-function useHotelDetails(hotel, tripContext) {
+function fetchHotelDetails(hotel, tripContext) {
     const { language, currency } = useLocale()
 
     const [header, setHeader] = useState(null)
@@ -264,7 +264,6 @@ function normalizeAmenityKey(value) {
 
 // Services and Amenities card
 function ServicesAmenitiesCard({ amenities }) {
-    // Raw lists from useHotelDetails → normalized here
     const popular =
         Array.isArray(amenities?.popular) && amenities.popular.length > 0
             ? amenities.popular
@@ -2175,7 +2174,7 @@ export default function HotelDetailsPage() {
         nearbyHotels,
         isLoading,
         error,
-    } = useHotelDetails(hotelFromState, tripContext)
+    } = fetchHotelDetails(hotelFromState, tripContext)
 
     const scrollToMap = () => {
         const el = document.getElementById('hotel-map')

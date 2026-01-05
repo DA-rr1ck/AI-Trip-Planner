@@ -61,7 +61,7 @@ const parseReviewCount = (value) => {
 /**
  * Fetches data from /api/serp/attraction/details
  */
-function useAttractionDetails(attraction) {
+function fetchAttractionDetails(attraction) {
     const { language } = useLocale()
 
     const [header, setHeader] = useState(null)
@@ -1492,7 +1492,7 @@ export default function AttractionDetailsPage() {
         nearbyPlaces,
         isLoading,
         error,
-    } = useAttractionDetails(attractionFromState)
+    } = fetchAttractionDetails(attractionFromState)
 
     const scrollToMap = () => {
         const el = document.getElementById('attraction-map')
