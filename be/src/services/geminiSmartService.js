@@ -1,80 +1,123 @@
-// be/src/services/geminiSmartService.js
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { format, differenceInDays, addDays } = require('date-fns');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-/**
- * Build optimized prompt with database data
- */
-function buildSmartPrompt({ location, startDate, endDate, budgetMin, budgetMax, adults, children, childrenAges, attractions, restaurants }) {
-    const days = Math.ceil((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1;
+async function generateSmartTrip(tripParams) {
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     
+    const prompt = buildSmartPrompt(tripParams);
+    
+    console.log('Sending prompt to Gemini (length:', prompt.length, 'chars)');
+    
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    
+    
+    let cleanedText = text.trim()
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '');
+    
+    const parsedData = JSON.parse(cleanedText);
+    
+    return parsedData;
+}
+
+function buildSmartPrompt(params) {
+    const {
+        location,
+        startDate,
+        endDate,
+        budgetMin,
+        budgetMax,
+        adults,
+        children,
+        childrenAges,
+        attractions,
+        restaurants,
+        hotels  
+    } = params;
+    
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const totalDays = differenceInDays(end, start) + 1;
+    
+   
     const attractionsText = attractions.map((a, idx) => 
-        `${idx + 1}. ${a.name} (${a.rating}★, Lat: ${a.lat}, Lon: ${a.lon}) - ${a.description}`
+        `${idx + 1}. ${a.name} (${a.rating}★) - ${a.description} [Lat: ${a.lat}, Lon: ${a.lon}]`
     ).join('\n');
+    
     
     const restaurantsText = restaurants.map((r, idx) => 
-        `${idx + 1}. ${r.name} (${r.rating}★, ${r.priceRange}, Lat: ${r.lat}, Lon: ${r.lon}) - Best for: ${r.bestFor}, Signature: ${r.signatureDish}`
+        `${idx + 1}. ${r.name} (${r.rating}★, ${r.priceRange}) - ${r.signatureDish} [Lat: ${r.lat}, Lon: ${r.lon}]`
     ).join('\n');
+    
+   
+    const hotelsText = hotels.map((h, idx) => 
+        `${idx + 1}. ${h.name} (${h.rating}★, ${h.stars}⭐, ${h.priceRange}) - ${h.description}\n   Check-in: ${h.checkIn}, Check-out: ${h.checkOut}\n   Amenities: ${h.amenities}\n   [Lat: ${h.lat}, Lon: ${h.lon}]`
+    ).join('\n');
+    
+    return `Generate a detailed ${totalDays}-day travel itinerary for ${location}, Vietnam.
 
-    return `Generate a detailed ${days}-day travel itinerary for ${location}, Vietnam.
+**TRIP DETAILS:**
+- Dates: ${format(start, 'MMM d')} - ${format(end, 'MMM d, yyyy')}
+- Travelers: ${adults} Adults${children > 0 ? `, ${children} Children (ages: ${childrenAges.join(', ')})` : ''}
+- Budget: $${budgetMin} - $${budgetMax} per person
 
-**TRAVELER INFORMATION:**
-- Start Date: ${startDate}
-- End Date: ${endDate}
-- Travelers: ${adults} adults${children > 0 ? `, ${children} children (ages: ${childrenAges.join(', ')})` : ''}
-- Budget: $${budgetMin}-$${budgetMax} per person
-- Timezone: Asia/Ho_Chi_Minh
+**AVAILABLE HOTELS (select 2-3 best matching budget and needs):**
+${hotelsText}
 
-**AVAILABLE ATTRACTIONS (select best ones based on rating and relevance):**
+**AVAILABLE ATTRACTIONS (select best ones for itinerary):**
 ${attractionsText}
 
-**AVAILABLE RESTAURANTS (can be included as activities if desired):**
+**AVAILABLE RESTAURANTS (use for lunch/dinner recommendations):**
 ${restaurantsText}
 
 **INSTRUCTIONS:**
-1. Create itinerary for EXACTLY ${days} days using date keys in format: ${startDate}, ${new Date(new Date(startDate).getTime() + 86400000).toISOString().split('T')[0]}, etc.
-2. Day 1 (Arrival Day - ${startDate}):
-   - Morning: null (arrival time)
-   - Lunch: null
-   - Afternoon: Start at 2:00 PM with 1-2 light activities from the list
-   - Evening: 1-2 activities from the list
-3. Last Day (Departure Day - ${endDate}):
-   - Morning: 1-2 light activities ending before 12:00 PM
-   - Lunch: null
-   - Afternoon: null
-   - Evening: null
-4. Middle days:
-   - Morning (8:00 AM - 12:00 PM): 2-3 activities
-   - Lunch: null (travelers can choose their own lunch spots)
-   - Afternoon (1:30 PM - 6:00 PM): 2-3 activities
-   - Evening (6:00 PM - 10:00 PM): 1-2 activities
-5. ONLY select places from the provided lists above - use exact names and coordinates
-6. Consider operating hours when scheduling
-7. If children present, prioritize family-friendly activities
-8. Arrange activities logically by proximity (use provided lat/lon coordinates)
-9. Each activity MUST include all these fields:
-   - ActivityId: Generate unique ID like "activity-{timestamp}-{random}"
-   - ActivityType: "normal_attraction" for all activities
-   - PlaceName: Exact name from the list
-   - PlaceDetails: Description from the list
-   - GeoCoordinates: { "Latitude": number, "Longitude": number } - USE EXACT coordinates from the list
-   - TimeSlot: "HH:MM AM/PM - HH:MM AM/PM"
-   - Duration: "X hours" or "X minutes"
-   - BestTimeToVisit: "Morning" or "Afternoon" or "Evening"
-   - TicketPricing: Estimate based on budget (e.g., "Free", "$5-10", "$10-20")
+1. Select 2-3 hotels from the list above that best match the budget ($${budgetMin}-$${budgetMax}) and traveler needs
+2. Some notes about first and last day: 
+Day 1 (Arrival):
+  * Morning and Lunch are null
+  * Afternoon is fixed to start at 2:00 PM with hotel check-in activity (ActivityType: 'hotel_checkin')
+  * Include 1-2 light activities after check-in
+  * Evening has normal activities
+- Last Day (Departure):
+  * Morning includes light activities before 11:30 AM
+  * Last activity in Morning is hotel check-out at 11:30 AM (ActivityType: 'hotel_checkout')
+  * Lunch, Afternoon, Evening are null
+3. ONLY use places from the lists above - do NOT invent new places
+4. Include exact coordinates (lat/lon) from the lists
+5. Create realistic time slots that don't overlap
+6. Consider travel time between locations
+7. Make activities family-friendly if children are present
+8. Activities that are not hotel_checkin or hotel_checkout will have the ActivityType "normal_attraction"
 
-**OUTPUT FORMAT (JSON only, no markdown, no code blocks):**
+**RESPONSE FORMAT (JSON only, no markdown):**
 {
   "Location": "${location}",
-  "Duration": "${days} Days",
+  "Duration": "${totalDays} Days",
   "Budget": "$${budgetMin} - $${budgetMax} per person",
   "Travelers": "${adults} Adults${children > 0 ? `, ${children} Children` : ''}",
   "TotalTravelers": ${adults + children},
   "Timezone": "Asia/Ho_Chi_Minh",
+  "Hotels": [
+    {
+      "HotelName": "string (from list above)",
+      "HotelAddress": "string",
+      "Price": "string (estimate for ${totalDays} nights)",
+      "HotelImageUrl": "string",
+      "GeoCoordinates": {
+        "Latitude": number,
+        "Longitude": number
+      },
+      "Rating": "string",
+      "Description": "string"
+    }
+  ],
   "Itinerary": {
-    "${startDate}": {
-      "Theme": "Arrival & Exploration",
+    "${format(start, 'yyyy-MM-dd')}": {
+      "Theme": "Arrival & Check-in",
       "Morning": null,
       "Lunch": null,
       "Afternoon": {
@@ -82,91 +125,34 @@ ${restaurantsText}
         "EndTime": "6:00 PM",
         "Activities": [
           {
-            "ActivityId": "activity-1234567890-abc123",
-            "ActivityType": "normal_attraction",
-            "PlaceName": "exact name from attractions list",
-            "PlaceDetails": "description from the list",
+            "ActivityId": "auto-generated",
+            "ActivityType": "hotel_checkin",
+            "PlaceName": "Hotel Check-in",
+            "PlaceDetails": "Check-in at [selected hotel name]",
+            "ImageUrl": "string",
             "GeoCoordinates": {
-              "Latitude": 21.0285,
-              "Longitude": 105.8542
+              "Latitude": number,
+              "Longitude": number
             },
-            "TimeSlot": "2:00 PM - 4:00 PM",
-            "Duration": "2 hours",
-            "BestTimeToVisit": "Afternoon",
-            "TicketPricing": "Free"
+            "TicketPricing": "Included",
+            "TimeSlot": "2:00 PM - 3:00 PM",
+            "Duration": "1 hour",
+            "BestTimeToVisit": "Afternoon"
           }
         ]
       },
       "Evening": {
         "StartTime": "6:00 PM",
         "EndTime": "10:00 PM",
-        "Activities": [
-          {
-            "ActivityId": "activity-1234567891-def456",
-            "ActivityType": "normal_attraction",
-            "PlaceName": "exact name from list",
-            "PlaceDetails": "description",
-            "GeoCoordinates": {
-              "Latitude": 21.0333,
-              "Longitude": 105.8500
-            },
-            "TimeSlot": "6:00 PM - 8:00 PM",
-            "Duration": "2 hours",
-            "BestTimeToVisit": "Evening",
-            "TicketPricing": "$5-10"
-          }
-        ]
+        "Activities": []
       }
     }
   }
 }
 
-**CRITICAL RULES:**
-- Use EXACT date format for keys: ${startDate}, ${new Date(new Date(startDate).getTime() + 86400000).toISOString().split('T')[0]}, etc. (NOT Day1, Day2)
-- Use EXACT coordinates from the provided list for each activity
-- Generate unique ActivityId for EVERY activity
-- NO lunch time slots - set Lunch to null for all days
-- Return ONLY the JSON object, no markdown formatting, no explanations
-- Ensure all GeoCoordinates match the attractions/restaurants in the provided lists`;
-}
-
-/**
- * Generate trip using Gemini with database data
- */
-async function generateSmartTrip(tripParams) {
-    try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-        
-        const prompt = buildSmartPrompt(tripParams);
-        
-        console.log('Sending prompt to Gemini...');
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
-        
-        console.log('Raw Gemini response length:', text.length);
-        
-        // Clean and parse JSON
-        let cleanedText = text.trim();
-        
-        // Remove markdown code blocks if present
-        cleanedText = cleanedText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
-        
-        // Parse JSON
-        const parsedData = JSON.parse(cleanedText);
-        
-        console.log('Successfully parsed JSON response');
-        
-        // Return the parsed data directly (should already have the right structure)
-        return parsedData;
-    } catch (error) {
-        console.error('Error generating smart trip:', error);
-        console.error('Error details:', error.message);
-        throw new Error('Failed to generate trip with AI: ' + error.message);
-    }
+Return ONLY the JSON, no explanations or markdown.`;
 }
 
 module.exports = {
-    generateSmartTrip,
-    buildSmartPrompt
+    generateSmartTrip
 };

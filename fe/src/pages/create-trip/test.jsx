@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Select from 'react-select'
@@ -9,35 +8,150 @@ import { AiOutlineLoading3Quarters } from 'react-icons/ai'
 import AuthDialog from '@/components/custom/AuthDialog'
 import Button from '@/components/ui/Button'
 import { toast } from 'sonner'
-import { AI_PROMPT } from '@/constants/options'
-import { generateTrip } from '@/service/AIModel'
 import { useAuth } from '@/context/AuthContext'
+import { doc, setDoc } from 'firebase/firestore'
+import { db } from '@/service/firebaseConfig'
 import { Minus, Plus, DollarSign } from 'lucide-react'
 import DestinationSelector from './components/DestinationSelector'
 import ModeSwitch from './components/ModeSwitch'
 import HotelSearch from './components/manual/HotelSearch'
 import DayManager from './components/manual/DayManager'
 import { saveManualTrip } from './utils/manual/tripSaver'
+import { Capacitor, CapacitorHttp } from '@capacitor/core'
+import { generateAITrip } from '@/service/tripService'
+// Base URL for Nominatim
+const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+
+// --- JSONP fallback (ignores CORS) ---
+function nominatimSearchJSONP(query) {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      resolve([]);
+      return;
+    }
+
+    const callbackName = `__nominatim_cb_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2)}`;
+
+    const script = document.createElement('script');
+    let timeoutId;
+
+    function cleanup() {
+      if (script.parentNode) script.parentNode.removeChild(script);
+      clearTimeout(timeoutId);
+      // @ts-ignore
+      delete window[callbackName];
+    }
+
+    // @ts-ignore
+    window[callbackName] = (data) => {
+      cleanup();
+      const arr = Array.isArray(data) ? data : [];
+      resolve(arr);
+    };
+
+    script.src =
+      `${NOMINATIM_URL}?format=json&addressdetails=1&limit=10` +
+      `&q=${encodeURIComponent(query)}` +
+      `&json_callback=${callbackName}`;
+    script.async = true;
+    script.onerror = (err) => {
+      cleanup();
+      reject(err);
+    };
+
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Nominatim JSONP timeout'));
+    }, 10000);
+
+    document.body.appendChild(script);
+  });
+}
+
+// --- Single entry point: searchNominatim(query) ---
+async function searchNominatim(query) {
+  const isNative =
+    typeof Capacitor !== 'undefined' &&
+    typeof Capacitor.isNativePlatform === 'function' &&
+    Capacitor.isNativePlatform();
+
+  // 1. On native: try CapacitorHttp first
+  if (isNative) {
+    try {
+      console.log('[Nominatim] Native HTTP via CapacitorHttp, query:', query);
+
+      const res = await CapacitorHttp.get({
+        url: NOMINATIM_URL,
+        params: {
+          format: 'json',
+          q: query,
+        },
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      console.log(
+        '[Nominatim] Native response:',
+        res.status,
+        typeof res.data
+      );
+
+      const raw = res.data;
+      const parsed =
+        typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch (err) {
+      console.warn('[Nominatim] Native HTTP failed, will try fetch/JSONP:', err);
+    }
+  }
+
+  // 2. Try normal fetch (if CORS header is present)
+  try {
+    console.log('[Nominatim] Fetch attempt, query:', query);
+
+    const url = `${NOMINATIM_URL}?format=json&addressdetails=1&limit=10` + `&q=${encodeURIComponent(query)}`;
+
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (Array.isArray(data)) return data;
+  } catch (err) {
+    console.warn('[Nominatim] Fetch failed (probably CORS), fallback to JSONP:', err);
+  }
+
+  // 3. Last resort: JSONP (no CORS at all)
+  return await nominatimSearchJSONP(query);
+}
 
 function CreateTrip() {
   const [place, setPlace] = useState(null)
   const [aiFormData, setAiFormData] = useState({
+    location: '',
     startDate: null,
     endDate: null,
     budgetMin: 500,
     budgetMax: 2000,
     adults: 2,
     children: 0,
-    childrenAges: [], // Array to store ages of each child
+    childrenAges: [],
   })
   const [manualFormData, setManualFormData] = useState({
+    location: '',
     startDate: null,
     endDate: null,
     budgetMin: 500,
     budgetMax: 2000,
     adults: 2,
     children: 0,
-    childrenAges: [], // Array to store ages of each child
+    childrenAges: [],
   })
   const [options, setOptions] = useState([])
   const [inputValue, setInputValue] = useState('')
@@ -53,11 +167,9 @@ function CreateTrip() {
 
   // Load session data on mount
   useEffect(() => {
-    // Check if this is a hard reload (F5/Ctrl+R) using sessionStorage flag
     const wasPageReloaded = sessionStorage.getItem('createTripPageLoaded') === 'true'
 
     if (wasPageReloaded) {
-      // This is a reload - check navigation type
       const navEntry = performance.getEntriesByType("navigation")[0];
       if (navEntry && navEntry.type === 'reload') {
         sessionStorage.removeItem('createTripSession');
@@ -67,14 +179,12 @@ function CreateTrip() {
       }
     }
 
-    // Mark that this page has been loaded (for detecting future reloads)
     sessionStorage.setItem('createTripPageLoaded', 'true')
 
     const savedSession = sessionStorage.getItem('createTripSession')
     if (savedSession) {
       try {
         const parsed = JSON.parse(savedSession)
-        // Restore dates from strings
         if (parsed.aiFormData) {
           if (parsed.aiFormData.startDate) parsed.aiFormData.startDate = new Date(parsed.aiFormData.startDate)
           if (parsed.aiFormData.endDate) parsed.aiFormData.endDate = new Date(parsed.aiFormData.endDate)
@@ -134,7 +244,7 @@ function CreateTrip() {
     if (newCount > currentCount) {
       newAges = [...currentAges]
       for (let i = currentCount; i < newCount; i++) {
-        newAges.push(5) // default age
+        newAges.push(5)
       }
     } else {
       newAges = currentAges.slice(0, newCount)
@@ -172,16 +282,44 @@ function CreateTrip() {
 
     setTripDays(prev => {
       if (prev.length === n) {
-        return prev.map((day, index) => ({ ...day, dayNumber: index + 1 }))
+        return prev.map((day, index) => ({
+          ...day,
+          dayNumber: index + 1,
+          slots: day.slots || {
+            Morning: Array.isArray(day.places) ? day.places : [],
+            Lunch: [],
+            Afternoon: [],
+            Evening: [],
+          },
+        }))
       }
 
       const next = []
       for (let i = 0; i < n; i++) {
         const existing = prev[i]
         if (existing) {
-          next.push({ ...existing, dayNumber: i + 1 })
+          next.push({
+            ...existing,
+            dayNumber: i + 1,
+            slots: existing.slots || {
+              Morning: Array.isArray(existing.places) ? existing.places : [],
+              Lunch: [],
+              Afternoon: [],
+              Evening: [],
+            },
+          })
         } else {
-          next.push({ id: Date.now() + i, dayNumber: i + 1, places: [] })
+          next.push({
+            id: Date.now() + i,
+            dayNumber: i + 1,
+            places: [],
+            slots: {
+              Morning: [],
+              Lunch: [],
+              Afternoon: [],
+              Evening: [],
+            },
+          })
         }
       }
       return next
@@ -201,12 +339,10 @@ function CreateTrip() {
     return differenceInDays(formData.endDate, formData.startDate) + 1
   }
 
-  // Format budget range
   const formatBudget = (min, max) => {
     return `$${min.toLocaleString()} - $${max.toLocaleString()}`
   }
 
-  // Format travelers
   const formatTravelers = () => {
     const parts = []
     if (formData.adults > 0) parts.push(`${formData.adults} ${formData.adults === 1 ? 'Adult' : 'Adults'}`)
@@ -218,6 +354,7 @@ function CreateTrip() {
     return parts.join(', ') || '0 Travelers'
   }
 
+  // AI Trip Generation - Uses backend API
   const onGenerateTrip = async () => {
     if (!isAuthenticated) {
       setOpenDialog(true)
@@ -226,8 +363,8 @@ function CreateTrip() {
     }
 
     const totalDays = getTotalDays()
-    if (totalDays < 1 || totalDays > 5) {
-      toast.error('Please select a trip between 1-5 days.', { duration: 1200 })
+    if (totalDays < 1 || totalDays > 30) {
+      toast.error('Please select a trip between 1-30 days.', { duration: 1200 })
       return
     }
 
@@ -241,7 +378,6 @@ function CreateTrip() {
       return
     }
 
-    // NEW: Validate that all children have ages set
     if (formData.children > 0 && formData.childrenAges.length !== formData.children) {
       toast.error('Please set ages for all children.', { duration: 1200 })
       return
@@ -249,59 +385,35 @@ function CreateTrip() {
 
     setLoading(true)
 
-    const FINAL_PROMPT = AI_PROMPT
-      .replace('{location}', formData?.location)
-      .replace('{totalDays}', totalDays)
-      .replace('{adults}', formData.adults)
-      .replace('{children}', formData.children)
-      .replace('{childrenAges}', formData.childrenAges.join(', '))
-      .replace('{budgetMin}', formData.budgetMin)
-      .replace('{budgetMax}', formData.budgetMax)
-
     try {
-      const result = await generateTrip(FINAL_PROMPT)
-      console.log('Raw result:', result)
-
-      let tripData
-      if (typeof result === 'string') {
-        tripData = JSON.parse(result)
-      } else if (typeof result === 'object') {
-        tripData = result
-      } else {
-        throw new Error('Invalid trip data format')
-      }
-
-      // Extract TravelPlan
-      const travelPlan = tripData[0]?.TravelPlan || tripData.TravelPlan || tripData
-
-      const itineraryWithDates = {}
-      Object.entries(travelPlan.Itinerary || {}).forEach(([, dayData], index) => {
-        const actualDate = addDays(formData.startDate, index)
-        const dateKey = format(actualDate, 'yyyy-MM-dd')
-        itineraryWithDates[dateKey] = dayData
+      // Call backend API
+      const result = await generateAITrip({
+        location: formData.location,
+        startDate: formData.startDate.toISOString(),
+        endDate: formData.endDate.toISOString(),
+        budgetMin: formData.budgetMin,
+        budgetMax: formData.budgetMax,
+        adults: formData.adults,
+        children: formData.children,
+        childrenAges: formData.childrenAges
       })
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to generate trip')
+      }
 
       // Clear session on success
       sessionStorage.removeItem('createTripSession')
 
-      navigate('/edit-trip', {
+      // Navigate to edit page with trip data
+      navigate('/preview-trip', {
         state: {
-          tripData: {
-            userSelection: {
-              ...formData,
-              location: formData.location,
-              startDate: format(formData.startDate, 'yyyy-MM-dd'),
-              endDate: format(formData.endDate, 'yyyy-MM-dd'),
-              budget: formatBudget(formData.budgetMin, formData.budgetMax),
-              traveler: formatTravelers(),
-            },
-            tripData: {
-              ...travelPlan,
-              Itinerary: itineraryWithDates
-            }
-          }
+          tripData: result.tripData
         }
       })
+
+      toast.success('Trip generated successfully!')
+
     } catch (error) {
       console.error('Error generating trip:', error)
       toast.error(error.message || 'Failed to generate trip. Please try again.', { duration: 2000 })
@@ -313,24 +425,41 @@ function CreateTrip() {
   useEffect(() => {
     if (isManualMode) {
       // Do not clear place here as it is used in Manual Mode too
-      setOptions([])
-      setInputValue('')
-      return
+      setOptions([]);
+      setInputValue('');
+      return;
     }
 
-    const timer = setTimeout(() => {
-      if ((inputValue || '').length > 2) {
-        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(inputValue)}`)
-          .then(response => response.json())
-          .then(data => setOptions(data.map(item => ({ label: item.display_name, value: item }))))
-          .catch(() => setOptions([]))
-      } else {
-        setOptions([])
-      }
-    }, 500)
+    const state = { cancelled: false };
 
-    return () => clearTimeout(timer)
-  }, [inputValue, isManualMode])
+    const timer = setTimeout(() => {
+      const query = (inputValue || '').trim();
+      if (query.length <= 2) {
+        if (!state.cancelled) setOptions([]);
+        return;
+      }
+
+      (async () => {
+        try {
+          const results = await searchNominatim(query);
+          if (state.cancelled) return;
+
+          const arr = Array.isArray(results) ? results : [];
+
+          setOptions(arr.map((item) => ({ label: item.display_name, value: item })));
+        } catch (err) {
+          if (state.cancelled) return;
+          console.error('[Nominatim] Final error:', err);
+          setOptions([]);
+        }
+      })();
+    }, 500);
+
+    return () => {
+      state.cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [inputValue, isManualMode]);
 
   const onSaveManualTrip = async () => {
     if (!user) {
@@ -392,14 +521,11 @@ function CreateTrip() {
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [place, isManualMode, confirmedHotel, tripDays, aiFormData]);
 
   return (
-    <div className='sm:px-10 md:px-32 lg:px-56 px-5 mt-10'>
+    <div className='px-5 md:px-56 mt-5'>
       <ModeSwitch isManualMode={isManualMode} onChange={setIsManualMode} />
 
       <h2 className='font-bold text-3xl'>
@@ -412,7 +538,7 @@ function CreateTrip() {
       </p>
 
       {isManualMode ? (
-        <div className='mt-20 flex flex-col gap-10'>
+        <div className='mt-10 flex flex-col gap-10'>
           <DestinationSelector
             label='What is your desired destination?'
             value={place}
@@ -590,7 +716,7 @@ function CreateTrip() {
                 <div className='flex items-center justify-between'>
                   <button
                     type='button'
-                    onClick={() => handleInputChange('children', Math.max(0, formData.children - 1))}
+                    onClick={() => handleChildrenChange(Math.max(0, formData.children - 1))}
                     className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
                     disabled={formData.children === 0}
                   >
@@ -601,7 +727,7 @@ function CreateTrip() {
 
                   <button
                     type='button'
-                    onClick={() => handleInputChange('children', Math.min(10, formData.children + 1))}
+                    onClick={() => handleChildrenChange(Math.min(10, formData.children + 1))}
                     className='w-10 h-10 rounded-full bg-white border-2 border-pink-500 text-pink-500 hover:bg-pink-500 hover:text-white transition-colors flex items-center justify-center'
                     disabled={formData.children === 10}
                   >
@@ -610,6 +736,40 @@ function CreateTrip() {
                 </div>
               </div>
             </div>
+
+            {/* Children Ages Selection */}
+            {formData.children > 0 && (
+              <div className='mt-6 p-6 border rounded-lg bg-gradient-to-br from-purple-50 to-pink-50'>
+                <h3 className='font-semibold text-lg mb-4 flex items-center gap-2'>
+                  <span>👶</span>
+                  Ages of Children
+                </h3>
+                <p className='text-xs text-gray-600 mb-4'>
+                  Please select the age of each child at the time of travel (0-17 years)
+                </p>
+
+                <div className='grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4'>
+                  {Array.from({ length: formData.children }).map((_, index) => (
+                    <div key={index} className='bg-white p-4 rounded-lg border border-purple-200'>
+                      <label className='block text-sm font-medium text-gray-700 mb-2'>
+                        Child {index + 1}
+                      </label>
+                      <select
+                        value={formData.childrenAges[index] ?? 5}
+                        onChange={(e) => handleChildAgeChange(index, Number(e.target.value))}
+                        className='w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500'
+                      >
+                        {Array.from({ length: 18 }, (_, i) => i).map((age) => (
+                          <option key={age} value={age}>
+                            {age} {age === 0 ? 'year (infant)' : age === 1 ? 'year' : 'years'}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Total Travelers Summary */}
             <div className='mt-4 p-3 bg-purple-50 border border-purple-200 rounded-lg'>
@@ -646,7 +806,7 @@ function CreateTrip() {
           )}
         </div>
       ) : (
-        <div className='mt-20 flex flex-col gap-10'>
+        <div className='mt-10 flex flex-col gap-10'>
           <div>
             <h2 className='text-xl my-3 font-medium'>
               What is your desired destination?
@@ -853,7 +1013,7 @@ function CreateTrip() {
               </div>
             </div>
 
-            {/* NEW: Children Ages Selection */}
+            {/* Children Ages Selection */}
             {formData.children > 0 && (
               <div className='mt-6 p-6 border rounded-lg bg-gradient-to-br from-purple-50 to-pink-50'>
                 <h3 className='font-semibold text-lg mb-4 flex items-center gap-2'>
@@ -897,7 +1057,7 @@ function CreateTrip() {
         </div>
       )}
 
-      <div className='my-10 justify-end flex'>
+      <div className='mt-5 mb-20 md:mb-5 justify-end flex'>
         <Button
           disabled={loading}
           onClick={isManualMode ? onSaveManualTrip : onGenerateTrip}

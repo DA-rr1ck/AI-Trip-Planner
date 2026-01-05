@@ -1,13 +1,13 @@
 // fe/src/pages/smart-trip/view/index.jsx
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { doc, getDoc } from 'firebase/firestore'
-import { db } from '@/service/firebaseConfig'
-import { Loader2, Calendar, Users, DollarSign, MapPin, Sparkles, ArrowLeft, Edit } from 'lucide-react'
+import { Loader2, Calendar, Users, DollarSign, Sparkles, ArrowLeft, Edit } from 'lucide-react'
 import { format, parse } from 'date-fns'
+import { toast } from 'sonner'
 import SmartTripOverview from '../components/SmartTripOverview'
 import SmartItinerary from '../components/SmartItinerary'
 import SmartTripMap from '../components/SmartTripMap'
+import { getTripById } from '@/service/tripService'
 
 function ViewSmartTrip() {
   const { tripId } = useParams()
@@ -22,22 +22,23 @@ function ViewSmartTrip() {
   const fetchTripData = async () => {
     try {
       setLoading(true)
-      const docRef = doc(db, 'AITrips', tripId)
-      const docSnap = await getDoc(docRef)
-
-      if (docSnap.exists()) {
-        const tripData = {
-          id: docSnap.id,
-          ...docSnap.data()
-        }
-        console.log('Smart trip data loaded:', tripData)
-        setTrip(tripData)
+      
+      console.log('Fetching trip:', tripId)
+      
+      const result = await getTripById(tripId)
+      
+      if (result.success && result.trip) {
+        console.log('Smart trip data loaded:', result.trip)
+        setTrip(result.trip)
       } else {
-        console.error('No such trip found!')
+        console.error('Trip not found in response')
+        toast.error('Trip not found')
         navigate('/my-trips')
       }
     } catch (error) {
       console.error('Error fetching trip:', error)
+      toast.error('Failed to load trip')
+      navigate('/my-trips')
     } finally {
       setLoading(false)
     }
