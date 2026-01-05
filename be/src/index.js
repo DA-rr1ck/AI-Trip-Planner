@@ -8,9 +8,9 @@ const { PORT = 8000 } = process.env;
 const { ALLOWED_ORIGINS } = require('./utils/clientOrigin');
 const authRoutes = require('./routes/authRoutes');
 const profileRoutes = require('./routes/profile');
-const serpHotelRoutes = require('./routes/hotelSerp');
+const serpHotelRoutes = require('./routes/serpHotelRoutes');
 const placesRoutes = require('./routes/placesSerp');
-const serpAttractionRoutes = require('./routes/attractionSerp');
+const serpAttractionRoutes = require('./routes/serpAttractionRoutes');
 const imagesRoutes = require('./routes/images');
 const smartTripRoutes = require('./routes/smartTripRoutes');
 const tripRoutes = require('./routes/tripRoutes')
