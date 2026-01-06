@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { parse, differenceInDays } from 'date-fns'
 import { loadTempChanges } from './utils/localStorage'
@@ -20,6 +21,11 @@ import TripMapSection from './components/TripMapSection'
 
 function PreviewTrip() {
   const { user } = useAuth()
+
+  const [searchParams] = useSearchParams()
+  const forcedTripId = searchParams.get('tripId')
+
+  const navigate = useNavigate()
   
   // Use custom hooks
   const {
@@ -29,7 +35,7 @@ function PreviewTrip() {
     rawTripData,
     hasUnsavedChanges,
     setHasUnsavedChanges,
-  } = useTripData()
+  } = useTripData(null, forcedTripId)
 
   const {
     sensors,
@@ -63,6 +69,13 @@ function PreviewTrip() {
     handleHotelClick,
     handleActivityClick,
   } = useTripActions(tripData, updateTripData, existingTripId, rawTripData, user)
+
+  useEffect(() => {
+    // If URL has no tripId, rewrite it to the canonical form
+    if (!forcedTripId && existingTripId) {
+      navigate(`/preview-trip?tripId=${existingTripId}`, { replace: true })
+    }
+  }, [forcedTripId, existingTripId, navigate])
 
   // Warn before leaving with unsaved changes
   useEffect(() => {

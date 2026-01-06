@@ -396,14 +396,14 @@ function HeaderCard({
                     </h1>
                 </div>
 
-                <div className="flex justify-end">
+                {/* <div className="flex justify-end">
                     <Button
                         onClick={onSelectAttraction}
                         className="text-md rounded-sm md:py-5 md:text-base bg-blue-600 hover:bg-blue-700 transition-all duration-150 active:scale-95 cursor-pointer"
                     >
                         Use this attraction in trip
                     </Button>
-                </div>
+                </div> */}
             </div>
 
             <hr className="w-full bg-gray-500" />
@@ -1501,6 +1501,8 @@ export default function AttractionDetailsPage() {
         }
     }
 
+    const returnTo = location.state?.returnTo || '/preview-trip'
+
     const handleSelectAttractionForTrip = () => {
         // TODO: implement logic:
         // - navigate back to EditTrip with selected attraction info in state
@@ -1543,7 +1545,7 @@ export default function AttractionDetailsPage() {
             <div className='p-6 md:px-20 lg:px-40'>
                 <Button
                     variant='outline'
-                    onClick={() => navigate(-1)}
+                    onClick={() => navigate(returnTo)}
                     className='mb-4 flex items-center gap-2'
                 >
                     <ArrowLeft className='h-4 w-4' /> Back
@@ -1562,7 +1564,7 @@ export default function AttractionDetailsPage() {
                 <Button
                     variant='outline'
                     size='sm'
-                    onClick={() => navigate(-1)}
+                    onClick={() => navigate(returnTo)}
                     className='flex items-center gap-2'
                 >
                     <ArrowLeft className='h-4 w-4' /> Back to trip

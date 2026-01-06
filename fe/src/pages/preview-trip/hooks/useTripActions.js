@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { toast } from 'sonner'
 import { format, parse, differenceInDays, addDays } from 'date-fns'
 import { clearTempChanges, clearTempTripId } from '../utils/localStorage'
@@ -12,12 +12,29 @@ import { saveTripToFirestore } from '@/service/tripService'
 
 export function useTripActions(tripData, updateTripData, existingTripId, rawTripData, user) {
   const navigate = useNavigate()
+  const location = useLocation()
+
   const [saving, setSaving] = useState(false)
   const [regeneratingHotels, setRegeneratingHotels] = useState(false)
   const [regeneratingAll, setRegeneratingAll] = useState(false)
   const [hotelPreference, setHotelPreference] = useState('')
   const [isEditingSelection, setIsEditingSelection] = useState(false)
   const [editedSelection, setEditedSelection] = useState(null)
+
+  const buildReturnTo = () => {
+    const path = location.pathname
+    const search = location.search || ''
+    const params = new URLSearchParams(search)
+
+    // Ensure preview-trip always has tripId in query when returning
+    if (path === '/preview-trip' && !params.has('tripId')) {
+      const join = search ? '&' : '?'
+      return `${path}${search}${join}tripId=${encodeURIComponent(existingTripId)}`
+    }
+
+    // For /edit-trip/:tripId, pathname already contains tripId — keep as-is
+    return `${path}${search}`
+  }
 
   const handleEditSelection = () => {
     const start = parse(tripData.userSelection.startDate, 'yyyy-MM-dd', new Date())
@@ -457,6 +474,7 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
       clearTempChanges(existingTripId)
       clearTempTripId()
       setHasUnsavedChanges(false)
+      localStorage.removeItem(`tp:selectedHotel:${existingTripId}`)
   
       toast.success(result.message)
       navigate(`/view-trip/${result.tripId}`)
@@ -474,7 +492,8 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
     navigate(`/hotel/${slug}`, {
       state: {
         hotel,
-        tripContext: { userSelection: tripData.userSelection },
+        tripContext: { userSelection: tripData.userSelection, existingTripId },
+        returnTo: buildReturnTo(),
       },
     })
   }
@@ -484,7 +503,8 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
     navigate(`/attraction/${slug}`, {
       state: {
         activity,
-        tripContext: { userSelection: tripData.userSelection },
+        tripContext: { userSelection: tripData.userSelection, existingTripId },
+        returnTo: buildReturnTo(),
       },
     })
   }

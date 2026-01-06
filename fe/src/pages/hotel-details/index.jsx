@@ -1954,7 +1954,7 @@ function HotelMapSection({ nearbyHighlights, header, hotelFromState }) {
 function NearbyHotelCard({ hotel }) {
     const navigate = useNavigate()
     const location = useLocation()
-    const tripContext = location.state?.tripContext || null
+    const { tripContext, returnTo } = location.state || {}
 
     const name = hotel?.name || 'Hotel'
 
@@ -1974,7 +1974,8 @@ function NearbyHotelCard({ hotel }) {
         navigate(`/hotel/${slug}`, {
             state: {
                 hotel,
-                tripContext
+                tripContext,
+                returnTo,
             },
         })
     }, [navigate])
@@ -2183,25 +2184,33 @@ export default function HotelDetailsPage() {
         }
     }
 
+    const tripId = tripContext?.existingTripId
+    const returnTo = location.state?.returnTo || '/preview-trip'
+    const hotel = location.state?.hotel
+
     const handleSelectHotelForTrip = () => {
-        try {
-            const savedSession = sessionStorage.getItem('createTripSession')
-            if (savedSession) {
-                const parsed = JSON.parse(savedSession)
-                // Update confirmedHotel
-                // We use hotelFromState because it contains the original search result data (lat, lon, id)
-                // which is needed for the map and other logic in CreateTrip
-                parsed.confirmedHotel = hotelFromState
-                sessionStorage.setItem('createTripSession', JSON.stringify(parsed))
-                navigate('/create-trip')
-            } else {
-                // If no session, maybe just go back?
-                navigate(-1)
-            }
-        } catch (e) {
-            console.error('Error updating session:', e)
-            navigate(-1)
+        if (!tripId || !hotel) {
+            navigate(returnTo)
+            return
         }
+
+        const payload = {
+            header,
+            description,
+            ratings_reviews: ratingsReviews,
+            nearby_highlights: nearbyHighlights,
+
+            // keep fields that only exist on the nearby item
+            price: hotelFromState?.price,
+            thumbnail: hotelFromState?.thumbnail,
+            property_token: hotelFromState?.property_token,
+            hotel_class: hotelFromState?.hotel_class,
+        };
+
+        // one-time handoff (consumed by useHotelManagement)
+        sessionStorage.setItem(`tp:selectedHotel:${tripId}`, JSON.stringify(payload))
+
+        navigate(returnTo, { replace: true })
     }
 
     if (isLoading) {
@@ -2220,7 +2229,7 @@ export default function HotelDetailsPage() {
             <div className="p-6 md:px-20 lg:px-40">
                 <Button
                     variant="outline"
-                    onClick={() => navigate(-1)}
+                    onClick={() => navigate(returnTo)}
                     className="mb-4 flex items-center gap-2"
                 >
                     <ArrowLeft className="h-4 w-4" /> Back
@@ -2239,7 +2248,7 @@ export default function HotelDetailsPage() {
                 <Button
                     variant='outline'
                     size='sm'
-                    onClick={() => navigate(-1)}
+                    onClick={() => navigate(returnTo)}
                     className='flex items-center gap-2'
                 >
                     <ArrowLeft className='h-4 w-4' /> Back to trip
