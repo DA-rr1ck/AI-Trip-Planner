@@ -38,12 +38,18 @@ async function getHotelImage(hotelName, hotelAddress) {
 
 // Component for each hotel card
 function HotelCard({ hotel }) {
-  const [imageUrl, setImageUrl] = useState('/placeholder.jpg');
-  const [imageLoading, setImageLoading] = useState(true);
+  // Check if hotel already has a saved image URL
+  const savedImageUrl = hotel.HotelImageUrl && hotel.HotelImageUrl !== '/placeholder.jpg' 
+    ? hotel.HotelImageUrl 
+    : null;
+  
+  const [imageUrl, setImageUrl] = useState(savedImageUrl || '/placeholder.jpg');
+  const [imageLoading, setImageLoading] = useState(!savedImageUrl);
   const [imageError, setImageError] = useState(false);
 
   useEffect(() => {
-    if (hotel.HotelName) {
+    // Only fetch if there's no saved image URL
+    if (!savedImageUrl && hotel.HotelName) {
       setImageLoading(true);
       setImageError(false);
       
@@ -58,7 +64,7 @@ function HotelCard({ hotel }) {
           setImageLoading(false);
         });
     }
-  }, [hotel.HotelName, hotel.HotelAddress]);
+  }, [hotel.HotelName, hotel.HotelAddress, savedImageUrl]);
 
   return (
     <Link 

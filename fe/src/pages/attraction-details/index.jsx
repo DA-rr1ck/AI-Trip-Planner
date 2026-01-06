@@ -1539,6 +1539,99 @@ export default function AttractionDetailsPage() {
     }
 
     if (error) {
+        // If we have attraction data from state, show a basic view instead of just error
+        if (attractionFromState) {
+            return (
+                <div className='p-6 mx-auto pb-20 md:pb-0 md:px-20 lg:w-7xl space-y-4 md:space-y-6'>
+                    {/* Back button */}
+                    <div>
+                        <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={() => navigate(-1)}
+                            className='flex items-center gap-2'
+                        >
+                            <ArrowLeft className='h-4 w-4' /> Back to trip
+                        </Button>
+                    </div>
+
+                    {/* Basic Header with data from state */}
+                    <SectionCard header={false} className="space-y-5">
+                        <div>
+                            <h1 className="text-2xl md:text-3xl font-bold">
+                                {attractionFromState.PlaceName || 'Attraction'}
+                            </h1>
+                            {attractionFromState.PlaceAddress && (
+                                <p className="text-gray-600 mt-2 flex items-center gap-2">
+                                    <MapPin className="h-4 w-4" />
+                                    {attractionFromState.PlaceAddress}
+                                </p>
+                            )}
+                        </div>
+
+                        <hr className="w-full bg-gray-500" />
+
+                        {/* Description from state */}
+                        {attractionFromState.PlaceDetails && (
+                            <div>
+                                <h3 className="font-semibold mb-2">About</h3>
+                                <p className="text-gray-700">{attractionFromState.PlaceDetails}</p>
+                            </div>
+                        )}
+
+                        {/* Additional info */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {attractionFromState.Duration && (
+                                <div className="flex items-center gap-2 text-gray-600">
+                                    <Clock3 className="h-4 w-4" />
+                                    <span>Duration: {attractionFromState.Duration}</span>
+                                </div>
+                            )}
+                            {attractionFromState.TicketPricing && (
+                                <div className="flex items-center gap-2 text-gray-600">
+                                    <Ticket className="h-4 w-4" />
+                                    <span>Pricing: {attractionFromState.TicketPricing}</span>
+                                </div>
+                            )}
+                            {attractionFromState.BestTimeToVisit && (
+                                <div className="flex items-center gap-2 text-gray-600">
+                                    <Clock3 className="h-4 w-4" />
+                                    <span>Best Time: {attractionFromState.BestTimeToVisit}</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Map link if we have coordinates */}
+                        {attractionFromState.GeoCoordinates && (
+                            <div className="pt-4">
+                                <a
+                                    href={`https://www.google.com/maps/search/?api=1&query=${attractionFromState.GeoCoordinates.Latitude},${attractionFromState.GeoCoordinates.Longitude}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-800"
+                                >
+                                    <MapPin className="h-4 w-4" />
+                                    View on Google Maps
+                                    <ExternalLink className="h-3 w-3" />
+                                </a>
+                            </div>
+                        )}
+
+                        {/* Note about limited info */}
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-4">
+                            <p className="text-sm text-yellow-800">
+                                ⚠️ Detailed information for this location is not available. 
+                                The data shown above is based on your search.
+                            </p>
+                        </div>
+                    </SectionCard>
+
+                    <ScrollTopButton />
+                </div>
+            )
+        }
+
+        // No state data either, show minimal error
         return (
             <div className='p-6 md:px-20 lg:px-40'>
                 <Button

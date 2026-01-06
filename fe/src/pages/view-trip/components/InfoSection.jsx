@@ -1,18 +1,18 @@
 import React, { useEffect, useState } from 'react'
 import { format, parse, differenceInDays } from 'date-fns'
+import { api } from '@/lib/api'
 
 // Function to get location image from your backend SerpAPI
 async function getLocationImage(locationName) {
   try {
-    const response = await fetch(
-      `/api/serp/images/search?q=${encodeURIComponent(locationName + ' landmark tourist destination')}`
-    );
-
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
-    }
-
-    const data = await response.json();
+    // Extract the main location name (first part before comma) for better image results
+    const simplifiedLocation = locationName?.split(',')[0]?.trim() || locationName;
+    
+    const { data } = await api.get('/serp/images/search', {
+      params: {
+        q: `${simplifiedLocation} landmark tourist destination`,
+      },
+    })
     
     // Return the first image's original URL, or fallback to thumbnail, or default fallback
     return data.images?.[0]?.original || 
@@ -28,8 +28,12 @@ function InfoSection({ trip }) {
   const [imageUrl, setImageUrl] = useState('https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=800');
   const [imageLoading, setImageLoading] = useState(true);
 
+  // Get location from multiple possible sources (AI trips vs manual trips)
+  const location = trip?.tripData?.Location || 
+                   trip?.userSelection?.location || 
+                   trip?.tripData?.location;
+
   useEffect(() => {
-    const location = trip?.tripData?.Location || trip?.userSelection?.location;
     if (location) {
       setImageLoading(true);
       getLocationImage(location)
@@ -42,7 +46,7 @@ function InfoSection({ trip }) {
           setImageLoading(false);
         });
     }
-  }, [trip]);
+  }, [location]);
 
   // Calculate total days (supports both date ranges and legacy day counts)
   const getTotalDays = () => {
@@ -76,7 +80,8 @@ function InfoSection({ trip }) {
     return null
   }
 
-  const location = trip?.tripData?.Location || trip?.userSelection?.location;
+  // Display location - use simplified version (first part before comma)
+  const displayLocation = location?.split(',')[0]?.trim() || location || 'Your Destination';
   const startDate = trip?.userSelection?.startDate;
   const endDate = trip?.userSelection?.endDate;
   const budget = trip?.userSelection?.budget || trip?.tripData?.Budget;
@@ -94,7 +99,7 @@ function InfoSection({ trip }) {
         )}
         <img 
           src={imageUrl} 
-          alt={location}
+          alt={displayLocation}
           className={`h-full w-full object-cover transition-opacity duration-300 ${
             imageLoading ? 'opacity-0' : 'opacity-100'
           }`}
@@ -108,7 +113,7 @@ function InfoSection({ trip }) {
 
       {/* Trip Details Card */}
       <div className='bg-white p-6 rounded-xl shadow-md border'>
-        <h2 className='font-bold text-3xl mb-4'>{location}</h2>
+        <h2 className='font-bold text-3xl mb-4'>{displayLocation}</h2>
         
         <div className='flex flex-wrap gap-6 text-gray-700'>
           {/* Dates */}

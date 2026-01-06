@@ -62,6 +62,8 @@ function PreviewTrip() {
     handleSaveTrip,
     handleHotelClick,
     handleActivityClick,
+    handleAddHotel,
+    handleAddActivity,
   } = useTripActions(tripData, updateTripData, existingTripId, rawTripData, user)
 
   // Warn before leaving with unsaved changes
@@ -138,6 +140,8 @@ function PreviewTrip() {
         regeneratingHotels={regeneratingHotels}
         onRegenerateHotels={handleRegenerateHotels}
         onHotelClick={handleHotelClick}
+        onHotelAdd={handleAddHotel}
+        location={tripData.tripData?.Location}
       />
 
       <ItinerarySection
@@ -148,6 +152,8 @@ function PreviewTrip() {
         onRemoveDay={handleRemoveDay}
         onActivityClick={handleActivityClick}
         onRemoveActivity={handleRemoveActivity}
+        onActivityAdd={handleAddActivity}
+        location={tripData.tripData?.Location}
         sensors={sensors}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
