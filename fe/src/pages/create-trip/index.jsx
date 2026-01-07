@@ -295,7 +295,6 @@ function CreateTrip() {
           dayNumber: index + 1,
           slots: day.slots || {
             Morning: Array.isArray(day.places) ? day.places : [],
-            Lunch: [],
             Afternoon: [],
             Evening: [],
           },
@@ -311,7 +310,6 @@ function CreateTrip() {
             dayNumber: i + 1,
             slots: existing.slots || {
               Morning: Array.isArray(existing.places) ? existing.places : [],
-              Lunch: [],
               Afternoon: [],
               Evening: [],
             },
@@ -323,7 +321,6 @@ function CreateTrip() {
             places: [],
             slots: {
               Morning: [],
-              Lunch: [],
               Afternoon: [],
               Evening: [],
             },
@@ -559,6 +556,120 @@ const onGenerateTrip = async () => {
     }
 
     setTripDays(newTripDays)
+  }
+
+  // Helper: Create check-in activity for a hotel
+  const createCheckinActivity = (hotel) => ({
+    id: `checkin-${Date.now()}`,
+    originalId: `hotel-checkin-${hotel.id || hotel.name}`,
+    name: 'Hotel Check-in',
+    address: hotel.address || hotel.HotelAddress || '',
+    lat: hotel.lat,
+    lon: hotel.lon,
+    activityType: 'hotel_checkin',
+    placeDetails: `Check-in at ${hotel.name || hotel.HotelName}`,
+    timeSlot: '2:00 PM - 3:00 PM',
+    duration: '1 hour',
+    ticketPricing: 'Included',
+    isHotelActivity: true,
+    hotelName: hotel.name || hotel.HotelName,
+    imageUrl: hotel.imageUrl || hotel.HotelImageUrl || '/placeholder.jpg',
+  })
+
+  // Helper: Create check-out activity for a hotel
+  const createCheckoutActivity = (hotel) => ({
+    id: `checkout-${Date.now()}`,
+    originalId: `hotel-checkout-${hotel.id || hotel.name}`,
+    name: 'Hotel Check-out',
+    address: hotel.address || hotel.HotelAddress || '',
+    lat: hotel.lat,
+    lon: hotel.lon,
+    activityType: 'hotel_checkout',
+    placeDetails: `Check-out from ${hotel.name || hotel.HotelName}`,
+    timeSlot: '11:00 AM - 12:00 PM',
+    duration: '1 hour',
+    ticketPricing: 'Included',
+    isHotelActivity: true,
+    hotelName: hotel.name || hotel.HotelName,
+    imageUrl: hotel.imageUrl || hotel.HotelImageUrl || '/placeholder.jpg',
+  })
+
+  // Handle hotel confirmation with auto-generated check-in/check-out
+  const handleHotelConfirm = (hotel) => {
+    setConfirmedHotel(hotel)
+    
+    // Add check-in and check-out activities to trip days
+    setTripDays(prevDays => {
+      if (prevDays.length === 0) return prevDays
+      
+      const updatedDays = prevDays.map((day, index) => {
+        const isFirstDay = index === 0
+        const isLastDay = index === prevDays.length - 1
+        
+        // Remove any existing hotel activities first
+        const filterHotelActivities = (places) => 
+          (places || []).filter(p => !p.isHotelActivity && !p.activityType?.includes('hotel'))
+        
+        let updatedSlots = {
+          Morning: filterHotelActivities(day.slots?.Morning),
+          Afternoon: filterHotelActivities(day.slots?.Afternoon),
+          Evening: filterHotelActivities(day.slots?.Evening),
+        }
+        
+        // Add check-in to first day's Afternoon
+        if (isFirstDay) {
+          const checkinActivity = createCheckinActivity(hotel)
+          updatedSlots.Afternoon = [checkinActivity, ...updatedSlots.Afternoon]
+        }
+        
+        // Add check-out to last day's Morning (at the end)
+        if (isLastDay) {
+          const checkoutActivity = createCheckoutActivity(hotel)
+          updatedSlots.Morning = [...updatedSlots.Morning, checkoutActivity]
+        }
+        
+        return {
+          ...day,
+          slots: updatedSlots,
+          places: [
+            ...updatedSlots.Morning,
+            ...updatedSlots.Afternoon,
+            ...updatedSlots.Evening,
+          ],
+        }
+      })
+      
+      return updatedDays
+    })
+  }
+
+  // Handle hotel removal - also remove check-in/check-out activities
+  const handleRemoveHotel = () => {
+    setConfirmedHotel(null)
+    
+    // Remove hotel activities from all days
+    setTripDays(prevDays => {
+      return prevDays.map(day => {
+        const filterHotelActivities = (places) => 
+          (places || []).filter(p => !p.isHotelActivity && !p.activityType?.includes('hotel'))
+        
+        const updatedSlots = {
+          Morning: filterHotelActivities(day.slots?.Morning),
+          Afternoon: filterHotelActivities(day.slots?.Afternoon),
+          Evening: filterHotelActivities(day.slots?.Evening),
+        }
+        
+        return {
+          ...day,
+          slots: updatedSlots,
+          places: [
+            ...updatedSlots.Morning,
+            ...updatedSlots.Afternoon,
+            ...updatedSlots.Evening,
+          ],
+        }
+      })
+    })
   }
 
   // Warn user before refreshing if there are unsaved changes
@@ -844,8 +955,8 @@ const onGenerateTrip = async () => {
             <HotelSearch
               location={formData.location}
               confirmedHotel={confirmedHotel}
-              onHotelConfirm={(hotel) => setConfirmedHotel(hotel)}
-              onRemoveHotel={() => setConfirmedHotel(null)}
+              onHotelConfirm={handleHotelConfirm}
+              onRemoveHotel={handleRemoveHotel}
               startDate={formData.startDate}
               endDate={formData.endDate}
               budgetMin={formData.budgetMin}

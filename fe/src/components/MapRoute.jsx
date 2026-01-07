@@ -1,5 +1,5 @@
 // fe/src/components/MapRoute.jsx
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Loader2, ChevronDown, ChevronUp, Settings } from 'lucide-react'
@@ -24,20 +24,51 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
   const [showSettings, setShowSettings] = useState(false)
   const [detailedInstructions, setDetailedInstructions] = useState([])
 
-  // Initialize map only once
-  useEffect(() => {
-    if (!activities || activities.length === 0 || !mapRef.current || mapInstance.current) return
+  // Robust lat/lng extraction (handles different coordinate shapes)
+  const getLatLng = (activity) => {
+    if (!activity) return null
+    const g =
+      activity.GeoCoordinates ||
+      activity.geoCoordinates ||
+      activity.gps_coordinates ||
+      activity.coordinates ||
+      null
+    if (!g || typeof g !== 'object') return null
 
-    mapInstance.current = L.map(mapRef.current).setView(
-      [activities[0].GeoCoordinates.Latitude, activities[0].GeoCoordinates.Longitude],
-      13
-    )
+    const latRaw = g.Latitude ?? g.latitude ?? g.lat
+    const lngRaw = g.Longitude ?? g.longitude ?? g.lng ?? g.lon
+
+    const lat = typeof latRaw === 'number' ? latRaw : Number(latRaw)
+    const lng = typeof lngRaw === 'number' ? lngRaw : Number(lngRaw)
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+    return [lat, lng]
+  }
+
+  // Filter out activities that don't have valid coordinates (prevents Leaflet crash)
+  const validActivities = useMemo(() => {
+    if (!Array.isArray(activities)) return []
+    return activities.filter(a => getLatLng(a))
+  }, [activities])
+
+  // Initialize map (once the first valid coordinate exists)
+  useEffect(() => {
+    if (!mapRef.current || mapInstance.current) return
+    if (!validActivities || validActivities.length === 0) return
+
+    const firstLL = getLatLng(validActivities[0])
+    if (!firstLL) return
+
+    mapInstance.current = L.map(mapRef.current).setView(firstLL, 13)
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '© OpenStreetMap contributors'
     }).addTo(mapInstance.current)
+  }, [validActivities])
 
+  // Cleanup map on unmount only
+  useEffect(() => {
     return () => {
       if (mapInstance.current) {
         mapInstance.current.remove()
@@ -48,9 +79,9 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
 
   // Fetch routes when activities, mode, or service changes
   useEffect(() => {
-    if (!mapInstance.current || !activities || activities.length === 0) return
+    if (!mapInstance.current || !validActivities || validActivities.length === 0) return
     fetchRoutes()
-  }, [activities, routeMode, routingService])
+  }, [validActivities, routeMode, routingService])
 
   const fetchRoutesOSRM = async () => {
     const newMarkers = []
@@ -67,9 +98,11 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
     const profile = profileMap[routeMode]
 
     // Create markers
-    activities.forEach((activity, index) => {
+    validActivities.forEach((activity, index) => {
+      const ll = getLatLng(activity)
+      if (!ll) return
       const marker = L.marker(
-        [activity.GeoCoordinates.Latitude, activity.GeoCoordinates.Longitude],
+        ll,
         {
           icon: L.divIcon({
             className: 'custom-marker',
@@ -107,15 +140,14 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
     })
 
     // Fetch routes for each segment using OSRM
-    for (let i = 0; i < activities.length - 1; i++) {
-      const start = [
-        activities[i].GeoCoordinates.Longitude,
-        activities[i].GeoCoordinates.Latitude
-      ]
-      const end = [
-        activities[i + 1].GeoCoordinates.Longitude,
-        activities[i + 1].GeoCoordinates.Latitude
-      ]
+    for (let i = 0; i < validActivities.length - 1; i++) {
+      const startLL = getLatLng(validActivities[i])
+      const endLL = getLatLng(validActivities[i + 1])
+      if (!startLL || !endLL) continue
+
+      // OSRM expects [lng, lat]
+      const start = [startLL[1], startLL[0]]
+      const end = [endLL[1], endLL[0]]
 
       // OSRM API endpoint (free, no API key needed!)
       const url = `https://router.project-osrm.org/route/v1/${profile}/${start[0]},${start[1]};${end[0]},${end[1]}?overview=full&geometries=geojson&steps=true`
@@ -158,8 +190,8 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
 
         // Store detailed instructions
         instructions.push({
-          from: activities[i].PlaceName,
-          to: activities[i + 1].PlaceName,
+          from: validActivities[i].PlaceName,
+          to: validActivities[i + 1].PlaceName,
           steps: leg.steps.map(step => ({
             text: step.maneuver.instruction || `Continue for ${(step.distance / 1000).toFixed(2)} km`,
             distance: (step.distance / 1000).toFixed(2),
@@ -194,9 +226,11 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
     const profile = profileMap[routeMode]
 
     // Create markers
-    activities.forEach((activity, index) => {
+    validActivities.forEach((activity, index) => {
+      const ll = getLatLng(activity)
+      if (!ll) return
       const marker = L.marker(
-        [activity.GeoCoordinates.Latitude, activity.GeoCoordinates.Longitude],
+        ll,
         {
           icon: L.divIcon({
             className: 'custom-marker',
@@ -234,15 +268,14 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
     })
 
     // Fetch routes for each segment
-    for (let i = 0; i < activities.length - 1; i++) {
-      const start = [
-        activities[i].GeoCoordinates.Longitude,
-        activities[i].GeoCoordinates.Latitude
-      ]
-      const end = [
-        activities[i + 1].GeoCoordinates.Longitude,
-        activities[i + 1].GeoCoordinates.Latitude
-      ]
+    for (let i = 0; i < validActivities.length - 1; i++) {
+      const startLL = getLatLng(validActivities[i])
+      const endLL = getLatLng(validActivities[i + 1])
+      if (!startLL || !endLL) continue
+
+      // OpenRoute expects [lng, lat]
+      const start = [startLL[1], startLL[0]]
+      const end = [endLL[1], endLL[0]]
 
       const url = `https://api.openrouteservice.org/v2/directions/${profile}/geojson`
 
@@ -290,8 +323,8 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
         })
 
         instructions.push({
-          from: activities[i].PlaceName,
-          to: activities[i + 1].PlaceName,
+          from: validActivities[i].PlaceName,
+          to: validActivities[i + 1].PlaceName,
           steps: segment.steps.map(step => ({
             text: step.instruction,
             distance: (step.distance / 1000).toFixed(2),
@@ -326,11 +359,12 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
       setDetailedInstructions(result.instructions)
 
       // Fit map to show all markers
-      if (activities.length > 0) {
-        const bounds = L.latLngBounds(
-          activities.map(a => [a.GeoCoordinates.Latitude, a.GeoCoordinates.Longitude])
-        )
-        mapInstance.current.fitBounds(bounds, { padding: [50, 50] })
+      if (validActivities.length > 0) {
+        const points = validActivities.map(a => getLatLng(a)).filter(Boolean)
+        if (points.length > 0) {
+          const bounds = L.latLngBounds(points)
+          mapInstance.current.fitBounds(bounds, { padding: [50, 50] })
+        }
       }
 
       if (onRouteCalculated) {
@@ -355,7 +389,7 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
     return 'walking'
   }
 
-  if (!activities || activities.length === 0) return null
+  if (!validActivities || validActivities.length === 0) return null
 
   return (
     <div className='mt-4'>

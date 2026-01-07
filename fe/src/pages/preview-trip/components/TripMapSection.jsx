@@ -15,9 +15,21 @@ function TripMapSection({ itinerary, locationName }) {
       ]
     })
 
-  if (allActivities.length === 0) {
-    return null
-  }
+  // Filter activities that have valid coordinates for Leaflet
+  const mapActivities = allActivities.filter(a => {
+    const g = a?.GeoCoordinates || a?.geoCoordinates || a?.gps_coordinates || a?.coordinates
+    if (!g || typeof g !== 'object') return false
+
+    const latRaw = g.Latitude ?? g.latitude ?? g.lat
+    const lngRaw = g.Longitude ?? g.longitude ?? g.lng ?? g.lon
+
+    const lat = typeof latRaw === 'number' ? latRaw : Number(latRaw)
+    const lng = typeof lngRaw === 'number' ? lngRaw : Number(lngRaw)
+
+    return Number.isFinite(lat) && Number.isFinite(lng)
+  })
+
+  if (mapActivities.length === 0) return null
 
   return (
     <div className='mb-8'>
@@ -27,7 +39,7 @@ function TripMapSection({ itinerary, locationName }) {
       </p>
       <div className='bg-white rounded-lg shadow-md p-4'>
         <MapRoute
-          activities={allActivities}
+          activities={mapActivities}
           locationName={locationName}
         />
         <div className='mt-4 flex items-center justify-between text-sm text-gray-600'>

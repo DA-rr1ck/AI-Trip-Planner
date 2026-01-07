@@ -35,12 +35,18 @@ async function getPlaceImage(placeName) {
 
 // Component for each activity card
 function ActivityCard({ activity, location }) {
-  const [imageUrl, setImageUrl] = useState('/placeholder.jpg')
-  const [imageLoading, setImageLoading] = useState(true)
+  // Check if activity already has a saved image URL
+  const savedImageUrl = activity.PlaceImageUrl && activity.PlaceImageUrl !== '/placeholder.jpg' 
+    ? activity.PlaceImageUrl 
+    : null
+  
+  const [imageUrl, setImageUrl] = useState(savedImageUrl || '/placeholder.jpg')
+  const [imageLoading, setImageLoading] = useState(!savedImageUrl)
   const [imageError, setImageError] = useState(false)
 
   useEffect(() => {
-    if (activity.PlaceName) {
+    // Only fetch if there's no saved image URL
+    if (!savedImageUrl && activity.PlaceName) {
       setImageLoading(true)
       setImageError(false)
       
@@ -55,7 +61,7 @@ function ActivityCard({ activity, location }) {
           setImageLoading(false)
         })
     }
-  }, [activity.PlaceName])
+  }, [activity.PlaceName, savedImageUrl])
 
   // Color mapping for BestTimeToVisit
   const timeColors = {

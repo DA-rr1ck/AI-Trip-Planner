@@ -24,7 +24,6 @@ import MapRoute from '@/components/MapRoute'
 
 const TIME_SLOTS = [
   { key: 'Morning', start: '8:00 AM', end: '12:00 PM', icon: '🌅', gradient: 'from-amber-50 to-yellow-50 border-amber-200' },
-  { key: 'Lunch', start: '12:00 PM', end: '1:30 PM', icon: '🍽️', gradient: 'from-green-50 to-emerald-50 border-green-200' },
   { key: 'Afternoon', start: '1:30 PM', end: '6:00 PM', icon: '☀️', gradient: 'from-blue-50 to-cyan-50 border-blue-200' },
   { key: 'Evening', start: '6:00 PM', end: '10:00 PM', icon: '🌆', gradient: 'from-purple-50 to-pink-50 border-purple-200' },
 ]
@@ -32,14 +31,33 @@ const TIME_SLOTS = [
 function createEmptySlots() {
   return {
     Morning: [],
-    Lunch: [],
     Afternoon: [],
     Evening: [],
   }
 }
 
 function normalizeDaySlots(day) {
-  if (day?.slots) return day
+  // Always normalize slots and merge Lunch -> Afternoon (Lunch is not a separate slot in manual UI)
+  if (day?.slots) {
+    const slots = day.slots || {}
+    const lunchPlaces = Array.isArray(slots.Lunch) ? slots.Lunch : []
+    const afternoonPlaces = Array.isArray(slots.Afternoon) ? slots.Afternoon : []
+    const mergedAfternoon = lunchPlaces.length ? [...lunchPlaces, ...afternoonPlaces] : afternoonPlaces
+
+    const nextSlots = {
+      ...createEmptySlots(),
+      ...slots,
+      Afternoon: mergedAfternoon,
+    }
+
+    // Ensure Lunch doesn't hang around and hide places (TIME_SLOTS doesn't include it)
+    delete nextSlots.Lunch
+
+    return {
+      ...day,
+      slots: nextSlots,
+    }
+  }
 
   const empty = createEmptySlots()
   const existingPlaces = Array.isArray(day?.places) ? day.places : []
@@ -119,11 +137,20 @@ function SortablePlace({ place, index, onRemove }) {
 
   const [imageUrl, setImageUrl] = useState('/placeholder.jpg');
 
+  // Check if this is a hotel activity
+  const isHotelActivity = place.isHotelActivity || 
+    place.activityType === 'hotel_checkin' || 
+    place.activityType === 'hotel_checkout'
+  
+  const isCheckin = place.activityType === 'hotel_checkin'
+  const isCheckout = place.activityType === 'hotel_checkout'
+
   useEffect(() => {
-    if (place.name) {
+    // Don't fetch images for hotel activities - use icons instead
+    if (!isHotelActivity && place.name) {
       getPlaceImage(place.name).then(setImageUrl);
     }
-  }, [place.name]);
+  }, [place.name, isHotelActivity]);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -132,8 +159,11 @@ function SortablePlace({ place, index, onRemove }) {
   }
 
   const handleViewDetails = () => {
+    // Don't navigate for hotel activities
+    if (isHotelActivity) return
+    
     const slug = encodeURIComponent(place.name || 'attraction');
-    navigate(`/manual/attraction/${slug}`, {
+    navigate(`/attraction/${slug}`, {
       state: {
         activity: {
           // Keep both legacy/manual keys and AI-friendly keys for compatibility
@@ -153,6 +183,46 @@ function SortablePlace({ place, index, onRemove }) {
         }
       },
     })
+  }
+
+  // Special rendering for hotel activities
+  if (isHotelActivity) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        className={`flex items-center justify-between p-3 rounded-lg border-2 ${
+          isCheckin 
+            ? 'bg-green-50 border-green-300' 
+            : 'bg-orange-50 border-orange-300'
+        }`}
+      >
+        <div className='flex items-center gap-3 flex-1'>
+          <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${
+            isCheckin ? 'bg-green-100' : 'bg-orange-100'
+          }`}>
+            {isCheckin ? '🏨' : '🚪'}
+          </div>
+          <div className='flex-1 min-w-0'>
+            <p className={`font-semibold text-sm ${isCheckin ? 'text-green-800' : 'text-orange-800'}`}>
+              {place.name}
+            </p>
+            <p className='text-xs text-gray-600 mt-0.5'>
+              {place.placeDetails || place.hotelName}
+            </p>
+            <p className='text-xs text-gray-500 mt-0.5'>
+              {place.timeSlot}
+            </p>
+          </div>
+        </div>
+        {/* Hotel activities cannot be removed individually - they're tied to hotel selection */}
+        <div className={`text-xs px-2 py-1 rounded ${
+          isCheckin ? 'bg-green-200 text-green-800' : 'bg-orange-200 text-orange-800'
+        }`}>
+          {isCheckin ? 'Check-in' : 'Check-out'}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -632,7 +702,15 @@ function DayManager({ location, tripDays, onDaysChange }) {
     }
   }
 
-  const addPlaceToDay = (dayId, place) => {
+  const addPlaceToDay = async (dayId, place) => {
+    // First, fetch image for the place
+    let placeImageUrl = '/placeholder.jpg'
+    try {
+      placeImageUrl = await getPlaceImage(place.name)
+    } catch (e) {
+      console.warn('Failed to fetch image for place:', place.name)
+    }
+
     const updated = tripDays.map(day => {
       if (day.id === dayId) {
         const normalizedDay = normalizeDaySlots(day)
@@ -646,7 +724,8 @@ function DayManager({ location, tripDays, onDaysChange }) {
         const newPlace = { 
           ...place, 
           originalId: place.id,
-          id: `place-${Date.now()}-${Math.random()}` 
+          id: `place-${Date.now()}-${Math.random()}`,
+          imageUrl: placeImageUrl, // Store the fetched image URL
         }
 
         const nextSlots = {
@@ -740,16 +819,6 @@ function DayManager({ location, tripDays, onDaysChange }) {
     }
 
     if (!target) return
-
-    // Enforce AI-like lunch behavior: at most 1 lunch item.
-    if (target.slotKey === 'Lunch' && !(activeLoc.dayId === target.dayId && activeLoc.slotKey === 'Lunch')) {
-      const targetDay = normalizeDaySlots(tripDays.find(d => d.id === target.dayId))
-      const lunchCount = (targetDay?.slots?.Lunch || []).length
-      if (lunchCount >= 1) {
-        toast.info('Lunch can have only one place')
-        return
-      }
-    }
 
     const newTripDays = tripDays.map(d => normalizeDaySlots(d))
 
