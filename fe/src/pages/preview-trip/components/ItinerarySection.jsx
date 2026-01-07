@@ -14,7 +14,9 @@ function ItinerarySection({
   onRemoveDay,
   onActivityClick,
   onRemoveActivity,
+  onActivityAdd,
   onRegenerateSingleDay,
+  location,
   sensors,
   onDragStart,
   onDragEnd,
@@ -63,6 +65,8 @@ function ItinerarySection({
               onRemoveDay={onRemoveDay}
               onActivityClick={onActivityClick}
               onRemoveActivity={onRemoveActivity}
+              onActivityAdd={onActivityAdd}
+              location={location}
             >
               {/* Per-Day Regeneration Section - passed as first child */}
               <div className='mb-4'>

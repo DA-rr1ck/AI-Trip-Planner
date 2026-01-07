@@ -3,6 +3,7 @@ import Button from '@/components/ui/Button'
 import Input from '@/components/ui/input'
 import { Sparkles, Loader2, CheckCircle } from 'lucide-react'
 import HotelCard from './HotelCard'
+import HotelSearchBox from './HotelSearchBox'
 
 function HotelsSection({ 
   hotels, 
@@ -12,7 +13,9 @@ function HotelsSection({
   setHotelPreference,
   regeneratingHotels,
   onRegenerateHotels,
-  onHotelClick
+  onHotelClick,
+  onHotelAdd,
+  location
 }) {
   const selectedCount = selectedHotels?.length || 0
   const totalCount = hotels?.length || 0
@@ -88,6 +91,15 @@ function HotelsSection({
           />
         ))}
       </div>
+
+      {/* Manual Hotel Search Box */}
+      {location && onHotelAdd && (
+        <HotelSearchBox
+          location={location}
+          onHotelAdd={onHotelAdd}
+          existingHotels={hotels || []}
+        />
+      )}
     </div>
   )
 }

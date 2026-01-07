@@ -19,9 +19,16 @@ import DayManager from './components/manual/DayManager'
 import { saveManualTrip } from './utils/manual/tripSaver'
 import { Capacitor, CapacitorHttp } from '@capacitor/core'
 import { generateAITrip } from '@/service/tripService'
+import { generateSmartTrip } from '@/service/smartTripService'
+import { VIETNAM_PROVINCES } from '@/constants/options'
+import SmartDestinationSelector from './components/SmartDestinationSelector'
+import GenerationMethodSelector from "./components/GenerationMethodSelector";
 // Base URL for Nominatim
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
-
+const SMART_LOCATION_OPTIONS = VIETNAM_PROVINCES.map(province => ({
+  value: province,
+  label: province
+}))
 // --- JSONP fallback (ignores CORS) ---
 function nominatimSearchJSONP(query) {
   return new Promise((resolve, reject) => {
@@ -133,6 +140,7 @@ async function searchNominatim(query) {
 
 function CreateTrip() {
   const [place, setPlace] = useState(null)
+  const [generationMethod, setGenerationMethod] = useState('ai')
   const [aiFormData, setAiFormData] = useState({
     location: '',
     startDate: null,
@@ -287,7 +295,6 @@ function CreateTrip() {
           dayNumber: index + 1,
           slots: day.slots || {
             Morning: Array.isArray(day.places) ? day.places : [],
-            Lunch: [],
             Afternoon: [],
             Evening: [],
           },
@@ -303,7 +310,6 @@ function CreateTrip() {
             dayNumber: i + 1,
             slots: existing.slots || {
               Morning: Array.isArray(existing.places) ? existing.places : [],
-              Lunch: [],
               Afternoon: [],
               Evening: [],
             },
@@ -315,7 +321,6 @@ function CreateTrip() {
             places: [],
             slots: {
               Morning: [],
-              Lunch: [],
               Afternoon: [],
               Evening: [],
             },
@@ -355,76 +360,122 @@ function CreateTrip() {
   }
 
   // AI Trip Generation - Uses backend API
-  const onGenerateTrip = async () => {
-    if (!isAuthenticated) {
-      setOpenDialog(true)
-      toast.info('Please sign in to generate your trip.')
-      return
-    }
-
-    const totalDays = getTotalDays()
-    if (totalDays < 1 || totalDays > 30) {
-      toast.error('Please select a trip between 1-30 days.', { duration: 1200 })
-      return
-    }
-
-    if (!formData.location || !formData.startDate || !formData.endDate) {
-      toast.error('Please fill all the fields.', { duration: 1200 })
-      return
-    }
-
-    if (formData.adults === 0 && formData.children === 0) {
-      toast.error('Please add at least one traveler.', { duration: 1200 })
-      return
-    }
-
-    if (formData.children > 0 && formData.childrenAges.length !== formData.children) {
-      toast.error('Please set ages for all children.', { duration: 1200 })
-      return
-    }
-
-    setLoading(true)
-
-    try {
-      // Call backend API
-      const result = await generateAITrip({
-        location: formData.location,
-        startDate: formData.startDate.toISOString(),
-        endDate: formData.endDate.toISOString(),
-        budgetMin: formData.budgetMin,
-        budgetMax: formData.budgetMax,
-        adults: formData.adults,
-        children: formData.children,
-        childrenAges: formData.childrenAges
-      })
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to generate trip')
-      }
-
-      // Clear session on success
-      sessionStorage.removeItem('createTripSession')
-
-      // Navigate to edit page with trip data
-      navigate('/preview-trip', {
-        state: {
-          tripData: result.tripData
-        }
-      })
-
-      toast.success('Trip generated successfully!')
-
-    } catch (error) {
-      console.error('Error generating trip:', error)
-      toast.error(error.message || 'Failed to generate trip. Please try again.', { duration: 2000 })
-    } finally {
-      setLoading(false)
-    }
+  // Around line 393-445, replace the entire onGenerateTrip function:
+const onGenerateTrip = async () => {
+  if (!isAuthenticated) {
+    setOpenDialog(true)
+    toast.info('Please sign in to generate your trip.')
+    return
   }
+
+  const totalDays = getTotalDays()
+  if (totalDays < 1 || totalDays > 30) {
+    toast.error('Please select a trip between 1-30 days.', { duration: 1200 })
+    return
+  }
+
+  if (!formData.location || !formData.startDate || !formData.endDate) {
+    toast.error('Please fill all the fields.', { duration: 1200 })
+    return
+  }
+
+  if (formData.adults === 0 && formData.children === 0) {
+    toast.error('Please add at least one traveler.', { duration: 1200 })
+    return
+  }
+
+  if (formData.children > 0 && formData.childrenAges.length !== formData.children) {
+    toast.error('Please set ages for all children.', { duration: 1200 })
+    return
+  }
+
+  setLoading(true)
+
+  try {
+    const tripParams = {
+      location: formData.location,
+      startDate: format(formData.startDate, 'yyyy-MM-dd'),
+      endDate: format(formData.endDate, 'yyyy-MM-dd'),
+      budgetMin: formData.budgetMin,
+      budgetMax: formData.budgetMax,
+      adults: formData.adults,
+      children: formData.children,
+      childrenAges: formData.childrenAges
+    }
+
+    let result
+
+    // Call different API based on generation method
+    if (generationMethod === 'smart') {
+      console.log('Generating Smart Database trip...')
+      result = await generateSmartTrip(tripParams)
+    } else {
+      console.log('Generating Pure AI trip...')
+      result = await generateAITrip(tripParams)
+    }
+
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to generate trip')
+    }
+
+    // Clear session on success
+    sessionStorage.removeItem('createTripSession')
+
+    // ✅ FIX: Normalize the data structure for both methods
+    const userSelection = {
+      location: tripParams.location,
+      startDate: tripParams.startDate,
+      endDate: tripParams.endDate,
+      budgetMin: tripParams.budgetMin,
+      budgetMax: tripParams.budgetMax,
+      adults: tripParams.adults,
+      children: tripParams.children,
+      childrenAges: tripParams.childrenAges,
+      budget: formatBudget(tripParams.budgetMin, tripParams.budgetMax),
+      traveler: formatTravelers()
+    }
+
+    // Handle different response structures
+    let tripDataToPass
+
+    if (result.tripData?.userSelection && result.tripData?.tripData) {
+      // AI method returns nested structure
+      tripDataToPass = result.tripData
+    } else if (result.tripData) {
+      // Smart method returns flat structure - need to wrap it
+      tripDataToPass = {
+        userSelection: userSelection,
+        tripData: result.tripData
+      }
+    } else {
+      throw new Error('Invalid response structure')
+    }
+
+    console.log('✅ Normalized tripData:', tripDataToPass)
+
+    navigate('/preview-trip', {
+      state: {
+        tripData: tripDataToPass
+      }
+    })
+
+    toast.success(
+      generationMethod === 'smart' 
+        ? '✨ Smart trip generated successfully!' 
+        : '🤖 AI trip generated successfully!'
+    )
+
+  } catch (error) {
+    console.error('Error generating trip:', error)
+    toast.error(error.message || 'Failed to generate trip. Please try again.', { duration: 2000 })
+  } finally {
+    setLoading(false)
+  }
+}
 
   useEffect(() => {
     if (isManualMode) {
-      // Do not clear place here as it is used in Manual Mode too
+
       setOptions([]);
       setInputValue('');
       return;
@@ -507,6 +558,120 @@ function CreateTrip() {
     setTripDays(newTripDays)
   }
 
+  // Helper: Create check-in activity for a hotel
+  const createCheckinActivity = (hotel) => ({
+    id: `checkin-${Date.now()}`,
+    originalId: `hotel-checkin-${hotel.id || hotel.name}`,
+    name: 'Hotel Check-in',
+    address: hotel.address || hotel.HotelAddress || '',
+    lat: hotel.lat,
+    lon: hotel.lon,
+    activityType: 'hotel_checkin',
+    placeDetails: `Check-in at ${hotel.name || hotel.HotelName}`,
+    timeSlot: '2:00 PM - 3:00 PM',
+    duration: '1 hour',
+    ticketPricing: 'Included',
+    isHotelActivity: true,
+    hotelName: hotel.name || hotel.HotelName,
+    imageUrl: hotel.imageUrl || hotel.HotelImageUrl || '/placeholder.jpg',
+  })
+
+  // Helper: Create check-out activity for a hotel
+  const createCheckoutActivity = (hotel) => ({
+    id: `checkout-${Date.now()}`,
+    originalId: `hotel-checkout-${hotel.id || hotel.name}`,
+    name: 'Hotel Check-out',
+    address: hotel.address || hotel.HotelAddress || '',
+    lat: hotel.lat,
+    lon: hotel.lon,
+    activityType: 'hotel_checkout',
+    placeDetails: `Check-out from ${hotel.name || hotel.HotelName}`,
+    timeSlot: '11:00 AM - 12:00 PM',
+    duration: '1 hour',
+    ticketPricing: 'Included',
+    isHotelActivity: true,
+    hotelName: hotel.name || hotel.HotelName,
+    imageUrl: hotel.imageUrl || hotel.HotelImageUrl || '/placeholder.jpg',
+  })
+
+  // Handle hotel confirmation with auto-generated check-in/check-out
+  const handleHotelConfirm = (hotel) => {
+    setConfirmedHotel(hotel)
+    
+    // Add check-in and check-out activities to trip days
+    setTripDays(prevDays => {
+      if (prevDays.length === 0) return prevDays
+      
+      const updatedDays = prevDays.map((day, index) => {
+        const isFirstDay = index === 0
+        const isLastDay = index === prevDays.length - 1
+        
+        // Remove any existing hotel activities first
+        const filterHotelActivities = (places) => 
+          (places || []).filter(p => !p.isHotelActivity && !p.activityType?.includes('hotel'))
+        
+        let updatedSlots = {
+          Morning: filterHotelActivities(day.slots?.Morning),
+          Afternoon: filterHotelActivities(day.slots?.Afternoon),
+          Evening: filterHotelActivities(day.slots?.Evening),
+        }
+        
+        // Add check-in to first day's Afternoon
+        if (isFirstDay) {
+          const checkinActivity = createCheckinActivity(hotel)
+          updatedSlots.Afternoon = [checkinActivity, ...updatedSlots.Afternoon]
+        }
+        
+        // Add check-out to last day's Morning (at the end)
+        if (isLastDay) {
+          const checkoutActivity = createCheckoutActivity(hotel)
+          updatedSlots.Morning = [...updatedSlots.Morning, checkoutActivity]
+        }
+        
+        return {
+          ...day,
+          slots: updatedSlots,
+          places: [
+            ...updatedSlots.Morning,
+            ...updatedSlots.Afternoon,
+            ...updatedSlots.Evening,
+          ],
+        }
+      })
+      
+      return updatedDays
+    })
+  }
+
+  // Handle hotel removal - also remove check-in/check-out activities
+  const handleRemoveHotel = () => {
+    setConfirmedHotel(null)
+    
+    // Remove hotel activities from all days
+    setTripDays(prevDays => {
+      return prevDays.map(day => {
+        const filterHotelActivities = (places) => 
+          (places || []).filter(p => !p.isHotelActivity && !p.activityType?.includes('hotel'))
+        
+        const updatedSlots = {
+          Morning: filterHotelActivities(day.slots?.Morning),
+          Afternoon: filterHotelActivities(day.slots?.Afternoon),
+          Evening: filterHotelActivities(day.slots?.Evening),
+        }
+        
+        return {
+          ...day,
+          slots: updatedSlots,
+          places: [
+            ...updatedSlots.Morning,
+            ...updatedSlots.Afternoon,
+            ...updatedSlots.Evening,
+          ],
+        }
+      })
+    })
+  }
+
   // Warn user before refreshing if there are unsaved changes
   useEffect(() => {
     const handleBeforeUnload = (e) => {
@@ -536,6 +701,13 @@ function CreateTrip() {
           ? 'Build your custom itinerary step by step with full control over every detail'
           : 'Just provide some basic information, and our trip planner will generate a customized itinerary based on your preferences'}
       </p>
+
+      {!isManualMode && (
+      <GenerationMethodSelector 
+        value={generationMethod} 
+        onChange={setGenerationMethod} 
+      />
+    )}
 
       {isManualMode ? (
         <div className='mt-10 flex flex-col gap-10'>
@@ -783,8 +955,8 @@ function CreateTrip() {
             <HotelSearch
               location={formData.location}
               confirmedHotel={confirmedHotel}
-              onHotelConfirm={(hotel) => setConfirmedHotel(hotel)}
-              onRemoveHotel={() => setConfirmedHotel(null)}
+              onHotelConfirm={handleHotelConfirm}
+              onRemoveHotel={handleRemoveHotel}
               startDate={formData.startDate}
               endDate={formData.endDate}
               budgetMin={formData.budgetMin}
@@ -807,21 +979,15 @@ function CreateTrip() {
         </div>
       ) : (
         <div className='mt-10 flex flex-col gap-10'>
-          <div>
-            <h2 className='text-xl my-3 font-medium'>
-              What is your desired destination?
-            </h2>
-            <Select
-              options={options}
-              value={place}
-              onChange={(value) => {
-                setPlace(value)
-                handleInputChange('location', value?.label)
-              }}
-              onInputChange={(value) => setInputValue(value)}
-              placeholder='Search for a location...'
-            />
-          </div>
+           <SmartDestinationSelector
+      generationMethod={generationMethod}
+      place={place}
+      setPlace={setPlace}
+      handleLocationChange={(location) => handleInputChange('location', location)}
+      options={options}
+      inputValue={inputValue}
+      setInputValue={setInputValue}
+    />
 
           {/* Date Pickers */}
           <div>
@@ -1058,14 +1224,20 @@ function CreateTrip() {
       )}
 
       <div className='mt-5 mb-20 md:mb-5 justify-end flex'>
-        <Button
-          disabled={loading}
-          onClick={isManualMode ? onSaveManualTrip : onGenerateTrip}
-        >
-          {loading
-            ? <AiOutlineLoading3Quarters className='h-7 w-7 animate-spin' />
-            : (isManualMode ? 'Save Trip' : 'Generate Trip')}
-        </Button>
+      <Button
+  disabled={loading}
+  onClick={isManualMode ? onSaveManualTrip : onGenerateTrip}
+>
+  {loading ? (
+    <AiOutlineLoading3Quarters className='h-7 w-7 animate-spin' />
+  ) : isManualMode ? (
+    'Save Trip'
+  ) : generationMethod === 'smart' ? (
+    '✨ Generate Smart Trip'
+  ) : (
+    '🤖 Generate AI Trip'
+  )}
+</Button>
       </div>
 
       <AuthDialog

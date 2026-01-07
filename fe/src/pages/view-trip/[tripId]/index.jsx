@@ -57,6 +57,27 @@ function ViewTrip() {
         const itinerary = trip.tripData.Itinerary
         const dateKeys = Object.keys(itinerary).sort()
         
+        const normalizeGeo = (activity) => {
+            const geo = activity?.GeoCoordinates
+            if (!geo) return null
+
+            const lat = geo.Latitude ?? geo.latitude
+            const lng = geo.Longitude ?? geo.longitude
+            const Latitude = Number.isFinite(Number(lat)) ? Number(lat) : lat
+            const Longitude = Number.isFinite(Number(lng)) ? Number(lng) : lng
+
+            if (!Number.isFinite(Number(Latitude)) || !Number.isFinite(Number(Longitude))) return null
+
+            return {
+                ...activity,
+                GeoCoordinates: {
+                    ...geo,
+                    Latitude,
+                    Longitude,
+                }
+            }
+        }
+
         return dateKeys.flatMap(dateKey => {
             const dayData = itinerary[dateKey]
             return [
@@ -65,7 +86,9 @@ function ViewTrip() {
                 ...(dayData.Afternoon?.Activities || []),
                 ...(dayData.Evening?.Activities || [])
             ]
-        }).filter(activity => activity.GeoCoordinates)
+        })
+        .map(normalizeGeo)
+        .filter(Boolean)
     }
 
     if (loading) {

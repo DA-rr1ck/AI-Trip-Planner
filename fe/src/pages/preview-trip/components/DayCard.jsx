@@ -4,8 +4,9 @@ import { useSortable } from '@dnd-kit/sortable'
 import { format, parse } from 'date-fns'
 import { Trash2 } from 'lucide-react'
 import TimeSlotSection from './TimeSlotSection'
+import AttractionSearchBox from './AttractionSearchBox'
 
-function DayCard({ dateKey, dayData, onRemoveDay, onActivityClick, onRemoveActivity, children, isFirstDay,  
+function DayCard({ dateKey, dayData, onRemoveDay, onActivityClick, onRemoveActivity, onActivityAdd, location, children, isFirstDay,  
   isLastDay,   
   allDateKeys }) {
   const { setNodeRef } = useSortable({ id: dateKey })
@@ -103,6 +104,16 @@ function DayCard({ dateKey, dayData, onRemoveDay, onActivityClick, onRemoveActiv
               />
             )}
           </>
+        )}
+
+        {/* Manual Attraction Search Box */}
+        {location && onActivityAdd && (
+          <AttractionSearchBox
+            location={location}
+            dateKey={dateKey}
+            onActivityAdd={onActivityAdd}
+            existingActivities={allActivities}
+          />
         )}
       </div>
     </div>

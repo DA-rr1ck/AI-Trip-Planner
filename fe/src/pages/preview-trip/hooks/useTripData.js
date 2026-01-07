@@ -36,11 +36,6 @@ export function useTripData(initialTripData = null, forcedTripId = null) {
   // Initialize trip data
   const [tripData, setTripData] = useState(() => {
     console.log('=== Initializing tripData ===');
-    
-    if (!passedTripData) {
-      console.log('No passedTripData');
-      return null;
-    }
 
     // First, try to load from localStorage
     const tempChanges = loadTempChanges(existingTripId)
@@ -48,6 +43,11 @@ export function useTripData(initialTripData = null, forcedTripId = null) {
       console.log('✅ Loaded from localStorage');
       console.log('localStorage itinerary keys:', Object.keys(tempChanges.tripData.Itinerary).sort());
       return tempChanges;
+    }
+
+    if (!passedTripData) {
+      console.log('No passedTripData and no localStorage data');
+      return null;
     }
 
     console.log('No localStorage data, initializing from passedTripData');

@@ -2,8 +2,6 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useAuth } from '@/context/AuthContext'
-import { doc, setDoc } from 'firebase/firestore'
-import { db } from '@/service/firebaseConfig'
 import { format } from 'date-fns'
 import SmartTripForm from './components/SmartTripForm'
 import { generateSmartTrip } from '@/service/smartTripService'
@@ -27,38 +25,52 @@ function SmartTripPage() {
       const startDate = format(formData.startDate, 'yyyy-MM-dd')
       const endDate = format(formData.endDate, 'yyyy-MM-dd')
       
-      // Generate trip with database + AI
-      const tripPlan = await generateSmartTrip({
-        ...formData,
+      console.log('=== Generating Smart Trip ===')
+      console.log('User:', user.email)
+      console.log('Location:', formData.location)
+      console.log('Dates:', startDate, '->', endDate)
+      
+      // Generate trip with database + AI using backend API
+      const result = await generateSmartTrip({
+        location: formData.location,
         startDate,
-        endDate
+        endDate,
+        budgetMin: formData.budgetMin,
+        budgetMax: formData.budgetMax,
+        adults: formData.adults,
+        children: formData.children,
+        childrenAges: formData.childrenAges
+        // ❌ Don't send userEmail - we'll save later in preview page
       })
 
-      // Save to Firestore
-      const docId = Date.now().toString()
-      
-      await setDoc(doc(db, 'AITrips', docId), {
-        userSelection: {
-          location: formData.location,
-          startDate,
-          endDate,
-          budgetMin: formData.budgetMin,
-          budgetMax: formData.budgetMax,
-          budget: `$${formData.budgetMin} - $${formData.budgetMax}`,
-          adults: formData.adults,
-          children: formData.children,
-          childrenAges: formData.childrenAges,
-          traveler: `${formData.adults} Adults${formData.children > 0 ? `, ${formData.children} Children` : ''}`
-        },
-        tripData: tripPlan,
-        userEmail: user.email,
-        id: docId,
-        createdAt: new Date().toISOString(),
-        generationMethod: 'smart_database'
-      })
+      console.log('Trip generated:', result)
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to generate trip')
+      }
 
       toast.success('✨ Smart trip generated successfully!')
-      navigate(`/smart-trip/view/${docId}`)
+      
+      // ✅ Navigate to preview page with trip data (same as normal AI trip)
+      navigate('/preview-trip', {
+        state: {
+          tripData: {
+            userSelection: {
+              location: formData.location,
+              startDate,
+              endDate,
+              budgetMin: formData.budgetMin,
+              budgetMax: formData.budgetMax,
+              adults: formData.adults,
+              children: formData.children,
+              childrenAges: formData.childrenAges,
+              budget: `$${formData.budgetMin} - $${formData.budgetMax}`,
+              traveler: `${formData.adults} Adults${formData.children > 0 ? `, ${formData.children} Children` : ''}`
+            },
+            tripData: result.tripData
+          }
+        }
+      })
       
     } catch (error) {
       console.error('Error generating smart trip:', error)
