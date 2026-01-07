@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { doc, getDoc } from "firebase/firestore";
 import { format } from "date-fns";
@@ -32,13 +32,22 @@ function toDate(value) {
     return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/**
+ * Temporal status purely based on schedule times.
+ * - upcoming: now < start
+ * - in_progress: start <= now <= end
+ * - completed: now > end
+ *
+ * If no scheduledStart -> treat as upcoming (safe default).
+ * If no scheduledEnd -> fallback end = start + 2h (matches hook behavior).
+ */
 function computeTemporalStatus(step, now) {
     const startDate = toDate(step?.scheduledStart);
     if (!startDate) return "upcoming";
 
     const startMs = startDate.getTime();
     const endDate = toDate(step?.scheduledEnd);
-    const endMs = endDate ? endDate.getTime() : startMs + 2 * 60 * 60 * 1000; // fallback +2h
+    const endMs = endDate ? endDate.getTime() : startMs + 2 * 60 * 60 * 1000;
     const nowMs = now.getTime();
 
     if (nowMs < startMs) return "upcoming";
@@ -71,15 +80,11 @@ function buildPunctualLabel(punctualStatus, punctualDelta) {
         if (punctualDelta != null) return `Early · ${formatMinutesFriendly(punctualDelta)}`;
         return "Early";
     }
-
     if (punctualStatus === "on_time") return "On time";
-
     if (punctualStatus === "late") {
         if (punctualDelta != null) return `Late · ${formatMinutesFriendly(punctualDelta)}`;
         return "Late";
     }
-
-    // For upcoming / en_route etc, we don’t show punctual label (keeps UI clean)
     return "";
 }
 
@@ -88,7 +93,6 @@ function fallbackStatusMessage(stepStatus) {
 
     const { status, deltaMinutes, phase, performing } = stepStatus;
 
-    // “Performing” during the scheduled window
     if (performing) return "You're doing this activity now — enjoy!";
     if (phase === "in_progress") return "This activity is happening now.";
 
@@ -96,7 +100,6 @@ function fallbackStatusMessage(stepStatus) {
         return stepStatus.message;
     }
 
-    // Fallbacks if message isn’t provided by the hook yet
     if (status === "upcoming") return "Your next activity is coming up soon.";
     if (status === "en_route") return "You're on the way to the activity.";
     if (status === "early") return "Nice — you arrived early.";
@@ -113,66 +116,34 @@ function getStatusUi(level) {
     switch (level) {
         case "error":
             return {
-                container: "border-red-200 bg-red-50",
                 badge: "bg-red-600 text-white",
-                title: "text-red-900",
-                message: "text-red-900",
-                subtle: "text-red-700",
+                pill: "bg-red-50 text-red-800 border-red-200",
                 label: "Error",
             };
         case "success":
             return {
-                container: "border-green-200 bg-green-50",
                 badge: "bg-green-600 text-white",
-                title: "text-green-900",
-                message: "text-green-900",
-                subtle: "text-green-700",
+                pill: "bg-green-50 text-green-800 border-green-200",
                 label: "Good",
             };
         case "warning":
             return {
-                container: "border-amber-200 bg-amber-50",
                 badge: "bg-amber-600 text-white",
-                title: "text-amber-900",
-                message: "text-amber-900",
-                subtle: "text-amber-700",
+                pill: "bg-amber-50 text-amber-800 border-amber-200",
                 label: "Heads up",
             };
         case "info":
         default:
             return {
-                container: "border-blue-200 bg-blue-50",
                 badge: "bg-blue-600 text-white",
-                title: "text-blue-900",
-                message: "text-blue-900",
-                subtle: "text-blue-700",
+                pill: "bg-blue-50 text-blue-800 border-blue-200",
                 label: "Info",
             };
     }
 }
 
-/**
- * Used inside the activity list when isCurrent === true
- */
-function renderCurrentActivityCard({
-    step,
-    currentStepStatus,
-    distanceToCurrentStep,
-}) {
-    const message =
-        currentStepStatus?.message?.trim?.() ||
-        fallbackStatusMessage(currentStepStatus);
-
-    return (
-        <div className="mt-3 rounded-lg bg-blue-50 px-3 py-2">
-            {typeof distanceToCurrentStep === "number" && (
-                <p className="text-[11px] text-blue-900">
-                    <span className="font-semibold">Distance:</span> {distanceToCurrentStep} m
-                </p>
-            )}
-            <p className="mt-1 text-[12px] text-blue-900">{message}</p>
-        </div>
-    );
+function clamp(n, min, max) {
+    return Math.max(min, Math.min(max, n));
 }
 
 function TripTracking() {
@@ -183,8 +154,16 @@ function TripTracking() {
     const [trip, setTrip] = useState(null);
     const [error, setError] = useState(null);
 
-    // Allow user to switch time-of-day manually (still defaults to auto)
+    // Day/period selection for itinerary (inside bottom-sheet)
+    const [selectedDayKey, setSelectedDayKey] = useState(null);
     const [selectedPeriod, setSelectedPeriod] = useState(null);
+
+    // Re-render periodically so "Up next" -> "Current activity" flips even if GPS isn't updating
+    const [uiNowTick, setUiNowTick] = useState(0);
+    useEffect(() => {
+        const id = setInterval(() => setUiNowTick((t) => t + 1), 30_000);
+        return () => clearInterval(id);
+    }, []);
 
     // Mobile-only guard
     useEffect(() => {
@@ -193,7 +172,16 @@ function TripTracking() {
         if (!isMobile) navigate("/my-trips", { replace: true });
     }, [navigate]);
 
-    // Load trip from Firestore
+    // Lock page scroll => map + sheet feels native
+    useEffect(() => {
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.body.style.overflow = prev;
+        };
+    }, []);
+
+    // Load trip
     useEffect(() => {
         if (!tripId) return;
 
@@ -262,24 +250,265 @@ function TripTracking() {
         }
     }, [startDateStr, endDateStr]);
 
-    // Auto period = current step’s period OR inferred time-of-day
+    // Auto period from currentStep OR time-of-day
     const autoPeriod = useMemo(() => {
         const now = new Date();
         return (currentStep && currentStep.period) || inferPeriodFromTime(now);
     }, [currentStep]);
 
-    // Keep selectedPeriod aligned with autoPeriod (simple + predictable)
     useEffect(() => {
         if (!selectedPeriod) setSelectedPeriod(autoPeriod);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoPeriod]);
 
+    // Build day keys from itinerary
+    const dayKeys = useMemo(() => {
+        const set = new Set();
+        steps.forEach((s) => {
+            if (s?.dateKey) set.add(s.dateKey);
+        });
+        return Array.from(set).sort();
+    }, [steps]);
+
+    // Default selected day: today if exists, otherwise first day
+    useEffect(() => {
+        if (selectedDayKey) return;
+        const todayKey = format(new Date(), "yyyy-MM-dd");
+        if (dayKeys.includes(todayKey)) setSelectedDayKey(todayKey);
+        else if (dayKeys.length > 0) setSelectedDayKey(dayKeys[0]);
+    }, [dayKeys, selectedDayKey]);
+
+    // --- Footer summary logic (Up next vs Current activity) ---
+
+    const sortedStepsByTime = useMemo(() => {
+        return [...steps].sort((a, b) => {
+            const aMs = toDate(a?.scheduledStart)?.getTime() ?? Number.POSITIVE_INFINITY;
+            const bMs = toDate(b?.scheduledStart)?.getTime() ?? Number.POSITIVE_INFINITY;
+            return aMs - bMs;
+        });
+    }, [steps]);
+
+    // A time-only next step fallback (does NOT require coords)
+    const timeBasedNextStep = useMemo(() => {
+        if (!steps || steps.length === 0) return null;
+
+        const now = new Date();
+        const nowMs = now.getTime();
+
+        // pick first step that hasn't ended yet (or missing end -> use +2h fallback)
+        const next = sortedStepsByTime.find((s) => {
+            const start = toDate(s?.scheduledStart);
+            if (!start) return true; // no time => still show as next
+            const startMs = start.getTime();
+            const end = toDate(s?.scheduledEnd);
+            const endMs = end ? end.getTime() : startMs + 2 * 60 * 60 * 1000;
+            return endMs >= nowMs;
+        });
+
+        return next || null;
+    }, [steps, sortedStepsByTime, uiNowTick]);
+
+    const shortStatusMessage =
+        (statusMessage && statusMessage.trim()) ||
+        fallbackStatusMessage(currentStepStatus) ||
+        "Status is updating…";
+
+    const footerSummary = useMemo(() => {
+        const now = new Date();
+
+        if (!steps || steps.length === 0) {
+            return {
+                title: "Trip status",
+                subtitle: shortStatusMessage,
+                meta: "",
+                step: null,
+                temporal: "none",
+            };
+        }
+
+        // Prefer hook's selection; fallback to time-based selection
+        const step = currentStep || timeBasedNextStep;
+        if (!step) {
+            return {
+                title: "Trip status",
+                subtitle: "No upcoming activity was found.",
+                meta: shortStatusMessage,
+                step: null,
+                temporal: "none",
+            };
+        }
+
+        let temporal = computeTemporalStatus(step, now);
+
+        // If everything completed, show trip completed
+        if (temporal === "completed") {
+            const anyNotCompleted = sortedStepsByTime.some((s) => computeTemporalStatus(s, now) !== "completed");
+            if (!anyNotCompleted) {
+                return {
+                    title: "Trip status",
+                    subtitle: "All activities completed 🎉",
+                    meta: shortStatusMessage,
+                    step: null,
+                    temporal: "completed",
+                };
+            }
+
+            // Otherwise, find next not-completed
+            const next = sortedStepsByTime.find((s) => computeTemporalStatus(s, now) !== "completed");
+            if (next) {
+                const nextTemporal = computeTemporalStatus(next, now);
+                const title = nextTemporal === "in_progress" ? "Current activity" : "Up next";
+                const subtitle = next?.placeName || next?.activityType || "Activity";
+                const timeRange = formatTimeRange(next);
+                const meta = [timeRange, next?.activityType].filter(Boolean).join(" · ");
+
+                return { title, subtitle, meta, step: next, temporal: nextTemporal };
+            }
+
+            return {
+                title: "Trip status",
+                subtitle: "All activities completed 🎉",
+                meta: shortStatusMessage,
+                step: null,
+                temporal: "completed",
+            };
+        }
+
+        const title = temporal === "in_progress" ? "Current activity" : "Up next";
+        const subtitle = step?.placeName || step?.activityType || "Activity";
+
+        const timeRange = formatTimeRange(step);
+        const meta = [timeRange, step?.activityType].filter(Boolean).join(" · ");
+
+        return { title, subtitle, meta, step, temporal };
+    }, [steps, currentStep, timeBasedNextStep, sortedStepsByTime, shortStatusMessage, uiNowTick]);
+
+    // Bottom Sheet (Footer)
+    const SHEET_PEEK = 160; // px visible when collapsed
+    const [sheetHeight, setSheetHeight] = useState(0);
+    const [sheetOpen, setSheetOpen] = useState(false);
+    const [sheetY, setSheetY] = useState(0);
+    const [isDraggingSheet, setIsDraggingSheet] = useState(false);
+
+    const dragStartClientY = useRef(0);
+    const dragStartSheetY = useRef(0);
+
+    useEffect(() => {
+        function updateSheetHeight() {
+            const h = window.innerHeight || 0;
+            const next = Math.max(260, Math.round(h * 0.78));
+            setSheetHeight(next);
+        }
+        updateSheetHeight();
+        window.addEventListener("resize", updateSheetHeight);
+        return () => window.removeEventListener("resize", updateSheetHeight);
+    }, []);
+
+    const collapsedY = useMemo(() => {
+        if (!sheetHeight) return 0;
+        return Math.max(sheetHeight - SHEET_PEEK, 0);
+    }, [sheetHeight]);
+
+    // Snap sheet when open/close changes (but don’t fight while dragging)
+    useEffect(() => {
+        if (!sheetHeight) return;
+        if (isDraggingSheet) return;
+        setSheetY(sheetOpen ? 0 : collapsedY);
+    }, [sheetOpen, collapsedY, isDraggingSheet, sheetHeight]);
+
+    // Init position once we know height
+    useEffect(() => {
+        if (!sheetHeight) return;
+        setSheetY(collapsedY);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sheetHeight]);
+
+    const onSheetPointerDown = (e) => {
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+        setIsDraggingSheet(true);
+        dragStartClientY.current = e.clientY;
+        dragStartSheetY.current = sheetY;
+
+        try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+            // ignore
+        }
+    };
+
+    const onSheetPointerMove = (e) => {
+        if (!isDraggingSheet) return;
+        e.preventDefault();
+
+        const dy = e.clientY - dragStartClientY.current;
+        const next = clamp(dragStartSheetY.current + dy, 0, collapsedY);
+        setSheetY(next);
+    };
+
+    const onSheetPointerUp = () => {
+        if (!isDraggingSheet) return;
+        setIsDraggingSheet(false);
+
+        const shouldOpen = sheetY < collapsedY * 0.5;
+        setSheetOpen(shouldOpen);
+    };
+
+    const statusUi = getStatusUi(statusLevel);
+
+    const trackingTitle = isStartingTracking
+        ? "Starting…"
+        : isTracking
+            ? "Tracking ON"
+            : "Tracking OFF";
+
+    const lastUpdateText = (() => {
+        if (lastUpdate) {
+            const label = isTracking || isStartingTracking ? "Updated" : "Last known";
+            return `${label}: ${lastUpdate.toLocaleTimeString()}`;
+        }
+        if (isTracking || isStartingTracking) return "Waiting for GPS…";
+        return "No location yet";
+    })();
+
+    const primaryBtnLabel = isStartingTracking ? "Starting…" : isTracking ? "Stop" : "Start tracking";
+    const primaryBtnDisabled = isStartingTracking;
+
+    const primaryBtnClasses =
+        "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition " +
+        (primaryBtnDisabled
+            ? "bg-gray-200 text-gray-600 cursor-not-allowed"
+            : isTracking
+                ? "bg-red-600 text-white active:scale-[0.99]"
+                : "bg-black text-white active:scale-[0.99]");
+
+    // Itinerary for selected day/period (expanded sheet)
+    const selectedDaySteps = useMemo(() => {
+        if (!selectedDayKey) return [];
+        return steps.filter((s) => s.dateKey === selectedDayKey);
+    }, [steps, selectedDayKey]);
+
+    const period = selectedPeriod || autoPeriod;
+    const periodSteps = useMemo(() => {
+        return selectedDaySteps.filter((s) => s.period === period);
+    }, [selectedDaySteps, period]);
+
+    const dayLabel = useMemo(() => {
+        if (!selectedDayKey) return "";
+        try {
+            const d = new Date(selectedDayKey);
+            return format(d, "EEEE, MMM d");
+        } catch {
+            return selectedDayKey;
+        }
+    }, [selectedDayKey]);
+
+    // Loading/Error full-screen
     if (loading) {
         return (
-            <div className="px-4 pt-6 pb-20">
-                <h1 className="text-2xl font-semibold mb-4">Start trip</h1>
-                <div className="mt-10 flex justify-center">
-                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-gray-900" />
+            <div className="h-[100dvh] w-full bg-black flex items-center justify-center">
+                <div className="rounded-2xl bg-white/10 px-5 py-4 text-white backdrop-blur">
+                    <div className="mx-auto mb-3 h-10 w-10 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                    <p className="text-sm font-medium">Loading trip…</p>
                 </div>
             </div>
         );
@@ -287,302 +516,334 @@ function TripTracking() {
 
     if (error) {
         return (
-            <div className="px-4 pt-6 pb-20">
-                <h1 className="text-2xl font-semibold mb-2">Start trip</h1>
-                <p className="text-sm text-red-600 mb-4">{error}</p>
-                <button
-                    type="button"
-                    onClick={() => navigate("/my-trips")}
-                    className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white"
-                >
-                    Back to My Trips
-                </button>
+            <div className="h-[100dvh] w-full bg-black flex items-center justify-center px-4">
+                <div className="w-full max-w-sm rounded-2xl bg-white px-4 py-4">
+                    <p className="text-sm font-semibold text-gray-900">Trip Tracking</p>
+                    <p className="mt-1 text-sm text-red-600">{error}</p>
+                    <button
+                        type="button"
+                        onClick={() => navigate("/my-trips")}
+                        className="mt-4 w-full rounded-xl bg-black px-4 py-2 text-sm font-semibold text-white"
+                    >
+                        Back to My Trips
+                    </button>
+                </div>
             </div>
         );
     }
 
-    const statusUi = getStatusUi(statusLevel);
-    const trackingTitle = isStartingTracking
-        ? "Starting tracking…"
-        : isTracking
-            ? "Tracking is active"
-            : "Tracking is off";
-
-    const lastUpdateText = (() => {
-        if (lastUpdate) {
-            const label = isTracking || isStartingTracking ? "Last update" : "Last known update";
-            return `${label}: ${lastUpdate.toLocaleTimeString()}`;
-        }
-        if (isTracking || isStartingTracking) return "Waiting for first GPS fix…";
-        return "No location recorded yet";
-    })();
-
-    const primaryBtnLabel = isStartingTracking
-        ? "Starting…"
-        : isTracking
-            ? "Stop tracking"
-            : "Start tracking";
-
-    const primaryBtnDisabled = isStartingTracking;
-
-    const primaryBtnClasses =
-        "rounded-lg px-4 py-2 text-sm font-medium shadow-sm " +
-        (primaryBtnDisabled
-            ? "bg-gray-200 text-gray-600 cursor-not-allowed"
-            : isTracking
-                ? "bg-red-600 text-white"
-                : "bg-black text-white");
-
-    const shouldShowStatusCard = isTracking || isStartingTracking;
+    // Destination step for the map (coords-based): use footerSummary.step as the best "current/next" choice
+    const destinationForMap = footerSummary?.step || currentStep || timeBasedNextStep || null;
 
     return (
-        <div className="px-4 pt-6 pb-20">
-            <header className="mb-4">
-                <h1 className="text-2xl font-semibold">Start trip</h1>
-                {tripLocation && <p className="text-sm text-gray-600 mt-1">{tripLocation}</p>}
-                {dateRange && <p className="text-xs text-gray-500 mt-0.5">📅 {dateRange}</p>}
-            </header>
-
-            {/* Tracking control card */}
-            <section className="mb-4 rounded-xl border bg-white p-4 shadow-sm">
-                <div className="flex items-center justify-between gap-3">
-                    <div>
-                        <p className="text-sm font-medium">{trackingTitle}</p>
-                        <p className="mt-1 text-xs text-gray-500">{lastUpdateText}</p>
-                    </div>
-
-                    <button
-                        type="button"
-                        disabled={primaryBtnDisabled}
-                        onClick={() => {
-                            if (primaryBtnDisabled) return;
-                            if (isTracking) stopTracking();
-                            else startTracking();
-                        }}
-                        className={primaryBtnClasses}
-                    >
-                        {primaryBtnLabel}
-                    </button>
-                </div>
-
-                {/* When NOT actively tracking, errors still need to be visible (e.g., native-only / permission denied) */}
-                {trackingError && !shouldShowStatusCard && (
-                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
-                        <p className="text-xs text-red-700">{trackingError}</p>
-                    </div>
-                )}
-
-                {currentPosition && (
-                    <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-700">
-                        <p>
-                            <span className="font-semibold">Current position:</span>{" "}
-                            {currentPosition.latitude.toFixed(5)}, {currentPosition.longitude.toFixed(5)}
-                        </p>
-                        {typeof currentPosition.accuracy === "number" && (
-                            <p>Accuracy: ~{Math.round(currentPosition.accuracy)} m</p>
-                        )}
-                    </div>
-                )}
-            </section>
-
-            {/* Status (always shown while tracking is on, even if currentStep is null) */}
-            {shouldShowStatusCard && (
-                <section className={`mb-4 rounded-xl border p-4 shadow-sm ${statusUi.container}`}>
-                    <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                            <p className={`text-xs font-semibold ${statusUi.title}`}>Status</p>
-
-                            {currentStep ? (
-                                <p className={`mt-1 text-[11px] ${statusUi.subtle} truncate`}>
-                                    {currentStep.placeName || "Current activity"}
-                                </p>
-                            ) : (
-                                <p className={`mt-1 text-[11px] ${statusUi.subtle}`}>
-                                    No current activity
-                                </p>
-                            )}
-                        </div>
-
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${statusUi.badge}`}>
-                            {statusUi.label}
-                        </span>
-                    </div>
-
-                    {/* If trackingError exists while tracking, the hook already prioritizes it into statusMessage (no contradiction). */}
-                    <p className={`mt-2 text-sm ${statusUi.message}`}>{statusMessage}</p>
-
-                    {isTracking && currentStep && typeof distanceToCurrentStep === "number" && (
-                        <p className={`mt-1 text-[11px] ${statusUi.subtle}`}>
-                            Distance to activity: {distanceToCurrentStep} m · Geofence: {geofenceRadius} m
-                        </p>
-                    )}
-
-                    {!isTracking && isStartingTracking && (
-                        <p className={`mt-1 text-[11px] ${statusUi.subtle}`}>
-                            Tip: If it takes too long, try moving outdoors or enabling Location services.
-                        </p>
-                    )}
-                </section>
-            )}
-
-            {/* Map */}
-            {(currentStep || currentPosition) && (
+        <div className="relative h-[100dvh] w-full overflow-hidden bg-black">
+            {/* FULLSCREEN MAP */}
+            <div className="absolute inset-0 z-0">
                 <TripMap
+                    isTracking={isTracking}
                     currentPosition={currentPosition}
                     currentStep={currentStep}
+                    destinationStep={destinationForMap}
                     positionsHistory={positionsHistory}
                     geofenceRadius={geofenceRadius}
                 />
-            )}
+            </div>
 
-            {/* Today's activities */}
-            <section className="mt-4 rounded-xl border bg-white p-4 shadow-sm">
-                {(() => {
-                    const now = new Date();
-                    const todayKey = format(now, "yyyy-MM-dd");
+            {/* TOP HEADER (fixed) */}
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
+                <div className="pointer-events-auto mx-3 mt-3 rounded-2xl border border-white/15 bg-black/45 px-3 py-3 text-white shadow-lg backdrop-blur">
+                    <div className="flex items-center justify-between gap-3">
+                        <button
+                            type="button"
+                            onClick={() => navigate("/my-trips")}
+                            className="rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold hover:bg-white/15 transition duration-150 active:bg-black"
+                        >
+                            ← My trips
+                        </button>
 
-                    const todaySteps = steps.filter((s) => s.dateKey === todayKey);
-                    const period = selectedPeriod || autoPeriod;
+                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold border ${statusUi.pill}`}>
+                            {trackingTitle}
+                        </span>
+                    </div>
 
-                    const periodSteps = todaySteps.filter((s) => s.period === period);
+                    <div className="mt-2">
+                        <p className="text-sm font-semibold truncate">
+                            {footerSummary?.step?.placeName || tripLocation || "Your trip"}
+                        </p>
+                        <p className="mt-0.5 text-[12px] text-white/80 line-clamp-1">
+                            {shortStatusMessage}
+                        </p>
+                        {dateRange && (
+                            <p className="mt-0.5 text-[11px] text-white/60">
+                                📅 {dateRange}
+                            </p>
+                        )}
+                    </div>
+                </div>
+            </div>
 
-                    return (
-                        <>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm font-semibold">Today</p>
-                                    <p className="text-xs text-gray-500 mt-0.5">{format(now, "EEEE, MMM d")}</p>
+            {/* BOTTOM SHEET FOOTER (fixed + draggable) */}
+            {sheetHeight > 0 && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
+                    <div
+                        className={
+                            "pointer-events-auto mx-0 rounded-t-3xl border border-gray-200 bg-white shadow-2xl " +
+                            (isDraggingSheet ? "" : "transition-transform duration-300")
+                        }
+                        style={{
+                            height: sheetHeight,
+                            transform: `translateY(${sheetY}px)`,
+                        }}
+                    >
+                        <div className="flex h-full flex-col">
+                            {/* Drag Handle */}
+                            <div
+                                className="px-4 pt-3 pb-2"
+                                style={{ touchAction: "none" }}
+                                onPointerDown={onSheetPointerDown}
+                                onPointerMove={onSheetPointerMove}
+                                onPointerUp={onSheetPointerUp}
+                                onPointerCancel={onSheetPointerUp}
+                                onDoubleClick={() => setSheetOpen((v) => !v)}
+                            >
+                                <div className="mx-auto h-1.5 w-12 rounded-full bg-gray-300" />
+                            </div>
+
+                            {/* Footer summary row (always visible) */}
+                            <div className="px-4 pb-3">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-semibold text-gray-900">
+                                            {footerSummary.title}
+                                        </p>
+
+                                        <p className="mt-0.5 text-[12px] text-gray-600 line-clamp-1">
+                                            {footerSummary.subtitle}
+                                        </p>
+
+                                        {footerSummary.meta ? (
+                                            <p className="mt-0.5 text-[11px] text-gray-500 line-clamp-1">
+                                                {footerSummary.meta}
+                                            </p>
+                                        ) : null}
+
+                                        <p className="mt-0.5 text-[11px] text-gray-500">
+                                            {lastUpdateText}
+                                            {isTracking && currentStep && typeof distanceToCurrentStep === "number" ? (
+                                                <span> · {distanceToCurrentStep} m · Geofence {geofenceRadius} m</span>
+                                            ) : null}
+                                        </p>
+
+                                        {/* show permission/GPS error even when collapsed */}
+                                        {trackingError && !isStartingTracking && (
+                                            <p className="mt-1 text-[11px] text-red-600 line-clamp-2">
+                                                {trackingError}
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        disabled={primaryBtnDisabled}
+                                        onClick={() => {
+                                            if (primaryBtnDisabled) return;
+                                            if (isTracking) stopTracking();
+                                            else startTracking();
+                                        }}
+                                        className={primaryBtnClasses}
+                                    >
+                                        {primaryBtnLabel}
+                                    </button>
                                 </div>
 
-                                <span className="rounded-full bg-gray-100 px-3 py-1 text-[11px] font-medium text-gray-700">
-                                    {PERIOD_LABELS[period] || period}
-                                </span>
+                                {/* Tap area to expand */}
+                                <button
+                                    type="button"
+                                    onClick={() => setSheetOpen(true)}
+                                    className="mt-3 w-full rounded-xl bg-gray-100 px-3 py-2 text-[12px] font-semibold text-gray-700 transition duration-150 active:bg-gray-400"
+                                >
+                                    View itinerary
+                                </button>
                             </div>
 
-                            {/* Period selector */}
-                            <div className="mt-3 grid grid-cols-4 gap-2">
-                                {PERIODS.map((p) => {
-                                    const active = p === period;
-                                    return (
-                                        <button
-                                            key={p}
-                                            type="button"
-                                            onClick={() => setSelectedPeriod(p)}
-                                            className={
-                                                "rounded-lg px-2 py-2 text-[11px] font-medium " +
-                                                (active ? "bg-black text-white" : "bg-gray-100 text-gray-700")
+                            {/* Expanded content */}
+                            <div className="border-t border-gray-100" />
+
+                            <div className="flex-1 overflow-y-auto px-4 py-4">
+                                {/* Day selector */}
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-sm font-semibold text-gray-900">Itinerary</p>
+                                        <p className="mt-0.5 text-[12px] text-gray-500">{dayLabel}</p>
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setSheetOpen(false)}
+                                        className="rounded-xl bg-gray-100 px-3 py-2 text-[12px] font-semibold text-gray-700 transition duration-150 active:bg-gray-400"
+                                    >
+                                        Collapse
+                                    </button>
+                                </div>
+
+                                {dayKeys.length > 0 && (
+                                    <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                                        {dayKeys.map((k) => {
+                                            const active = k === selectedDayKey;
+                                            let label = k;
+                                            try {
+                                                label = format(new Date(k), "MMM d");
+                                            } catch {
+                                                // ignore
                                             }
-                                        >
-                                            {PERIOD_LABELS[p]}
-                                        </button>
-                                    );
-                                })}
-                            </div>
+                                            return (
+                                                <button
+                                                    key={k}
+                                                    type="button"
+                                                    onClick={() => setSelectedDayKey(k)}
+                                                    className={
+                                                        "shrink-0 rounded-full px-3 py-1 text-[12px] font-semibold border " +
+                                                        (active
+                                                            ? "bg-black text-white border-black"
+                                                            : "bg-white text-gray-700 border-gray-200")
+                                                    }
+                                                >
+                                                    {label}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
 
-                            {todaySteps.length === 0 && (
-                                <p className="mt-3 text-xs text-gray-500">
-                                    This trip doesn&apos;t have any activities scheduled for today.
-                                </p>
-                            )}
-
-                            {todaySteps.length > 0 && periodSteps.length === 0 && (
-                                <p className="mt-3 text-xs text-gray-500">
-                                    No activities at this time of day. Check other periods.
-                                </p>
-                            )}
-
-                            {periodSteps.length > 0 && (
-                                <div className="mt-3 space-y-2">
-                                    {periodSteps.map((step) => {
-                                        const isCurrent = currentStep && step.stepId === currentStep.stepId;
-                                        const temporalStatus = computeTemporalStatus(step, now);
-
-                                        const punctual = stepStatuses?.[step.stepId];
-                                        const punctualStatus = punctual?.status; // early / on_time / late
-                                        const punctualDelta = punctual?.deltaMinutes;
-
-                                        const timeRange = formatTimeRange(step);
-
-                                        // Badge priority:
-                                        let badgeText = "";
-                                        if (isCurrent) {
-                                            if (temporalStatus === "in_progress") {
-                                                // If performing, show combined badge with punctuality
-                                                if (currentStepStatus?.performing) {
-                                                    badgeText = "In progress";
-                                                } else {
-                                                    badgeText = "Now";
-                                                }
-                                            } else if (temporalStatus === "upcoming") {
-                                                // currentStep can be the NEXT step (not started yet)
-                                                badgeText = "Up next";
-                                            } else if (temporalStatus === "completed") {
-                                                badgeText = "Done";
-                                            }
-                                        } else if (temporalStatus === "completed") {
-                                            badgeText = "Done";
-                                        } else if (temporalStatus === "upcoming") {
-                                            badgeText = "Upcoming";
-                                        }
-
-                                        const punctualLabel = buildPunctualLabel(punctualStatus, punctualDelta);
-
-                                        const baseClasses =
-                                            "rounded-xl border p-3 transition";
-                                        const variantClasses = isCurrent
-                                            ? "border-blue-300 bg-blue-50 shadow-sm"
-                                            : temporalStatus === "completed"
-                                                ? "border-gray-200 bg-gray-50 opacity-70"
-                                                : "border-gray-200 bg-white";
-
+                                {/* Period selector */}
+                                <div className="mt-3 grid grid-cols-4 gap-2">
+                                    {PERIODS.map((p) => {
+                                        const active = p === period;
                                         return (
-                                            <div key={step.stepId} className={`${baseClasses} ${variantClasses}`}>
-                                                <div className="flex items-start justify-between gap-2">
-                                                    <div className="flex-1">
-                                                        <p className="text-sm font-medium">{step.placeName}</p>
-                                                        <p className="mt-0.5 text-[11px] text-gray-500">
-                                                            {timeRange ? `${timeRange} · ` : ""}
-                                                            {step.activityType}
-                                                        </p>
-                                                    </div>
-
-                                                    <div className="flex flex-col items-end gap-1">
-                                                        {badgeText && (
-                                                            <span className="rounded-full bg-gray-900 px-2 py-0.5 text-[10px] font-medium text-white">
-                                                                {badgeText}
-                                                            </span>
-                                                        )}
-                                                        {punctualLabel && (
-                                                            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-700">
-                                                                {punctualLabel}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-
-                                                {step.placeDetails && (
-                                                    <p className="mt-2 text-[11px] text-gray-600 line-clamp-2">
-                                                        {step.placeDetails}
-                                                    </p>
-                                                )}
-
-                                                {/* Current activity card extracted */}
-                                                {isCurrent && currentStepStatus && (
-                                                    renderCurrentActivityCard({
-                                                        step,
-                                                        currentStepStatus,
-                                                        distanceToCurrentStep,
-                                                    })
-                                                )}
-                                            </div>
+                                            <button
+                                                key={p}
+                                                type="button"
+                                                onClick={() => setSelectedPeriod(p)}
+                                                className={
+                                                    "rounded-xl px-2 py-2 text-[11px] font-semibold " +
+                                                    (active ? "bg-black text-white" : "bg-gray-100 text-gray-700")
+                                                }
+                                            >
+                                                {PERIOD_LABELS[p]}
+                                            </button>
                                         );
                                     })}
                                 </div>
-                            )}
-                        </>
-                    );
-                })()}
-            </section>
+
+                                {/* Steps list */}
+                                {selectedDaySteps.length === 0 && (
+                                    <p className="mt-4 text-xs text-gray-500">
+                                        No activities scheduled for this day.
+                                    </p>
+                                )}
+
+                                {selectedDaySteps.length > 0 && periodSteps.length === 0 && (
+                                    <p className="mt-4 text-xs text-gray-500">
+                                        No activities in this period. Try another time of day.
+                                    </p>
+                                )}
+
+                                {periodSteps.length > 0 && (
+                                    <div className="mt-4 space-y-2">
+                                        {periodSteps.map((step) => {
+                                            const now = new Date();
+                                            const isCurrent = currentStep && step.stepId === currentStep.stepId;
+                                            const temporalStatus = computeTemporalStatus(step, now);
+
+                                            const punctual = stepStatuses?.[step.stepId];
+                                            const punctualLabel = buildPunctualLabel(punctual?.status, punctual?.deltaMinutes);
+
+                                            const timeRange = formatTimeRange(step);
+
+                                            let badgeText = "";
+                                            if (isCurrent) {
+                                                if (temporalStatus === "in_progress") badgeText = currentStepStatus?.performing ? "In progress" : "Now";
+                                                else if (temporalStatus === "upcoming") badgeText = "Up next";
+                                                else badgeText = "Done";
+                                            } else if (temporalStatus === "completed") badgeText = "Done";
+                                            else if (temporalStatus === "upcoming") badgeText = "Upcoming";
+
+                                            return (
+                                                <div
+                                                    key={step.stepId}
+                                                    className={
+                                                        "rounded-2xl border p-3 transition " +
+                                                        (isCurrent
+                                                            ? "border-blue-300 bg-blue-50"
+                                                            : temporalStatus === "completed"
+                                                                ? "border-gray-200 bg-gray-50 opacity-80"
+                                                                : "border-gray-200 bg-white")
+                                                    }
+                                                >
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="min-w-0">
+                                                            <p className="text-sm font-semibold text-gray-900 truncate">
+                                                                {step.placeName}
+                                                            </p>
+                                                            <p className="mt-0.5 text-[11px] text-gray-500">
+                                                                {timeRange ? `${timeRange} · ` : ""}
+                                                                {step.activityType}
+                                                            </p>
+                                                        </div>
+
+                                                        <div className="flex flex-col items-end gap-1">
+                                                            {badgeText && (
+                                                                <span className="rounded-full bg-gray-900 px-2 py-0.5 text-[10px] font-semibold text-white">
+                                                                    {badgeText}
+                                                                </span>
+                                                            )}
+                                                            {punctualLabel && (
+                                                                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-700">
+                                                                    {punctualLabel}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+
+                                                    {step.placeDetails && (
+                                                        <p className="mt-2 text-[11px] text-gray-600 line-clamp-2">
+                                                            {step.placeDetails}
+                                                        </p>
+                                                    )}
+
+                                                    {/* Current activity info */}
+                                                    {isCurrent && currentStepStatus && (
+                                                        <div className="mt-3 rounded-xl bg-blue-50 px-3 py-2">
+                                                            {typeof distanceToCurrentStep === "number" && (
+                                                                <p className="text-[11px] text-blue-900">
+                                                                    <span className="font-semibold">Distance:</span> {distanceToCurrentStep} m
+                                                                </p>
+                                                            )}
+                                                            <p className="mt-1 text-[12px] text-blue-900">
+                                                                {currentStepStatus?.message?.trim?.() || fallbackStatusMessage(currentStepStatus)}
+                                                            </p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Hint overlay */}
+            {!currentPosition && !currentStep && (
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+                    <div className="rounded-2xl bg-black/40 px-4 py-3 text-white/90 backdrop-blur">
+                        <p className="text-sm font-semibold">Preparing map…</p>
+                        <p className="mt-0.5 text-[12px] text-white/70">Start tracking to get your live location.</p>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
