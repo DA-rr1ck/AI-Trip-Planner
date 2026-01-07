@@ -156,6 +156,9 @@ function SortablePlace({ place, index, onRemove }) {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
+    width: isDragging ? '100%' : undefined,
+    position: isDragging ? 'relative' : undefined,
+    zIndex: isDragging ? 999 : undefined,
   }
 
   const handleViewDetails = () => {
@@ -198,6 +201,15 @@ function SortablePlace({ place, index, onRemove }) {
         }`}
       >
         <div className='flex items-center gap-3 flex-1'>
+          <button
+            className='cursor-grab active:cursor-grabbing touch-none flex-shrink-0 text-gray-400 hover:text-gray-600'
+            onClick={(e) => e.stopPropagation()}
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className='h-4 w-4' />
+          </button>
+
           <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${
             isCheckin ? 'bg-green-100' : 'bg-orange-100'
           }`}>
@@ -210,6 +222,32 @@ function SortablePlace({ place, index, onRemove }) {
             <p className='text-xs text-gray-600 mt-0.5'>
               {place.placeDetails || place.hotelName}
             </p>
+            {/* Display price and rating if available */}
+            <div className='flex items-center gap-3 mt-1'>
+              {place.hotelPrice && (
+                <p className='text-xs text-gray-700'>
+                  💰 {place.hotelPrice}
+                </p>
+              )}
+              {place.hotelRating && (
+                <p className='text-xs text-gray-700'>
+                  ⭐ {place.hotelRating}
+                </p>
+              )}
+            </div>
+            {/* Display price and rating if available */}
+            <div className='flex items-center gap-3 mt-1'>
+              {place.hotelPrice && (
+                <p className='text-xs text-gray-700'>
+                  💰 {place.hotelPrice}
+                </p>
+              )}
+              {place.hotelRating && (
+                <p className='text-xs text-gray-700'>
+                  ⭐ {place.hotelRating}
+                </p>
+              )}
+            </div>
             <p className='text-xs text-gray-500 mt-0.5'>
               {place.timeSlot}
             </p>
@@ -335,7 +373,7 @@ function TimeSlotContainer({
 }
 
 // Droppable Day Component
-function DroppableDay({ day, onRemoveDay, daySearchQuery, onSearchQueryChange, searching, searchResults, onAddPlace, onHoverPlace, onRemovePlace }) {
+function DroppableDay({ day, onRemoveDay, daySearchQuery, onSearchQueryChange, searching, searchResults, selectedTimeSlot, onTimeSlotChange, onAddPlace, onHoverPlace, onRemovePlace }) {
   const { setNodeRef } = useSortable({ id: day.id })
 
   const allPlaces = getAllPlacesForDay(day)
@@ -354,6 +392,28 @@ function DroppableDay({ day, onRemoveDay, daySearchQuery, onSearchQueryChange, s
             <path strokeLinecap='round' strokeLinejoin='round' strokeWidth='2' d='M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' />
           </svg>
         </button>
+      </div>
+
+      {/* Time Slot Selector */}
+      <div className='mb-3'>
+        <label className='block text-xs font-medium text-gray-600 mb-2'>
+          Add places to:
+        </label>
+        <div className='flex flex-wrap gap-2'>
+          {TIME_SLOTS.map((slot) => (
+            <button
+              key={slot.key}
+              onClick={() => onTimeSlotChange(slot.key)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                selectedTimeSlot === slot.key
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-white border border-gray-300 text-gray-700 hover:border-blue-400 hover:bg-blue-50'
+              }`}
+            >
+              {slot.icon} {slot.key}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className='mb-4'>
@@ -394,7 +454,7 @@ function DroppableDay({ day, onRemoveDay, daySearchQuery, onSearchQueryChange, s
           {searchResults.map((place) => (
             <div
               key={place.id}
-              onClick={() => onAddPlace(day.id, place)}
+              onClick={() => onAddPlace(day.id, place, selectedTimeSlot)}
               onMouseEnter={(e) => onHoverPlace(e, place, day.id)}
               onMouseMove={(e) => onHoverPlace(e, null, null, true)}
               onMouseLeave={() => onHoverPlace(null)}
@@ -459,6 +519,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
   const [daySearchQueries, setDaySearchQueries] = useState({})
   const [dayPlaceResults, setDayPlaceResults] = useState({})
   const [searchingDayPlaces, setSearchingDayPlaces] = useState({})
+  const [selectedTimeSlots, setSelectedTimeSlots] = useState({})
   const [activeId, setActiveId] = useState(null)
   
   // Hover state
@@ -702,7 +763,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
     }
   }
 
-  const addPlaceToDay = async (dayId, place) => {
+  const addPlaceToDay = async (dayId, place, timeSlot = 'Morning') => {
     // First, fetch image for the place
     let placeImageUrl = '/placeholder.jpg'
     try {
@@ -730,7 +791,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
 
         const nextSlots = {
           ...(normalizedDay.slots || createEmptySlots()),
-          Morning: [...(normalizedDay.slots?.Morning || []), newPlace],
+          [timeSlot]: [...(normalizedDay.slots?.[timeSlot] || []), newPlace],
         }
 
         const nextDay = { ...normalizedDay, slots: nextSlots }
@@ -746,7 +807,7 @@ function DayManager({ location, tripDays, onDaysChange }) {
     setDayPlaceResults(prev => ({ ...prev, [dayId]: [] }))
     setHoveredPlace(null) // Clear hover state
     const dayNum = updated.find(d => d.id === dayId)?.dayNumber
-    if (dayNum) toast.success(`Added "${place.name}" to Day ${dayNum}`)
+    if (dayNum) toast.success(`Added "${place.name}" to Day ${dayNum} - ${timeSlot}`)
   }
 
   const removePlaceFromDay = (dayId, placeId) => {
@@ -898,6 +959,8 @@ function DayManager({ location, tripDays, onDaysChange }) {
                   onSearchQueryChange={(val) => setDaySearchQueries({ ...daySearchQueries, [day.id]: val })}
                   searching={searchingDayPlaces[day.id]}
                   searchResults={dayPlaceResults[day.id]}
+                  selectedTimeSlot={selectedTimeSlots[day.id] || 'Morning'}
+                  onTimeSlotChange={(slot) => setSelectedTimeSlots({ ...selectedTimeSlots, [day.id]: slot })}
                   onAddPlace={addPlaceToDay}
                   onHoverPlace={(e, place, dayId, isMove) => {
                     if (!ENABLE_HOVER_PREVIEW) return
