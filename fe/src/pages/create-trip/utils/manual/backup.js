@@ -14,8 +14,8 @@ function placeToActivity(place, fallbackIndex, timeSlot) {
     PlaceDetails: place.address,
     PlaceImageUrl: '/placeholder.jpg',
     GeoCoordinates: {
-      Latitude: parseFloat(place.lat),
-      Longitude: parseFloat(place.lon)
+      latitude: parseFloat(place.lat),
+      longitude: parseFloat(place.lon)
     },
     TicketPricing: 'Check on-site',
     TimeTravel: `Activity ${fallbackIndex + 1}`,
