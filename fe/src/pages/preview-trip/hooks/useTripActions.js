@@ -489,24 +489,134 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
 
   const handleHotelClick = (hotel) => {
     const slug = encodeURIComponent(hotel.HotelName || 'hotel')
-    navigate(`/hotel/${slug}`, {
-      state: {
-        hotel,
-        tripContext: { userSelection: tripData.userSelection, existingTripId },
-        returnTo: buildReturnTo(),
+    
+    // For manually added hotels, navigate to manual hotel detail page
+    // with the proper state format expected by that page
+    if (hotel.isManuallyAdded) {
+      const lat = hotel.GeoCoordinates?.Latitude || hotel.lat
+      const lon = hotel.GeoCoordinates?.Longitude || hotel.lon
+      
+      navigate(`/manual/hotel/${slug}`, {
+        state: {
+          hotel: {
+            // Keep both legacy/manual keys and AI-friendly keys for compatibility
+            id: hotel.id,
+            name: hotel.HotelName,
+            address: hotel.HotelAddress,
+            HotelName: hotel.HotelName,
+            HotelAddress: hotel.HotelAddress,
+            lat: Number.isFinite(Number(lat)) ? Number(lat) : lat,
+            lon: Number.isFinite(Number(lon)) ? Number(lon) : lon,
+            imageUrl: hotel.HotelImageUrl,
+            city: hotel.city,
+            country: hotel.country
+          },
+          tripContext: { userSelection: tripData.userSelection },
+        },
+      })
+    } else {
+      // For AI-generated hotels, use the regular hotel detail page
+      navigate(`/hotel/${slug}`, {
+        state: {
+          hotel,
+          tripContext: { userSelection: tripData.userSelection, existingTripId },
+          returnTo: buildReturnTo(),
       },
-    })
+      })
+    }
   }
 
   const handleActivityClick = (activity) => {
     const slug = encodeURIComponent(activity.PlaceName || 'attraction')
-    navigate(`/attraction/${slug}`, {
-      state: {
-        activity,
-        tripContext: { userSelection: tripData.userSelection, existingTripId },
-        returnTo: buildReturnTo(),
+    
+    // For manually added activities, navigate to manual attraction detail page
+    // with the proper state format expected by that page
+    if (activity.isManuallyAdded) {
+      const lat = activity.GeoCoordinates?.Latitude || activity.lat
+      const lon = activity.GeoCoordinates?.Longitude || activity.lon
+      
+      navigate(`/manual/attraction/${slug}`, {
+        state: {
+          activity: {
+            // Keep both legacy/manual keys and AI-friendly keys for compatibility
+            name: activity.PlaceName,
+            address: activity.PlaceAddress || activity.PlaceDetails,
+            lat: Number.isFinite(Number(lat)) ? Number(lat) : lat,
+            lon: Number.isFinite(Number(lon)) ? Number(lon) : lon,
+            PlaceName: activity.PlaceName,
+            PlaceDetails: activity.PlaceDetails,
+            Address: activity.PlaceAddress || activity.PlaceDetails,
+            GeoCoordinates: {
+              Latitude: Number.isFinite(Number(lat)) ? Number(lat) : lat,
+              Longitude: Number.isFinite(Number(lon)) ? Number(lon) : lon
+            },
+            Rating: activity.Rating || 4.5,
+            imageUrl: activity.ImageUrl
+          },
+          tripContext: { userSelection: tripData.userSelection },
+        },
+      })
+    } else {
+      // For AI-generated activities, use the regular attraction detail page
+      navigate(`/attraction/${slug}`, {
+        state: {
+          activity,
+          tripContext: { userSelection: tripData.userSelection, existingTripId },
+          returnTo: buildReturnTo(),
       },
-    })
+      })
+    }
+  }
+
+  // Handler to add a manually searched hotel
+  const handleAddHotel = (newHotel) => {
+    const updatedTripData = {
+      ...tripData,
+      tripData: {
+        ...tripData.tripData,
+        Hotels: [...(tripData.tripData.Hotels || []), newHotel]
+      }
+    }
+    updateTripData(updatedTripData)
+  }
+
+  // Handler to add a manually searched activity to a specific day/slot
+  const handleAddActivity = (dateKey, timeSlot, newActivity) => {
+    const dayData = { ...tripData.tripData.Itinerary[dateKey] }
+
+    // Handle different time slots
+    if (timeSlot === 'Morning') {
+      const existingSlot = dayData.Morning || { StartTime: '8:00 AM', EndTime: '12:00 PM', Activities: [] }
+      dayData.Morning = {
+        ...existingSlot,
+        Activities: [...(existingSlot.Activities || []), newActivity]
+      }
+    } else if (timeSlot === 'Afternoon') {
+      const existingSlot = dayData.Afternoon || { StartTime: '2:00 PM', EndTime: '6:00 PM', Activities: [] }
+      dayData.Afternoon = {
+        ...existingSlot,
+        Activities: [...(existingSlot.Activities || []), newActivity]
+      }
+    } else if (timeSlot === 'Evening') {
+      const existingSlot = dayData.Evening || { StartTime: '6:00 PM', EndTime: '10:00 PM', Activities: [] }
+      dayData.Evening = {
+        ...existingSlot,
+        Activities: [...(existingSlot.Activities || []), newActivity]
+      }
+    }
+
+    const updatedTripData = {
+      ...tripData,
+      tripData: {
+        ...tripData.tripData,
+        Itinerary: {
+          ...tripData.tripData.Itinerary,
+          [dateKey]: dayData
+        }
+      }
+    }
+
+    updateTripData(updatedTripData)
   }
 
   return {
@@ -528,5 +638,7 @@ export function useTripActions(tripData, updateTripData, existingTripId, rawTrip
     handleSaveTrip,
     handleHotelClick,
     handleActivityClick,
+    handleAddHotel,
+    handleAddActivity,
   }
 }

@@ -2225,6 +2225,93 @@ export default function HotelDetailsPage() {
     }
 
     if (error) {
+        // If we have hotel data from state, show a basic view instead of just error
+        if (hotelFromState) {
+            return (
+                <div className='p-6 mx-auto pb-20 md:pb-0 md:px-20 lg:w-7xl space-y-4 md:space-y-6'>
+                    {/* Back button */}
+                    <div>
+                        <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={() => navigate(-1)}
+                            className='flex items-center gap-2'
+                        >
+                            <ArrowLeft className='h-4 w-4' /> Back to trip
+                        </Button>
+                    </div>
+
+                    {/* Basic Header with data from state */}
+                    <div className="bg-white rounded-lg shadow-md p-6 space-y-5">
+                        <div>
+                            <h1 className="text-2xl md:text-3xl font-bold">
+                                {hotelFromState.HotelName || 'Hotel'}
+                            </h1>
+                            {hotelFromState.HotelAddress && (
+                                <p className="text-gray-600 mt-2 flex items-center gap-2">
+                                    <MapPin className="h-4 w-4" />
+                                    {hotelFromState.HotelAddress}
+                                </p>
+                            )}
+                        </div>
+
+                        <hr className="w-full bg-gray-300" />
+
+                        {/* Description from state */}
+                        {hotelFromState.Description && (
+                            <div>
+                                <h3 className="font-semibold mb-2">About</h3>
+                                <p className="text-gray-700">{hotelFromState.Description}</p>
+                            </div>
+                        )}
+
+                        {/* Additional info */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {hotelFromState.Rating && (
+                                <div className="flex items-center gap-2 text-gray-600">
+                                    <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                                    <span>Rating: {hotelFromState.Rating}</span>
+                                </div>
+                            )}
+                            {hotelFromState.Price && (
+                                <div className="flex items-center gap-2 text-gray-600">
+                                    <BedDouble className="h-4 w-4" />
+                                    <span>Price: {hotelFromState.Price}</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Map link if we have coordinates */}
+                        {hotelFromState.GeoCoordinates && (
+                            <div className="pt-4">
+                                <a
+                                    href={`https://www.google.com/maps/search/?api=1&query=${hotelFromState.GeoCoordinates.Latitude},${hotelFromState.GeoCoordinates.Longitude}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-800"
+                                >
+                                    <MapPin className="h-4 w-4" />
+                                    View on Google Maps
+                                    <ArrowRight className="h-3 w-3" />
+                                </a>
+                            </div>
+                        )}
+
+                        {/* Note about limited info */}
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-4">
+                            <p className="text-sm text-yellow-800">
+                                ⚠️ Detailed information for this hotel is not available. 
+                                The data shown above is based on your search.
+                            </p>
+                        </div>
+                    </div>
+
+                    <ScrollTopButton />
+                </div>
+            )
+        }
+
+        // No state data either, show minimal error
         return (
             <div className="p-6 md:px-20 lg:px-40">
                 <Button

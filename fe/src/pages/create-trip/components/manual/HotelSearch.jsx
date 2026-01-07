@@ -499,9 +499,18 @@ function HotelSearch({
     setSelectedHotel(hotel)
   }
 
-  const handleConfirmHotel = () => {
+  const handleConfirmHotel = async () => {
     if (selectedHotel) {
-      onHotelConfirm(selectedHotel)
+      // Fetch image for the hotel before confirming
+      let hotelImageUrl = '/placeholder.jpg'
+      try {
+        hotelImageUrl = await getHotelImage(selectedHotel.name, selectedHotel.address)
+      } catch (e) {
+        console.warn('Failed to fetch image for hotel:', selectedHotel.name)
+      }
+      
+      // Include the image URL with the hotel data
+      onHotelConfirm({ ...selectedHotel, imageUrl: hotelImageUrl })
       toast.success(`Hotel "${selectedHotel.name}" added to your trip!`)
       // Clear all search state after confirming
       setHotelResults([])
@@ -538,7 +547,7 @@ function HotelSearch({
   if (confirmedHotel) {
     const openHotelDetails = () => {
       const slug = encodeURIComponent(confirmedHotel.name)
-      navigate(`/manual/hotel/${slug}`, {
+      navigate(`/hotel/${slug}`, {
         state: {
           hotel: {
             // Keep both legacy/manual keys and AI keys for compatibility
