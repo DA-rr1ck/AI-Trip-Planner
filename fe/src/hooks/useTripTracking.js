@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { Geolocation } from "@capacitor/geolocation";
 import { Capacitor } from "@capacitor/core";
 import { findCurrentOrNextStep } from "@/utils/itineraryUtils";
 import { saveTripLocation, saveStepStatus } from "@/service/trackingFirestore";
+import { clearTripNotificationFlags } from "@/service/localNotifications";
 
 const DEFAULT_GEOFENCE_RADIUS_METERS = 150;
 
@@ -54,57 +55,111 @@ function getStepEndMs(step) {
     return startMs + 2 * 60 * 60 * 1000; // fallback +2h
 }
 
-function absMin(deltaMinutes) {
-    if (typeof deltaMinutes !== "number" || Number.isNaN(deltaMinutes)) return null;
-    return Math.abs(Math.round(deltaMinutes));
+function formatDurationHMS(totalSeconds) {
+  if (typeof totalSeconds !== "number" || !Number.isFinite(totalSeconds)) return "";
+
+  const s = Math.max(0, Math.round(Math.abs(totalSeconds)));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+
+  // >= 1h: show hours + minutes, hide seconds
+  // < 1h: show minutes + seconds, hide hours
+  // if < 1m, just show seconds
+  if (h > 0) {
+    return `${h}h ${String(m).padStart(2, "0")}m`;
+  }
+
+  if (m > 0) {
+    return `${m}m ${String(sec).padStart(2, "0")}s`;
+  }
+
+  return `${sec}s`;
 }
 
-function buildStatusMessage({ phase, inside, status, deltaMinutes, distanceMeters }) {
-    const m = absMin(deltaMinutes);
+function formatDistanceFriendly(meters) {
+    if (typeof meters !== "number" || !Number.isFinite(meters)) return "";
+    const m = Math.max(0, Math.round(meters));
+
+    if (m < 1000) return `${m} m`;
+    const km = m / 1000;
+
+    if (km < 10) return `${km.toFixed(1)} km`;
+    if (km < 100) return `${Math.round(km)} km`;
+    return `${Math.round(km)} km`;
+}
+
+function buildStatusMessage({
+    phase,
+    inside,
+    status,
+    deltaSeconds,
+    timeToStartSeconds,
+    distanceMeters,
+    showIdleGapMessage = false,
+}) {
+    const distText = typeof distanceMeters === "number" ? formatDistanceFriendly(distanceMeters) : "";
 
     if (phase === "completed") return "This activity window has ended. You can move on to the next one.";
 
     if (phase === "in_progress") {
         if (inside) {
-            // UX: don't show "X min late" in the main message while user is already there.
-            // We still save lateness/earliness in stepStatuses.deltaMinutes for the badge UI.
+            // UX: don't show "late/early" in the main message while user is already there.
             return "In progress — enjoy your time!";
         }
-        return typeof distanceMeters === "number"
-            ? `This activity is happening now. You're about ${distanceMeters} m away — head there when you can.`
+        return distText
+            ? `This activity is happening now. You're about ${distText} away — head there when you can.`
             : "This activity is happening now. Head there when you can.";
     }
 
     // before_start
+    // Long free gap between activities: keep it calm until 15 mins before the next activity.
+    if (showIdleGapMessage && !inside) {
+        return "No activity at the moment — feel free to do whatever you like.";
+    }
+
+    const timeToStart =
+        typeof timeToStartSeconds === "number" && timeToStartSeconds > 0
+            ? formatDurationHMS(timeToStartSeconds)
+            : "";
+
+    const pastStart =
+        typeof deltaSeconds === "number" && deltaSeconds > 0
+            ? formatDurationHMS(deltaSeconds)
+            : "";
+
     if (inside) {
-        if (typeof deltaMinutes === "number" && deltaMinutes < 0 && m != null) {
-            return `You're already here. Starts in about ${m} min.`;
-        }
+        if (timeToStart) return `You're already here. Starts in ${timeToStart}.`;
         return "You're already here. Hang back and wait for the activity to start.";
     }
 
     if (status === "upcoming") {
-        if (typeof deltaMinutes === "number" && deltaMinutes < 0 && m != null) {
-            return `Your next activity starts in about ${m} min. Better get going!`;
-        }
+        if (timeToStart) return `Your next activity starts in ${timeToStart}. Better get going!`;
         return "Your next activity is coming up soon. Get ready to head out.";
     }
 
     if (status === "en_route") {
-        if (typeof deltaMinutes === "number" && m != null) {
-            return deltaMinutes <= 0
-                ? `You're on the way. Starts in about ${m} min.`
-                : `You're on the way. About ${m} min past the scheduled start.`;
+        if (typeof deltaSeconds === "number") {
+            if (deltaSeconds <= 0 && timeToStart) return `You're on the way. Starts in ${timeToStart}.`;
+            if (pastStart) return `You're on the way. About ${pastStart} past the scheduled start.`;
         }
         return "You're on the way to the activity.";
     }
 
-    if (status === "early") return m != null ? `Nice — you arrived about ${m} min early.` : "Nice — you arrived early.";
+    if (status === "early") {
+        if (typeof deltaSeconds === "number" && deltaSeconds < 0) {
+            return `Nice — you arrived about ${formatDurationHMS(-deltaSeconds)} early.`;
+        }
+        return "Nice — you arrived early.";
+    }
+
     if (status === "on_time") return "Great — you arrived on time.";
+
     if (status === "late") {
-        return m != null
-            ? `You're running late — about ${m} min past the start. Head there as soon as you can.`
-            : "You're running late. Head there as soon as you can.";
+        if (pastStart) {
+            return `You're running late — about ${pastStart} past the start. Head there as soon as you can.`;
+        }
+        return "You're running late. Head there as soon as you can.";
     }
 
     return "Status is updating…";
@@ -196,6 +251,18 @@ export function useTripTracking(trip, steps) {
     // A small ticker so step selection/status can update even if GPS doesn't emit new points (e.g., user stationary).
     const [nowTick, setNowTick] = useState(0);
 
+
+    const stepsByTime = useMemo(() => {
+        const arr = Array.isArray(steps) ? [...steps] : [];
+        arr.sort((a, b) => {
+            const aMs = toMs(a?.scheduledStart) ?? Number.POSITIVE_INFINITY;
+            const bMs = toMs(b?.scheduledStart) ?? Number.POSITIVE_INFINITY;
+            return aMs - bMs;
+        });
+        return arr;
+    }, [steps]);
+
+
     const isNative = Capacitor.isNativePlatform();
     const lastInsideRef = useRef({});
     const lastPersistedLocationRef = useRef(null);
@@ -242,6 +309,13 @@ export function useTripTracking(trip, steps) {
             setIsStartingTracking(false);
             hadFirstFixRef.current = false;
 
+            // Reset per-trip notification dedupe flags so each tracking session can notify again.
+            try {
+                await clearTripNotificationFlags(tripId);
+            } catch {
+                // ignore
+            }
+
             // Clear any transient completion flash
             if (completionFlashTimerRef.current) {
                 clearTimeout(completionFlashTimerRef.current);
@@ -261,6 +335,13 @@ export function useTripTracking(trip, steps) {
         setError(null);
         setIsStartingTracking(true);
         hadFirstFixRef.current = false;
+
+        // Reset per-trip notification dedupe flags so each tracking session can notify again.
+        try {
+            await clearTripNotificationFlags(tripId);
+        } catch {
+            // ignore
+        }
 
         if (!isNative) {
             setError("Tracking is only available in the mobile app.");
@@ -485,12 +566,38 @@ export function useTripTracking(trip, steps) {
 
             const performing = phase === "in_progress" && inside;
 
+            const deltaSeconds = (nowMs - startMs) / 1000;
+            const timeToStartSeconds = (startMs - nowMs) / 1000;
+
+            // New UX: if there is a long (>= 1h) free gap between this step and the previous step,
+            // show a calm "no activity" message until 15 minutes before the next activity.
+            let showIdleGapMessage = false;
+            if (phase === "before_start" && !inside) {
+                const idx = stepsByTime.findIndex((s) => s?.stepId === step.stepId);
+                if (idx > 0) {
+                    const prevStep = stepsByTime[idx - 1];
+                    const prevEndMs = getStepEndMs(prevStep);
+
+                    if (typeof prevEndMs === "number") {
+                        const gapMs = startMs - prevEndMs;
+                        const inGap = nowMs > prevEndMs && nowMs < startMs;
+                        const moreThan15mLeft = startMs - nowMs > 15 * 60 * 1000;
+
+                        if (inGap && moreThan15mLeft && gapMs >= 60 * 60 * 1000) {
+                            showIdleGapMessage = true;
+                        }
+                    }
+                }
+            }
+
             const message = buildStatusMessage({
                 phase,
                 inside,
                 status,
-                deltaMinutes: typeof lockedDelta === "number" ? lockedDelta : deltaMinutes,
+                deltaSeconds: typeof lockedDelta === "number" ? lockedDelta * 60 : deltaSeconds,
+                timeToStartSeconds,
                 distanceMeters: roundedDistance,
+                showIdleGapMessage,
             });
 
             const next = {
@@ -507,7 +614,7 @@ export function useTripTracking(trip, steps) {
 
             return next;
         });
-    }, [steps, currentPosition, nowTick]);
+    }, [steps, stepsByTime, currentPosition, nowTick]);
 
     const currentStepStatus =
         currentStep && stepStatuses[currentStep.stepId] ? stepStatuses[currentStep.stepId] : null;

@@ -1,4 +1,4 @@
-// fe/src/pages/edit-trip/utils/imageUtils.js
+import { api } from '@/lib/api'
 
 // Simple in-memory cache
 const imageCache = new Map();
@@ -11,15 +11,11 @@ async function fetchImageFromAPI(query) {
 
   try {
     
-    const response = await fetch(
-      `/api/serp/images/search?q=${encodeURIComponent(query)}`
-    );
-
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
-    }
-
-    const data = await response.json();
+    const { data } = await api.get('/serp/images/search', {
+      params: {
+        q: query,
+      },
+    });
     const imageUrl = data.images?.[0]?.original || data.images?.[0]?.thumbnail || '/placeholder.jpg';
     
     // Cache the result

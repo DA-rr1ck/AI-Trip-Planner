@@ -44,6 +44,29 @@ async function rememberTripKey(tripId, key) {
     }
 }
 
+
+export async function notifyLocal({ title, body, extra = {} }) {
+    if (!Capacitor.isNativePlatform()) return;
+
+    const ok = await ensureLocalNotificationPermission();
+    if (!ok) return;
+
+    // Timestamp-based id to avoid collisions
+    const id = Math.floor(Date.now() % 2000000000);
+
+    await LocalNotifications.schedule({
+        notifications: [
+            {
+                id,
+                title,
+                body,
+                extra,
+                schedule: { at: new Date(Date.now() + 250) },
+            },
+        ],
+    });
+}
+
 export async function notifyOnce({ key, title, body, extra = {} }) {
     if (!Capacitor.isNativePlatform()) return;
 

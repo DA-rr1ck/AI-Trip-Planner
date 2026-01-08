@@ -1,6 +1,5 @@
 import { doc, setDoc } from 'firebase/firestore'
 import { db } from '@/service/firebaseConfig'
-import { format } from 'date-fns'
 
 const TIME_SLOTS = [
   { key: 'Morning', start: '8:00 AM', end: '12:00 PM' },
@@ -10,20 +9,18 @@ const TIME_SLOTS = [
 ]
 
 function placeToActivity(place, fallbackIndex, timeSlot) {
-  const normalizedTimeSlot = timeSlot === 'Lunch' ? 'Afternoon' : timeSlot
   return {
     PlaceName: place.name,
     PlaceDetails: place.address,
-    PlaceImageUrl: place.imageUrl || place.PlaceImageUrl || '/placeholder.jpg',
+    PlaceImageUrl: '/placeholder.jpg',
     GeoCoordinates: {
-      Latitude: parseFloat(place.lat),
-      Longitude: parseFloat(place.lon),
+      latitude: parseFloat(place.lat),
+      longitude: parseFloat(place.lon)
     },
     TicketPricing: 'Check on-site',
     TimeTravel: `Activity ${fallbackIndex + 1}`,
-    TimeSlot: normalizedTimeSlot || 'N/A',
-    Rating: 'N/A',
-    isManuallyAdded: true
+    TimeSlot: timeSlot || 'N/A',
+    Rating: 'N/A'
   }
 }
 
@@ -61,12 +58,10 @@ export async function saveManualTrip({ formData, confirmedHotel, tripDays, user 
     const afternoonPlaces = slots?.Afternoon || []
     const eveningPlaces = slots?.Evening || []
 
-    // Merge Lunch places into Afternoon (no separate Lunch slot for manual trips)
-    const mergedAfternoonPlaces = [...lunchPlaces, ...afternoonPlaces]
-
     const morningActivities = toActivities(morningPlaces, 'Morning', 0)
-    const afternoonActivities = toActivities(mergedAfternoonPlaces, 'Afternoon', morningActivities.length)
-    const eveningActivities = toActivities(eveningPlaces, 'Evening', morningActivities.length + afternoonActivities.length)
+    const lunchActivity = lunchPlaces[0] ? placeToActivity(lunchPlaces[0], morningActivities.length, 'Lunch') : null
+    const afternoonActivities = toActivities(afternoonPlaces, 'Afternoon', morningActivities.length + (lunchActivity ? 1 : 0))
+    const eveningActivities = toActivities(eveningPlaces, 'Evening', morningActivities.length + (lunchActivity ? 1 : 0) + afternoonActivities.length)
 
     itinerary[dayKey] = {
       Day: day.dayNumber,
@@ -78,8 +73,13 @@ export async function saveManualTrip({ formData, confirmedHotel, tripDays, user 
         EndTime: '12:00 PM',
         Activities: morningActivities,
       },
+      Lunch: {
+        StartTime: '12:00 PM',
+        EndTime: '1:30 PM',
+        Activity: lunchActivity,
+      },
       Afternoon: {
-        StartTime: lunchPlaces.length > 0 ? '12:00 PM' : '1:30 PM',
+        StartTime: '1:30 PM',
         EndTime: '6:00 PM',
         Activities: afternoonActivities,
       },
@@ -88,9 +88,6 @@ export async function saveManualTrip({ formData, confirmedHotel, tripDays, user 
         EndTime: '10:00 PM',
         Activities: eveningActivities,
       },
-
-      // Keep the key for compatibility, but ensure it won't render as a separate slot
-      Lunch: null,
 
       // Backward-compatible flat list (used by older UIs)
       Activities: allPlaces.map((place, index) => placeToActivity(place, index, place.timeSlot))
@@ -104,14 +101,13 @@ export async function saveManualTrip({ formData, confirmedHotel, tripDays, user 
         HotelName: confirmedHotel.name,
         HotelAddress: confirmedHotel.address,
         Price: 'User selected',
-        HotelImageUrl: confirmedHotel.imageUrl || confirmedHotel.HotelImageUrl || '/placeholder.jpg',
+        HotelImageUrl: '/placeholder.jpg',
         GeoCoordinates: {
-          Latitude: parseFloat(confirmedHotel.lat),
-          Longitude: parseFloat(confirmedHotel.lon)
+          latitude: parseFloat(confirmedHotel.lat),
+          longitude: parseFloat(confirmedHotel.lon)
         },
         Rating: 'N/A',
-        Description: `${confirmedHotel.type} in ${confirmedHotel.city || formData.location}`,
-        isManuallyAdded: true
+        Description: `${confirmedHotel.type} in ${confirmedHotel.city || formData.location}`
       }
     ],
     Itinerary: itinerary
@@ -128,9 +124,7 @@ export async function saveManualTrip({ formData, confirmedHotel, tripDays, user 
       location: formData.location,
       noOfdays,
       budget,
-      traveler,
-      startDate: formData.startDate ? format(new Date(formData.startDate), 'yyyy-MM-dd') : null,
-      endDate: formData.endDate ? format(new Date(formData.endDate), 'yyyy-MM-dd') : null
+      traveler
     },
     tripData: manualTripData,
     userEmail: user?.email || '',

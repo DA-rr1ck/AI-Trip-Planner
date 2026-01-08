@@ -1,8 +1,9 @@
-import React, { useEffect } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { parse, differenceInDays } from 'date-fns'
-import { loadTempChanges } from './utils/localStorage'
+import { loadTempChanges, clearTempChanges } from './utils/localStorage'
+import { toast } from 'sonner'
 
 // Import hooks
 import { useTripData } from './hooks/useTripData'
@@ -14,20 +15,22 @@ import { useAuth } from '@/context/AuthContext'
 // Import components
 import TripHeader from './components/TripHeader'
 import TripOverview from './components/TripOverview'
-import TripRegenerationSection from './components/TripRegenerationSection'
 import HotelsSection from './components/HotelsSection'
 import ItinerarySection from './components/ItinerarySection'
 import TripMapSection from './components/TripMapSection'
+import UnsavedChangesDialog from './components/UnsavedChangesDialog'
 
 function PreviewTrip() {
   const { user } = useAuth()
-
   const [searchParams] = useSearchParams()
   const forcedTripId = searchParams.get('tripId')
-
   const navigate = useNavigate()
+  const location = useLocation()
   
-  // Use custom hooks
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
+  const [pendingNavigation, setPendingNavigation] = useState(null)
+  const isDraggingRef = useRef(false)
+
   const {
     tripData,
     updateTripData,
@@ -72,26 +75,104 @@ function PreviewTrip() {
     handleAddActivity,
   } = useTripActions(tripData, updateTripData, existingTripId, rawTripData, user)
 
-  useEffect(() => {
-    // If URL has no tripId, rewrite it to the canonical form
-    if (!forcedTripId && existingTripId) {
-      navigate(`/preview-trip?tripId=${existingTripId}`, { replace: true })
-    }
-  }, [forcedTripId, existingTripId, navigate])
+  // ✅ Wrap drag handlers
+  const wrappedHandleDragStart = useCallback((event) => {
+    isDraggingRef.current = true
+    handleDragStart(event)
+  }, [handleDragStart])
 
-  // Warn before leaving with unsaved changes
+  const wrappedHandleDragEnd = useCallback((event) => {
+    isDraggingRef.current = false
+    handleDragEnd(event)
+  }, [handleDragEnd])
+
+  const wrappedHandleDragCancel = useCallback(() => {
+    isDraggingRef.current = false
+    handleDragCancel()
+  }, [handleDragCancel])
+
+  // ✅ Block browser back/forward
+  useEffect(() => {
+    if (!hasUnsavedChanges) return
+
+    const handlePopState = (e) => {
+      if (!isDraggingRef.current) {
+        window.history.pushState(null, '', location.pathname + location.search)
+        setShowUnsavedDialog(true)
+        setPendingNavigation({ pathname: '/', search: '' })
+      }
+    }
+
+    window.history.pushState(null, '', location.pathname + location.search)
+    window.addEventListener('popstate', handlePopState)
+
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [hasUnsavedChanges, location])
+
+  // ✅ Listen for navigation blocks from Header
+  useEffect(() => {
+    // Store state for Header to check
+    localStorage.setItem('preview_has_unsaved', hasUnsavedChanges ? 'true' : 'false')
+    
+    // Handle navigation attempts from Header
+    const handleBlockNavigation = (e) => {
+      setShowUnsavedDialog(true)
+      setPendingNavigation({ pathname: e.detail.pathname, search: '' })
+    }
+
+    window.addEventListener('preview-trip-block-navigation', handleBlockNavigation)
+    
+    return () => {
+      localStorage.removeItem('preview_has_unsaved')
+      window.removeEventListener('preview-trip-block-navigation', handleBlockNavigation)
+    }
+  }, [hasUnsavedChanges])
+
+  // ✅ Browser refresh warning
   useEffect(() => {
     const handleBeforeUnload = (e) => {
-      const hasTempData = loadTempChanges(existingTripId)
-      if (hasUnsavedChanges && !hasTempData) {
+      if (hasUnsavedChanges && !isDraggingRef.current) {
         e.preventDefault()
         e.returnValue = 'You have unsaved changes. Are you sure you want to leave?'
+        return e.returnValue
       }
     }
 
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [hasUnsavedChanges, existingTripId])
+  }, [hasUnsavedChanges])
+
+  // ✅ Handle discard changes
+  const handleDiscardChanges = useCallback(() => {
+    clearTempChanges(existingTripId)
+    localStorage.removeItem('preview_trip_id')
+    localStorage.removeItem('preview_has_unsaved')
+    
+    setHasUnsavedChanges(false)
+    setShowUnsavedDialog(false)
+    
+    toast.info('Changes discarded')
+    
+    if (pendingNavigation) {
+      setTimeout(() => {
+        navigate(pendingNavigation.pathname + pendingNavigation.search)
+        setPendingNavigation(null)
+      }, 100)
+    }
+  }, [existingTripId, pendingNavigation, navigate, setHasUnsavedChanges])
+
+  // ✅ Handle keep editing
+  const handleKeepEditing = useCallback(() => {
+    setShowUnsavedDialog(false)
+    setPendingNavigation(null)
+  }, [])
+
+  // ✅ Update URL if needed
+  useEffect(() => {
+    if (!forcedTripId && existingTripId) {
+      navigate(`/preview-trip?tripId=${existingTripId}`, { replace: true })
+    }
+  }, [forcedTripId, existingTripId, navigate])
 
   if (tripData === null) {
     return (
@@ -121,63 +202,68 @@ function PreviewTrip() {
   })
 
   return (
-    <div className='p-10 md:px-20 lg:px-44 xl:px-56'>
-      <TripHeader
-        hasUnsavedChanges={hasUnsavedChanges}
-        saving={saving}
-        onSave={() => handleSaveTrip(selectedHotels, setHasUnsavedChanges)}
-        isNewTrip={existingTripId.startsWith('temp_')}
-      />
+    <>
+      <div className='p-10 md:px-20 lg:px-44 xl:px-56'>
+        <TripHeader
+          hasUnsavedChanges={hasUnsavedChanges}
+          saving={saving}
+          onSave={() => handleSaveTrip(selectedHotels, setHasUnsavedChanges)}
+          isNewTrip={existingTripId.startsWith('temp_')}
+        />
 
-      <TripOverview
-        tripData={tripData}
-        onEditSelection={handleEditSelection}
-        getTotalDays={getTotalDays}
-      />
+        <TripOverview
+          tripData={tripData}
+          onEditSelection={handleEditSelection}
+          getTotalDays={getTotalDays}
+          isEditingSelection={isEditingSelection}
+          editedSelection={editedSelection}
+          setEditedSelection={setEditedSelection}
+          onCancelEdit={handleCancelEdit}
+          onRegenerateAll={handleRegenerateAll}
+          regeneratingAll={regeneratingAll}
+        />
 
-      <TripRegenerationSection
-        isEditingSelection={isEditingSelection}
-        editedSelection={editedSelection}
-        setEditedSelection={setEditedSelection}
-        onCancel={handleCancelEdit}
-        onRegenerate={handleRegenerateAll}
-        regeneratingAll={regeneratingAll}
-      />
+        <HotelsSection
+          hotels={tripData.tripData?.Hotels}
+          selectedHotels={selectedHotels}
+          onToggleHotelSelection={handleToggleHotelSelection}
+          hotelPreference={hotelPreference}
+          setHotelPreference={setHotelPreference}
+          regeneratingHotels={regeneratingHotels}
+          onRegenerateHotels={handleRegenerateHotels}
+          onHotelClick={handleHotelClick}
+          onHotelAdd={handleAddHotel}
+          location={tripData.tripData?.Location}
+        />
 
-      <HotelsSection
-        hotels={tripData.tripData?.Hotels}
-        selectedHotels={selectedHotels}
-        onToggleHotelSelection={handleToggleHotelSelection}
-        hotelPreference={hotelPreference}
-        setHotelPreference={setHotelPreference}
-        regeneratingHotels={regeneratingHotels}
-        onRegenerateHotels={handleRegenerateHotels}
-        onHotelClick={handleHotelClick}
-        onHotelAdd={handleAddHotel}
-        location={tripData.tripData?.Location}
-      />
+        <ItinerarySection
+          dateKeys={dateKeys}
+          itinerary={tripData.tripData.Itinerary}
+          allActivityIds={allActivityIds}
+          onRegenerateSingleDay={handleRegenerateSingleDay}
+          onRemoveDay={handleRemoveDay}
+          onActivityClick={handleActivityClick}
+          onRemoveActivity={handleRemoveActivity}
+          onActivityAdd={handleAddActivity}
+          location={tripData.tripData?.Location}
+          sensors={sensors}
+          onDragStart={wrappedHandleDragStart}
+          onDragEnd={wrappedHandleDragEnd}
+          onDragCancel={wrappedHandleDragCancel}
+        />
 
-      <ItinerarySection
-        dateKeys={dateKeys}
-        itinerary={tripData.tripData.Itinerary}
-        allActivityIds={allActivityIds}
-        onRegenerateSingleDay={handleRegenerateSingleDay}
-        onRemoveDay={handleRemoveDay}
-        onActivityClick={handleActivityClick}
-        onRemoveActivity={handleRemoveActivity}
-        onActivityAdd={handleAddActivity}
-        location={tripData.tripData?.Location}
-        sensors={sensors}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-        onDragCancel={handleDragCancel}
-      />
+        <TripMapSection
+          itinerary={tripData.tripData.Itinerary}
+          locationName={tripData.tripData.Location}
+        />
+      </div>
 
-      <TripMapSection
-        itinerary={tripData.tripData.Itinerary}
-        locationName={tripData.tripData.Location}
+      <UnsavedChangesDialog
+        open={showUnsavedDialog}
+        onDiscard={handleDiscardChanges}
+        onKeepEditing={handleKeepEditing}
       />
-    </div>
+    </>
   )
 }
 

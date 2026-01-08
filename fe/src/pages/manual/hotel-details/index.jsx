@@ -1724,6 +1724,7 @@ export default function ManualHotelDetailsPage() {
     const { slug } = useParams()
     const hotelFromState = location.state?.hotel || null
     const tripContext = location.state?.tripContext || null
+    const returnTo = location.state?.returnTo || '/create-trip'
 
     const { hotel, isLoading, error } = useHotelDetails(hotelFromState, tripContext)
 
@@ -1776,7 +1777,7 @@ export default function ManualHotelDetailsPage() {
             <div className='p-6 md:px-20 lg:px-40'>
                 <Button
                     variant='outline'
-                    onClick={() => navigate(-1)}
+                    onClick={() => navigate(returnTo)}
                     className='mb-4 flex items-center gap-2'
                 >
                     <ArrowLeft className='h-4 w-4' /> Back
@@ -1794,7 +1795,7 @@ export default function ManualHotelDetailsPage() {
                 <Button
                     variant='outline'
                     size='sm'
-                    onClick={() => navigate(-1)}
+                    onClick={() => navigate(returnTo)}
                     className='mb-4 flex items-center gap-2'
                 >
                     <ArrowLeft className='h-4 w-4' /> Back to trip
@@ -1811,7 +1812,7 @@ export default function ManualHotelDetailsPage() {
                 <Button
                     variant='outline'
                     size='sm'
-                    onClick={() => navigate(-1)}
+                    onClick={() => navigate(returnTo)}
                     className='flex items-center gap-2'
                 >
                     <ArrowLeft className='h-4 w-4' /> Back to trip

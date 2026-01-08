@@ -14,7 +14,7 @@ import ProtectedRoute from '@/components/ProtectedRoute/ProtectedRoute.jsx'
 import { LocaleProvider } from '@/context/LocaleContext.jsx'
 
 // Pages
-import Hero from '@/components/custom/Hero.jsx'                 // Landing content
+import Hero from '@/components/custom/Hero.jsx' // Landing content
 import CreateTrip from '@/pages/create-trip/index.jsx'
 import ViewTrip from '@/pages/view-trip/[tripId]/index.jsx'
 import PreviewTrip from '@/pages/preview-trip/index.jsx'
@@ -27,6 +27,13 @@ import AttractionDetails from '@/pages/attraction-details/index.jsx'
 
 import TripTracking from '@/pages/trip-tracking/index.jsx'
 import ViewSmartTrip from './pages/smart-trip/view'
+
+import AdminLogin from '@/pages/admin/AdminLogin.jsx'
+import AdminLayout from '@/pages/admin/AdminLayout.jsx'
+import AdminDashboard from '@/pages/admin/AdminDashboard.jsx'
+import AdminManageDatasets from '@/pages/admin/AdminManageDatasets.jsx'
+import AdminProtected from '@/pages/admin/components/AdminProtected.jsx'
+
 // Root layout INSIDE the router so any component can use <Link/>
 function RootLayout() {
   return (
@@ -57,14 +64,14 @@ export default function App() {
                   element={<CreateTrip />}
                 />
 
-              <Route
-                path="preview-trip"
-                element={
-                  <ProtectedRoute>
-                    <PreviewTrip />
-                  </ProtectedRoute>
-                }
-              />  
+                <Route
+                  path="preview-trip"
+                  element={
+                    <ProtectedRoute>
+                      <PreviewTrip />
+                    </ProtectedRoute>
+                  }
+                />
 
                 <Route
                   path="view-trip/:tripId"
@@ -75,30 +82,30 @@ export default function App() {
                   }
                 />
 
-              <Route path='/smart-trip' 
-                element={
-                  <ProtectedRoute>
-                <SmartTripPage />
-                  </ProtectedRoute>
-                }
-                 />
+                <Route path='/smart-trip'
+                  element={
+                    <ProtectedRoute>
+                      <SmartTripPage />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route path='/smart-trip/view/:tripId' 
-                element={
-                  <ProtectedRoute>
-                <ViewSmartTrip />
-                  </ProtectedRoute>
-                }
-                 />
+                <Route path='/smart-trip/view/:tripId'
+                  element={
+                    <ProtectedRoute>
+                      <ViewSmartTrip />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route
-                path="edit-trip/:tripId"
-                element={
-                  <ProtectedRoute>
-                    <EditTrip />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="edit-trip/:tripId"
+                  element={
+                    <ProtectedRoute>
+                      <EditTrip />
+                    </ProtectedRoute>
+                  }
+                />
 
                 <Route
                   path="my-trips"
@@ -167,6 +174,20 @@ export default function App() {
                   </ProtectedRoute>
                 }
               />
+
+              <Route path="/admin/login" element={<AdminLogin />} />
+              <Route
+                path="/admin"
+                element={
+                  <AdminProtected>
+                    <AdminLayout />
+                  </AdminProtected>
+                }
+              >
+                <Route index element={<Navigate to="dashboard" replace />} />
+                <Route path="dashboard" element={<AdminDashboard />} />
+                <Route path="manage/datasets" element={<AdminManageDatasets />} />
+              </Route>
             </Routes>
           </LocaleProvider>
         </AuthProvider>
