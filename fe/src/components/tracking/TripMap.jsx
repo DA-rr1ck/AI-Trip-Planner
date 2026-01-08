@@ -90,6 +90,10 @@ export default function TripMap({
     // Default ALWAYS auto-fit; only turn off when user presses "Center on me"
     const [autoFit, setAutoFit] = useState(true);
 
+    // FOLLOW mode: when enabled, keep the map centered on the user's marker
+    // until the user drags/zooms or toggles it off.
+    const [followUser, setFollowUser] = useState(false);
+
     const userLatLng = useMemo(() => getLatLngFromPosition(currentPosition), [currentPosition]);
     const stepForMap = currentStep || destinationStep;
     const stepLatLng = useMemo(() => getLatLngFromStep(stepForMap), [stepForMap]);
@@ -109,8 +113,48 @@ export default function TripMap({
 
     // Keep default autoFit when stop tracking
     useEffect(() => {
-        if (!isTracking) setAutoFit(true);
+        if (!isTracking) {
+            setAutoFit(true);
+            setFollowUser(false);
+        }
     }, [isTracking]);
+
+    // If we lose the user position, stop following.
+    useEffect(() => {
+        if (!userLatLng && followUser) setFollowUser(false);
+    }, [userLatLng, followUser]);
+
+    // While in FOLLOW mode, keep panning to user's marker as it updates.
+    useEffect(() => {
+        if (!followUser) return;
+        const m = getMap();
+        if (!m) return;
+        if (!userLatLng) return;
+
+        try {
+            m.panTo([userLatLng.lat, userLatLng.lng], { animate: true });
+        } catch {
+            // ignore
+        }
+    }, [followUser, userLatLng]);
+
+    // Any manual drag/zoom should break FOLLOW mode.
+    useEffect(() => {
+        const m = getMap();
+        if (!m) return;
+        if (!followUser) return;
+
+        const onDragStart = () => setFollowUser(false);
+        const onZoomStart = () => setFollowUser(false);
+
+        m.on("dragstart", onDragStart);
+        m.on("zoomstart", onZoomStart);
+
+        return () => {
+            m.off("dragstart", onDragStart);
+            m.off("zoomstart", onZoomStart);
+        };
+    }, [map, followUser]);
 
     // Recalc size for fullscreen layouts
     useEffect(() => {
@@ -260,7 +304,7 @@ export default function TripMap({
     }, [isTracking, autoFit, fitUserAndStep]);
 
     // Button behavior
-    const label = isTracking ? "Center on me" : "Center activity";
+    const label = isTracking ? (followUser ? "Stop following" : "Center on me") : "Center activity";
     const canCenter = isTracking ? !!userLatLng : !!stepLatLng;
 
     const handleCenter = (e) => {
@@ -269,10 +313,25 @@ export default function TripMap({
         if (!m) return;
 
         if (isTracking) {
-            // Only here we disable auto-fit (per requirement)
             if (!userLatLng) return;
+
+            // Toggle FOLLOW mode.
+            if (followUser) {
+                setFollowUser(false);
+                setAutoFit(true);
+                return;
+            }
+
+            // Turning FOLLOW on also disables auto-fit.
             setAutoFit(false);
-            m.setView([userLatLng.lat, userLatLng.lng], 15, { animate: true });
+            setFollowUser(true);
+
+            // Pan to user (keep current zoom), and then keep following via the effect above.
+            try {
+                m.panTo([userLatLng.lat, userLatLng.lng], { animate: true });
+            } catch {
+                // ignore
+            }
             return;
         }
 
@@ -284,11 +343,11 @@ export default function TripMap({
     return (
         <div className="relative h-full w-full z-0">
             <style>{`
-        .trip-tracking-map .leaflet-top .leaflet-control {
-          margin-top: calc(160px + env(safe-area-inset-top)) !important;
-        }
-        .trip-tracking-map .leaflet-container { z-index: 0 !important; }
-      `}</style>
+                .trip-tracking-map .leaflet-top .leaflet-control {
+                margin-top: calc(160px + env(safe-area-inset-top)) !important;
+                }
+                .trip-tracking-map .leaflet-container { z-index: 0 !important; }
+            `}</style>
 
             <MapContainer
                 ref={mapRef}
@@ -331,7 +390,9 @@ export default function TripMap({
                 className={
                     "absolute right-3 top-40 z-[7000] rounded-full px-3 py-1.5 text-[11px] font-semibold shadow-md border transition " +
                     (canCenter
-                        ? "bg-white border-gray-200 active:bg-gray-200"
+                        ? followUser
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white border-gray-200 active:bg-gray-200"
                         : "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed")
                 }
             >

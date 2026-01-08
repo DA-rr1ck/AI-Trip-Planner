@@ -6,6 +6,7 @@ const helmet = require('helmet');
 
 const { PORT = 8000 } = process.env;
 const { ALLOWED_ORIGINS } = require('./utils/clientOrigin');
+
 const authRoutes = require('./routes/authRoutes');
 const profileRoutes = require('./routes/profile');
 const serpHotelRoutes = require('./routes/serpHotelRoutes');
@@ -14,6 +15,10 @@ const serpAttractionRoutes = require('./routes/serpAttractionRoutes');
 const imagesRoutes = require('./routes/images');
 const smartTripRoutes = require('./routes/smartTripRoutes');
 const tripRoutes = require('./routes/tripRoutes')
+
+const adminAuthRoutes = require('./routes/adminAuthRoutes')
+const adminDatasetRoutes = require("./routes/adminDatasetRoutes");
+
 const app = express();
 
 // Security & parsers
@@ -49,6 +54,10 @@ app.use('/api/serp', placesRoutes);
 app.use('/api/serp', imagesRoutes);
 app.use('/api/smart-trip', smartTripRoutes);
 app.use('/api/trip', tripRoutes);
+
+app.use('/api/admin/auth', adminAuthRoutes);
+app.use('/api/admin/datasets', adminDatasetRoutes);
+
 // Start
 app.listen(PORT, () => {
     console.log(`API listening on http://localhost:${PORT}`);

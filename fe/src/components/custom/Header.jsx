@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useLocation } from 'react-router-dom'
 import { Plus, Map, User, LogOut } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import Button from '@/components/ui/Button'
@@ -13,11 +13,43 @@ function Header() {
   const [openPopover, setOpenPopover] = useState(false)
   const [openDialog, setOpenDialog] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
 
   const avatarSrc = user?.avatar || avatarFallback
   const displayName = user?.username || user?.email || 'User'
 
-  const handleLogoClick = () => navigate('/')
+  // ✅ Handle navigation with unsaved check (reads localStorage at click time)
+  const handleNavigation = (path) => (e) => {
+    const isPreviewPage = location.pathname.includes('/preview-trip')
+    const hasUnsaved = localStorage.getItem('preview_has_unsaved') === 'true'
+    
+    console.log('🖱️ Link clicked:', path, '| Preview:', isPreviewPage, '| Unsaved:', hasUnsaved)
+    
+    if (isPreviewPage && hasUnsaved) {
+      e.preventDefault()
+      e.stopPropagation()
+      
+      console.log('🚫 Blocking navigation to:', path)
+      
+      window.dispatchEvent(new CustomEvent('preview-trip-block-navigation', {
+        detail: { pathname: path }
+      }))
+    }
+  }
+
+  const handleLogoClick = () => {
+    const isPreviewPage = location.pathname.includes('/preview-trip')
+    const hasUnsaved = localStorage.getItem('preview_has_unsaved') === 'true'
+    
+    if (isPreviewPage && hasUnsaved) {
+      window.dispatchEvent(new CustomEvent('preview-trip-block-navigation', {
+        detail: { pathname: '/' }
+      }))
+    } else {
+      navigate('/')
+    }
+  }
+
   const handleSignInClick = () => setOpenDialog(true)
 
   const handleSignOut = () => {
@@ -56,21 +88,28 @@ function Header() {
 
           {/* Right: actions */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Locale toggle */}
             <LocaleToggle />
 
             {isAuthenticated ? (
               <>
-                {/* Create Trip – only show on ≥ md, mobile will use bottom nav */}
-                <Link to="/create-trip" className="hidden md:flex">
+                {/* ✅ Create Trip with blocker */}
+                <Link 
+                  to="/create-trip" 
+                  className="hidden md:flex"
+                  onClick={handleNavigation('/create-trip')}
+                >
                   <Button className="rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white shadow-sm hover:shadow-md hover:opacity-95">
                     <Plus className="h-4 w-4 mr-1" />
                     <span className="hidden sm:inline">Create trip</span>
                   </Button>
                 </Link>
 
-                {/* My Trips – only show on ≥ md */}
-                <Link to="/my-trips" className="hidden md:flex">
+                {/* ✅ My Trips with blocker */}
+                <Link 
+                  to="/my-trips" 
+                  className="hidden md:flex"
+                  onClick={handleNavigation('/my-trips')}
+                >
                   <Button
                     variant="outline"
                     className="rounded-full border-border/70 bg-background/60 hover:bg-muted/80"
@@ -80,14 +119,19 @@ function Header() {
                   </Button>
                 </Link>
 
-                <Link to="/smart-trip" className="hidden md:flex">
+                {/* ✅ Smart Trip with blocker */}
+                <Link 
+                  to="/smart-trip" 
+                  className="hidden md:flex"
+                  onClick={handleNavigation('/smart-trip')}
+                >
                   <Button variant="outline" className="rounded-full">
                     <Map className="h-4 w-4 mr-1" />
                     Smart Trip Generator
                   </Button>
                 </Link>
 
-                {/* Profile (desktop/tablet) */}
+                {/* Profile popover */}
                 <Popover open={openPopover} onOpenChange={setOpenPopover}>
                   <PopoverTrigger asChild>
                     <button
@@ -109,7 +153,6 @@ function Header() {
                     align="end"
                     className="w-72 overflow-hidden z-[9999] rounded-xl border bg-background/95 p-0 shadow-xl"
                   >
-                    {/* Top gradient panel */}
                     <div className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 p-4 text-white">
                       <div className="flex items-center gap-3">
                         <img
@@ -130,11 +173,13 @@ function Header() {
                       </div>
                     </div>
 
-                    {/* Actions */}
                     <div className="space-y-1 p-2">
                       <Link
                         to="/profile"
-                        onClick={() => setOpenPopover(false)}
+                        onClick={(e) => {
+                          setOpenPopover(false)
+                          handleNavigation('/profile')(e)
+                        }}
                         className="block"
                       >
                         <Button
@@ -160,11 +205,23 @@ function Header() {
                   </PopoverContent>
                 </Popover>
 
-                {/* Tiny avatar on very small mobile (no popover, bottom bar handles account) */}
+                {/* Mobile avatar */}
                 <button
                   type="button"
                   className="flex sm:hidden h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/80 shadow-sm"
-                  onClick={() => navigate('/profile')}
+                  onClick={(e) => {
+                    const isPreviewPage = location.pathname.includes('/preview-trip')
+                    const hasUnsaved = localStorage.getItem('preview_has_unsaved') === 'true'
+                    
+                    if (isPreviewPage && hasUnsaved) {
+                      e.preventDefault()
+                      window.dispatchEvent(new CustomEvent('preview-trip-block-navigation', {
+                        detail: { pathname: '/profile' }
+                      }))
+                    } else {
+                      navigate('/profile')
+                    }
+                  }}
                 >
                   <img
                     src={avatarSrc}
@@ -187,7 +244,6 @@ function Header() {
         </div>
       </header>
 
-      {/* Auth dialog for header sign-in */}
       <AuthDialog open={openDialog} onOpenChange={setOpenDialog} />
     </>
   )

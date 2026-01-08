@@ -14,9 +14,11 @@ async function getUserById(id) {
  *
  * Returns user document or null.
  */
-async function getAuthUserFromRequest(req) {
+async function getAuthUserFromRequest(req, opts = {}) {
     try {
-        const cookieToken = req.cookies?.token;
+        const cookieName = opts.cookieName || "token";
+
+        const cookieToken = req.cookies?.[cookieName];
         const authHeader = req.headers['authorization'] || req.headers['Authorization'];
 
         let token = null;
