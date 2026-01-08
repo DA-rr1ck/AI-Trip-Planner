@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { format, parse } from 'date-fns'
 import { Clock, MapPin, DollarSign, Star, Navigation, Sparkles } from 'lucide-react'
-
+import { api } from '@/lib/api'
 // Simple in-memory cache
 const imageCache = new Map()
 
@@ -14,16 +14,15 @@ async function getPlaceImage(placeName) {
   }
 
   try {
-    const response = await fetch(
-      `/api/serp/images/search?q=${encodeURIComponent(placeName)}`
-    )
+    const { data } = await api.get('/serp/images/search', {
+      params: {
+        q: placeName,
+      },
+    })
 
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`)
-    }
-
-    const data = await response.json()
-    const imageUrl = data.images?.[0]?.original || data.images?.[0]?.thumbnail || '/placeholder.jpg'
+    const imageUrl = data.images?.[0]?.original || 
+                     data.images?.[0]?.thumbnail || 
+                     '/placeholder.jpg'
     
     imageCache.set(placeName, imageUrl)
     return imageUrl

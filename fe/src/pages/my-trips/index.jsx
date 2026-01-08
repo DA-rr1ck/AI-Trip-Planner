@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { useAuth } from '@/context/AuthContext'
 import { format, parse, differenceInDays } from 'date-fns'
 import { getUserTrips, deleteTrip } from '@/service/tripService'
-
+import { api } from '@/lib/api'
 // Simple in-memory cache
 const imageCache = new Map()
 
@@ -16,15 +16,11 @@ async function getPlaceImage(placeName) {
   }
 
   try {
-    const response = await fetch(
-      `/api/serp/images/search?q=${encodeURIComponent(placeName + ' landmark tourist destination')}`
-    )
-
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`)
-    }
-
-    const data = await response.json()
+    const { data } = await api.get('/serp/images/search', {
+      params: {
+        q: `${placeName} landmark tourist destination`,
+      },
+    })
     const imageUrl = data.images?.[0]?.original || data.images?.[0]?.thumbnail || '/placeholder.jpg'
     
     imageCache.set(placeName, imageUrl)

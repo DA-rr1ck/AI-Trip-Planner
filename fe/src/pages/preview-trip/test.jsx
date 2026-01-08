@@ -1,36 +1,31 @@
-// fe/src/pages/edit-trip/index.jsx
-import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { doc, setDoc } from 'firebase/firestore'
-import { db } from '@/service/firebaseConfig'
-import { toast } from 'sonner'
-import { useAuth } from '@/context/AuthContext'
-import Button from '@/components/ui/Button'
-import { Save, Loader2 } from 'lucide-react'
-import { format, parse, differenceInDays, addDays } from 'date-fns'
+import React, { useEffect } from 'react'
+import { useSearchParams, useNavigate } from 'react-router-dom'
+import { Loader2 } from 'lucide-react'
+import { parse, differenceInDays } from 'date-fns'
+import { loadTempChanges } from './utils/localStorage'
 
 // Import hooks
 import { useTripData } from './hooks/useTripData'
 import { useDragAndDrop } from './hooks/useDragAndDrop'
-
-// Import utilities
-import { clearTempChanges, clearTempTripId, loadTempChanges } from './utils/localStorage'
-import { formatBudget, formatTravelers } from './utils/formatters'
+import { useHotelManagement } from './hooks/useHotelManagement'
+import { useTripActions } from './hooks/useTripActions'
+import { useAuth } from '@/context/AuthContext'
 
 // Import components
+import TripHeader from './components/TripHeader'
 import TripOverview from './components/TripOverview'
+import TripRegenerationSection from './components/TripRegenerationSection'
 import HotelsSection from './components/HotelsSection'
 import ItinerarySection from './components/ItinerarySection'
+import TripMapSection from './components/TripMapSection'
 
-// Import regeneration utilities
-import { regenerateHotels } from './utils/regenerateHotels'
-import { regenerateSingleDay } from './utils/regenerateItinerary'
-import { generateTrip } from '@/service/AIModel'
-import { AI_PROMPT } from '@/constants/options'
-
-function EditTrip() {
-  const navigate = useNavigate()
+function PreviewTrip() {
   const { user } = useAuth()
+
+  const [searchParams] = useSearchParams()
+  const forcedTripId = searchParams.get('tripId')
+
+  const navigate = useNavigate()
   
   // Use custom hooks
   const {
@@ -40,48 +35,49 @@ function EditTrip() {
     rawTripData,
     hasUnsavedChanges,
     setHasUnsavedChanges,
-  } = useTripData()
+  } = useTripData(null, forcedTripId)
 
   const {
     sensors,
-    activeId,
     handleDragStart,
     handleDragEnd,
+    handleDragCancel,
   } = useDragAndDrop(tripData, updateTripData)
 
-  // Component state
-  const [saving, setSaving] = useState(false)
-  const [regeneratingHotels, setRegeneratingHotels] = useState(false)
-  const [regeneratingAll, setRegeneratingAll] = useState(false)
-  const [hotelPreference, setHotelPreference] = useState('')
-  const [isEditingSelection, setIsEditingSelection] = useState(false)
-  const [editedSelection, setEditedSelection] = useState(null)
-  
-  // Hotel selection state
-  const [selectedHotels, setSelectedHotels] = useState([])
+  const {
+    selectedHotels,
+    handleToggleHotelSelection,
+  } = useHotelManagement(tripData, updateTripData, rawTripData, existingTripId, setHasUnsavedChanges)
 
-  // Initialize selected hotels when tripData loads
+  const {
+    saving,
+    regeneratingHotels,
+    regeneratingAll,
+    hotelPreference,
+    setHotelPreference,
+    isEditingSelection,
+    editedSelection,
+    setEditedSelection,
+    handleEditSelection,
+    handleCancelEdit,
+    handleRegenerateAll,
+    handleRegenerateHotels,
+    handleRegenerateSingleDay,
+    handleRemoveDay,
+    handleRemoveActivity,
+    handleSaveTrip,
+    handleHotelClick,
+    handleActivityClick,
+    handleAddHotel,
+    handleAddActivity,
+  } = useTripActions(tripData, updateTripData, existingTripId, rawTripData, user)
+
   useEffect(() => {
-    if (tripData?.tripData?.Hotels) {
-      if (selectedHotels.length === 0) {
-        setSelectedHotels(tripData.tripData.Hotels)
-      }
+    // If URL has no tripId, rewrite it to the canonical form
+    if (!forcedTripId && existingTripId) {
+      navigate(`/preview-trip?tripId=${existingTripId}`, { replace: true })
     }
-  }, [tripData?.tripData?.Hotels])
-
-  // Handle hotel selection toggle
-  const handleToggleHotelSelection = (hotel) => {
-    setSelectedHotels(prev => {
-      const isSelected = prev.some(h => h.HotelName === hotel.HotelName)
-      
-      if (isSelected) {
-        return prev.filter(h => h.HotelName !== hotel.HotelName)
-      } else {
-        return [...prev, hotel]
-      }
-    })
-    setHasUnsavedChanges(true)
-  }
+  }, [forcedTripId, existingTripId, navigate])
 
   // Warn before leaving with unsaved changes
   useEffect(() => {
@@ -101,7 +97,7 @@ function EditTrip() {
     return (
       <div className='p-10 md:px-20 lg:px-44 xl:px-56 flex flex-col justify-center items-center min-h-[50vh]'>
         <Loader2 className='h-8 w-8 animate-spin mb-4 text-purple-600' />
-        <p className='text-gray-500'>Loading trip data...</p>
+        <p className='text-gray-500'>Loading trip preview...</p>
       </div>
     )
   }
@@ -113,362 +109,41 @@ function EditTrip() {
     return differenceInDays(end, start) + 1
   }
 
-  const handleEditSelection = () => {
-    const start = parse(tripData.userSelection.startDate, 'yyyy-MM-dd', new Date())
-    const end = parse(tripData.userSelection.endDate, 'yyyy-MM-dd', new Date())
-    
-    setEditedSelection({
-      startDate: start,
-      endDate: end,
-      budgetMin: tripData.userSelection.budgetMin || 500,
-      budgetMax: tripData.userSelection.budgetMax || 2000,
-      adults: tripData.userSelection.adults || 2,
-      children: tripData.userSelection.children || 0,
-    })
-    setIsEditingSelection(true)
-  }
-
-  const handleCancelEdit = () => {
-    setIsEditingSelection(false)
-    setEditedSelection(null)
-  }
-
-  const handleRegenerateAll = async () => {
-    if (!editedSelection.startDate || !editedSelection.endDate) {
-      toast.error('Please select dates')
-      return
-    }
-
-    if (editedSelection.adults === 0 && editedSelection.children === 0) {
-      toast.error('Please add at least one traveler')
-      return
-    }
-
-    const totalDays = differenceInDays(editedSelection.endDate, editedSelection.startDate) + 1
-    if (totalDays < 1 || totalDays > 5) {
-      toast.error('Please select a trip between 1-5 days')
-      return
-    }
-
-    setRegeneratingAll(true)
-    try {
-      const FINAL_PROMPT = AI_PROMPT
-        .replace('{location}', tripData.userSelection.location)
-        .replace('{totalDays}', totalDays)
-        .replace('{adults}', editedSelection.adults)
-        .replace('{children}', editedSelection.children)
-        .replace('{budgetMin}', editedSelection.budgetMin)
-        .replace('{budgetMax}', editedSelection.budgetMax)
-
-      const result = await generateTrip(FINAL_PROMPT)
-
-      let newTripData
-      if (typeof result === 'string') {
-        const cleanResult = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-        newTripData = JSON.parse(cleanResult)
-      } else {
-        newTripData = result
-      }
-
-      const travelPlan = newTripData[0]?.TravelPlan || newTripData.TravelPlan || newTripData
-
-      const itineraryWithDates = {}
-      Object.entries(travelPlan.Itinerary).forEach(([dayKey, dayData], index) => {
-        const actualDate = addDays(editedSelection.startDate, index)
-        const dateKey = format(actualDate, 'yyyy-MM-dd')
-        itineraryWithDates[dateKey] = {
-          ...dayData,
-          Activities: dayData.Activities.map((activity, idx) => ({
-            ...activity,
-            id: `${dateKey}-activity-${idx}-${Date.now()}-${Math.random()}`,
-          })),
-        }
-      })
-
-      const updatedTripData = {
-        userSelection: {
-          ...tripData.userSelection,
-          startDate: format(editedSelection.startDate, 'yyyy-MM-dd'),
-          endDate: format(editedSelection.endDate, 'yyyy-MM-dd'),
-          budgetMin: editedSelection.budgetMin,
-          budgetMax: editedSelection.budgetMax,
-          adults: editedSelection.adults,
-          children: editedSelection.children,
-          budget: formatBudget(editedSelection.budgetMin, editedSelection.budgetMax),
-          traveler: formatTravelers(editedSelection.adults, editedSelection.children),
-        },
-        tripData: {
-          ...travelPlan,
-          Itinerary: itineraryWithDates,
-        },
-      }
-
-      updateTripData(updatedTripData)
-      setSelectedHotels(travelPlan.Hotels || [])
-      toast.success('Trip regenerated successfully! Remember to save.')
-      setIsEditingSelection(false)
-      setEditedSelection(null)
-    } catch (error) {
-      console.error('Error regenerating trip:', error)
-      toast.error('Failed to regenerate trip. Please try again.')
-    } finally {
-      setRegeneratingAll(false)
-    }
-  }
-
-  const handleRegenerateHotels = async () => {
-    if (!hotelPreference.trim()) {
-      toast.error('Please enter your hotel preferences')
-      return
-    }
-
-    setRegeneratingHotels(true)
-    try {
-      const newHotels = await regenerateHotels(tripData.tripData, hotelPreference)
-      
-      const updatedTripData = {
-        ...tripData,
-        tripData: {
-          ...tripData.tripData,
-          Hotels: newHotels,
-        },
-      }
-      
-      updateTripData(updatedTripData)
-      setSelectedHotels(newHotels)
-      toast.success('Hotels regenerated successfully! Remember to save.')
-      setHotelPreference('')
-    } catch (error) {
-      console.error('Error regenerating hotels:', error)
-      toast.error('Failed to regenerate hotels. Please try again.')
-    } finally {
-      setRegeneratingHotels(false)
-    }
-  }
-
-  // NEW: Handle per-day regeneration
-  const handleRegenerateSingleDay = async (dateKey, preference) => {
-    try {
-      const dayNumber = Object.keys(tripData.tripData.Itinerary).sort().indexOf(dateKey) + 1
-      const currentDayData = tripData.tripData.Itinerary[dateKey]
-      
-      const newDayData = await regenerateSingleDay(
-        tripData.tripData,
-        currentDayData.Theme,
-        preference,
-        dayNumber
-      )
-
-      // Add date-specific IDs to activities
-      const activitiesWithIds = newDayData.Activities.map((activity, idx) => ({
-        ...activity,
-        id: `${dateKey}-activity-${idx}-${Date.now()}-${Math.random()}`,
-      }))
-
-      const updatedTripData = {
-        ...tripData,
-        tripData: {
-          ...tripData.tripData,
-          Itinerary: {
-            ...tripData.tripData.Itinerary,
-            [dateKey]: {
-              ...newDayData,
-              Activities: activitiesWithIds,
-            },
-          },
-        },
-      }
-
-      updateTripData(updatedTripData)
-      toast.success('Day updated successfully! Remember to save.')
-    } catch (error) {
-      console.error('Error regenerating day:', error)
-      toast.error('Failed to update day. Please try again.')
-      throw error
-    }
-  }
-
-  const handleRemoveDay = (dateKey) => {
-    const displayDate = format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'MMMM d, yyyy')
-    if (!window.confirm(`Delete ${displayDate}? This cannot be undone.`)) {
-      return
-    }
-
-    const dateKeys = Object.keys(tripData.tripData.Itinerary).sort()
-    if (dateKeys.length <= 1) {
-      toast.error('Cannot delete the last day!')
-      return
-    }
-
-    const newItinerary = { ...tripData.tripData.Itinerary }
-    delete newItinerary[dateKey]
-
-    const updatedTripData = {
-      ...tripData,
-      tripData: {
-        ...tripData.tripData,
-        Itinerary: newItinerary,
-      },
-    }
-
-    updateTripData(updatedTripData)
-    toast.success('Day deleted successfully')
-  }
-
-  const handleRemoveActivity = (dateKey, activityId) => {
-    const updatedActivities = tripData.tripData.Itinerary[dateKey].Activities.filter(
-      a => a.id !== activityId
-    )
-
-    const updatedTripData = {
-      ...tripData,
-      tripData: {
-        ...tripData.tripData,
-        Itinerary: {
-          ...tripData.tripData.Itinerary,
-          [dateKey]: {
-            ...tripData.tripData.Itinerary[dateKey],
-            Activities: updatedActivities,
-          },
-        },
-      },
-    }
-
-    updateTripData(updatedTripData)
-    toast.success('Activity removed')
-  }
-
-  const handleSaveTrip = async () => {
-    if (!user) {
-      toast.error('Please log in to save trip')
-      return
-    }
-
-    if (selectedHotels.length === 0) {
-      toast.error('Please select at least one hotel before saving', {
-        duration: 3000
-      })
-      return
-    }
-
-    const emptyDays = Object.entries(tripData.tripData.Itinerary)
-      .filter(([_, dayData]) => dayData.Activities.length === 0)
-      .map(([dateKey]) => format(parse(dateKey, 'yyyy-MM-dd', new Date()), 'MMMM d'))
-
-    if (emptyDays.length > 0) {
-      toast.error(`Please add activities to: ${emptyDays.join(', ')}`, {
-        duration: 3000
-      })
-      return
-    }
-
-    setSaving(true)
-    try {
-      const isRealId = rawTripData?.id && !existingTripId.startsWith('temp_')
-      const docId = isRealId ? rawTripData.id : Date.now().toString()
-
-      const itineraryWithoutIds = {}
-      Object.entries(tripData.tripData.Itinerary).forEach(([dateKey, dayData]) => {
-        itineraryWithoutIds[dateKey] = {
-          ...dayData,
-          Activities: (dayData.Activities || []).map(({ id, ...activity }) => activity),
-        }
-      })
-
-      await setDoc(doc(db, 'AITrips', docId), {
-        userSelection: tripData.userSelection,
-        tripData: {
-          ...tripData.tripData,
-          Hotels: selectedHotels,
-          Itinerary: itineraryWithoutIds,
-        },
-        userEmail: user.email,
-        id: docId,
-      })
-
-      clearTempChanges(existingTripId)
-      clearTempTripId()
-      setHasUnsavedChanges(false)
-
-      toast.success(isRealId ? 'Trip updated successfully!' : 'Trip saved successfully!')
-      navigate(`/view-trip/${docId}`)
-    } catch (error) {
-      console.error('Error saving trip:', error)
-      toast.error('Failed to save trip')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleHotelClick = (hotel) => {
-    const slug = encodeURIComponent(hotel.HotelName || 'hotel')
-    navigate(`/hotel/${slug}`, {
-      state: {
-        hotel,
-        tripContext: {
-          userSelection: tripData.userSelection,
-        },
-      },
-    })
-  }
-
-  const handleActivityClick = (activity) => {
-    const slug = encodeURIComponent(activity.PlaceName || 'attraction')
-    navigate(`/attraction/${slug}`, {
-      state: {
-        activity,
-        tripContext: {
-          userSelection: tripData.userSelection,
-        },
-      },
-    })
-  }
-
   const dateKeys = Object.keys(tripData.tripData.Itinerary).sort()
-  const allActivityIds = dateKeys.flatMap(dateKey => 
-    tripData.tripData.Itinerary[dateKey].Activities.map(a => a.id)
-  )
+  const allActivityIds = dateKeys.flatMap(dateKey => {
+    const dayData = tripData.tripData.Itinerary[dateKey]
+    return [
+      ...(dayData.Morning?.Activities?.map(a => a.id) || []),
+      ...(dayData.Lunch?.Activity ? [dayData.Lunch.Activity.id] : []),
+      ...(dayData.Afternoon?.Activities?.map(a => a.id) || []),
+      ...(dayData.Evening?.Activities?.map(a => a.id) || []),
+    ]
+  })
 
   return (
     <div className='p-10 md:px-20 lg:px-44 xl:px-56'>
-      {/* Header */}
-      <div className='flex justify-between items-center mb-6'>
-        <div>
-          <h1 className='font-bold text-3xl'>Customize Your Trip</h1>
-          <p className='text-gray-500 text-sm mt-1'>
-            Drag activities between days • Delete unwanted days or activities
-            {hasUnsavedChanges && <span className='text-orange-600 ml-2'>• Unsaved changes</span>}
-          </p>
-        </div>
-        <Button onClick={handleSaveTrip} disabled={saving}>
-          {saving ? (
-            <>
-              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-              Saving...
-            </>
-          ) : (
-            <>
-              <Save className='mr-2 h-4 w-4' />
-              {existingTripId.startsWith('temp_') ? 'Save Trip' : 'Save Changes'}
-            </>
-          )}
-        </Button>
-      </div>
+      <TripHeader
+        hasUnsavedChanges={hasUnsavedChanges}
+        saving={saving}
+        onSave={() => handleSaveTrip(selectedHotels, setHasUnsavedChanges)}
+        isNewTrip={existingTripId.startsWith('temp_')}
+      />
 
-      {/* Trip Overview */}
       <TripOverview
         tripData={tripData}
-        isEditingSelection={isEditingSelection}
-        editedSelection={editedSelection}
-        setEditedSelection={setEditedSelection}
         onEditSelection={handleEditSelection}
-        onCancelEdit={handleCancelEdit}
-        onRegenerateAll={handleRegenerateAll}
-        regeneratingAll={regeneratingAll}
         getTotalDays={getTotalDays}
       />
 
-      {/* Hotels Section */}
+      <TripRegenerationSection
+        isEditingSelection={isEditingSelection}
+        editedSelection={editedSelection}
+        setEditedSelection={setEditedSelection}
+        onCancel={handleCancelEdit}
+        onRegenerate={handleRegenerateAll}
+        regeneratingAll={regeneratingAll}
+      />
+
       <HotelsSection
         hotels={tripData.tripData?.Hotels}
         selectedHotels={selectedHotels}
@@ -478,9 +153,10 @@ function EditTrip() {
         regeneratingHotels={regeneratingHotels}
         onRegenerateHotels={handleRegenerateHotels}
         onHotelClick={handleHotelClick}
+        onHotelAdd={handleAddHotel}
+        location={tripData.tripData?.Location}
       />
 
-      {/* Itinerary Section - NEW: Per-day regeneration */}
       <ItinerarySection
         dateKeys={dateKeys}
         itinerary={tripData.tripData.Itinerary}
@@ -489,12 +165,20 @@ function EditTrip() {
         onRemoveDay={handleRemoveDay}
         onActivityClick={handleActivityClick}
         onRemoveActivity={handleRemoveActivity}
+        onActivityAdd={handleAddActivity}
+        location={tripData.tripData?.Location}
         sensors={sensors}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
+      />
+
+      <TripMapSection
+        itinerary={tripData.tripData.Itinerary}
+        locationName={tripData.tripData.Location}
       />
     </div>
   )
 }
 
-export default EditTrip
+export default PreviewTrip
