@@ -1,9 +1,8 @@
-// fe/src/pages/edit-trip/components/ActivityCard.jsx
 import React, { useState, useEffect } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GripVertical, Trash2, MapPin, Clock, DollarSign, Star, Sparkles } from 'lucide-react'
-
+import { api } from '@/lib/api'
 const imageCache = new Map()
 
 async function getPlaceImage(placeName) {
@@ -12,15 +11,11 @@ async function getPlaceImage(placeName) {
   }
 
   try {
-    const response = await fetch(
-      `/api/serp/images/search?q=${encodeURIComponent(placeName + ' landmark tourist destination')}`
-    )
-
-    if (!response.ok) {
-      return '/placeholder.jpg'
-    }
-
-    const data = await response.json()
+    const { data } = await api.get('/serp/images/search', {
+      params: {
+        q: `${placeName} landmark tourist destination`,
+      },
+    })
     const imageUrl = data.images?.[0]?.original || data.images?.[0]?.thumbnail || '/placeholder.jpg'
     
     imageCache.set(placeName, imageUrl)
@@ -65,7 +60,7 @@ function ActivityCard({ activity, onClick, onRemove }) {
 
   const isHotelActivity = activity.ActivityType === 'hotel_checkin' || activity.ActivityType === 'hotel_checkout'
 
-  // Color mapping for BestTimeToVisit
+  
   const timeColors = {
     Morning: 'bg-amber-50 text-amber-700 border-amber-200',
     Afternoon: 'bg-blue-50 text-blue-700 border-blue-200',
@@ -93,7 +88,7 @@ function ActivityCard({ activity, onClick, onRemove }) {
         </div>
       )}
 
-      {/* Subtle gradient overlay on hover */}
+      
       <div className='absolute inset-0 bg-gradient-to-r from-blue-50/0 to-indigo-50/0 group-hover:from-blue-50/30 group-hover:to-indigo-50/30 transition-all duration-300 pointer-events-none' />
       
       <div className='relative flex gap-4 p-4 cursor-pointer' onClick={onClick}>

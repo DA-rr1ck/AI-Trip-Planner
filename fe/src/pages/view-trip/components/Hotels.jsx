@@ -1,107 +1,133 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '@/lib/api'
 
-// Simple in-memory cache
 const imageCache = new Map();
 
-// Function to get image from your backend SerpAPI
+
+function isValidImageUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+async function testImageUrl(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.referrerPolicy = 'no-referrer';
+    img.src = url;
+    setTimeout(() => resolve(false), 5000);
+  });
+}
+
 async function getHotelImage(hotelName, hotelAddress) {
   const cacheKey = `${hotelName}_${hotelAddress}`;
   
-  // Check cache first
   if (imageCache.has(cacheKey)) {
     return imageCache.get(cacheKey);
   }
 
   try {
     const query = `${hotelName} ${hotelAddress}`;
-    const response = await fetch(
-      `/api/serp/images/search?q=${encodeURIComponent(query)}`
-    );
+    const { data } = await api.get('/serp/images/search', {
+      params: { q: query },
+    });
 
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+    if (data.images && data.images.length > 0) {
+      for (const image of data.images.slice(0, 10)) {
+        const imageUrl = image.original || image.thumbnail;
+        
+        if (!imageUrl || !isValidImageUrl(imageUrl)) continue;
+
+        try {
+          const urlObj = new URL(imageUrl);
+          const problematicDomains = ['bstatic.com', 'expedia.com', 'hotels.com'];
+          
+          if (problematicDomains.some(domain => urlObj.hostname.includes(domain))) continue;
+          if (window.location.protocol === 'https:' && urlObj.protocol === 'http:') continue;
+        } catch {
+          continue;
+        }
+
+        const canLoad = await testImageUrl(imageUrl);
+        if (canLoad) {
+          imageCache.set(cacheKey, imageUrl);
+          return imageUrl;
+        }
+      }
     }
 
-    const data = await response.json();
-    const imageUrl = data.images?.[0]?.original || data.images?.[0]?.thumbnail || '/placeholder.jpg';
+    imageCache.set(cacheKey, '/placeholder.jpg');
+    return '/placeholder.jpg';
     
-    // Cache the result
-    imageCache.set(cacheKey, imageUrl);
-    
-    return imageUrl;
   } catch (error) {
     console.error('Error fetching hotel image:', error);
     return '/placeholder.jpg';
   }
 }
 
-// Component for each hotel card
+
 function HotelCard({ hotel }) {
-  // Check if hotel already has a saved image URL
-  const savedImageUrl = hotel.HotelImageUrl && hotel.HotelImageUrl !== '/placeholder.jpg' 
-    ? hotel.HotelImageUrl 
-    : null;
-  
-  const [imageUrl, setImageUrl] = useState(savedImageUrl || '/placeholder.jpg');
-  const [imageLoading, setImageLoading] = useState(!savedImageUrl);
-  const [imageError, setImageError] = useState(false);
+  const [imageUrl, setImageUrl] = useState('/placeholder.jpg');
+  const [imageLoading, setImageLoading] = useState(true);
 
   useEffect(() => {
-    // Only fetch if there's no saved image URL
-    if (!savedImageUrl && hotel.HotelName) {
+    if (hotel.HotelName) {
       setImageLoading(true);
-      setImageError(false);
-      
       getHotelImage(hotel.HotelName, hotel.HotelAddress)
         .then(url => {
           setImageUrl(url);
           setImageLoading(false);
         })
-        .catch(err => {
-          console.error('Failed to load hotel image:', err);
-          setImageError(true);
+        .catch(() => {
           setImageLoading(false);
         });
     }
-  }, [hotel.HotelName, hotel.HotelAddress, savedImageUrl]);
+  }, [hotel.HotelName, hotel.HotelAddress]);
 
   return (
     <Link 
       to={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(hotel.HotelName + "," + hotel.HotelAddress)} 
       target='_blank'
     >
-      <div className='hover:scale-105 transition-all cursor-pointer'> 
-        <div className='rounded-xl h-[180px] w-full overflow-hidden bg-gray-200 relative'>
+      
+      <div className='relative border rounded-lg overflow-hidden bg-white hover:shadow-lg transition-all'>
+       
+        <div className='cursor-pointer'>
           {imageLoading && (
-            <div className='absolute inset-0 flex items-center justify-center'>
-              <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400'></div>
+            <div className='w-full h-[160px] flex items-center justify-center bg-gray-100'>
+              <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900'></div>
             </div>
           )}
           
-          {!imageLoading && imageError && (
-            <div className='absolute inset-0 flex items-center justify-center'>
-              <svg className='h-8 w-8 text-gray-400' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
-                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' />
-              </svg>
-            </div>
-          )}
-
-          {!imageLoading && !imageError && (
-            <img 
-              src={imageUrl} 
+          {!imageLoading && (
+            <img
+              src={imageUrl}
               alt={hotel.HotelName}
-              className='w-full h-full object-cover'
-              onError={() => setImageError(true)}
+              className='w-full h-[160px] object-cover'
+              onError={(e) => {
+                e.target.src = '/placeholder.jpg';
+              }}
             />
           )}
         </div>
-        
-        <div className='my-2 flex flex-col gap-2'> 
-          <h2 className='font-medium'>{hotel.HotelName}</h2>
-          <h2 className='text-xs text-gray-500'>📍 {hotel.HotelAddress}</h2>
-          <h2 className='text-sm'>💰 {hotel.Price}</h2>
-          <h2 className='text-sm'>⭐ {hotel.Rating}</h2>
+
+      
+        <div className='p-4 cursor-pointer'>
+          <h3 className='font-semibold text-lg'>{hotel.HotelName}</h3>
+          <p className='text-sm text-gray-600 mt-1 line-clamp-2'>{hotel.HotelAddress}</p>
+          <div className='flex justify-between mt-3 text-sm'>
+            <span className='text-gray-700'>⭐ {hotel.Rating}</span>
+            <span className='font-medium text-blue-600'>{hotel.Price}</span>
+          </div>
+          {hotel.Description && (
+            <p className='text-xs text-gray-500 mt-2 line-clamp-2'>{hotel.Description}</p>
+          )}
         </div>
       </div>
     </Link>
@@ -109,18 +135,23 @@ function HotelCard({ hotel }) {
 }
 
 function Hotels({ trip }) {
-  // FIXED: Handle both old and new data structure
   const hotels = trip?.tripData?.Hotels || trip?.tripData?.[0]?.TravelPlan?.Hotels || [];
-  
-  console.log('Hotels data:', hotels);
 
   return (
-    <div>
-      <h2 className='font-bold text-xl mt-5'>Hotel Recommendations</h2>
-      <div className='grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-5 mt-4'>
+    <div className='mb-10 mt-12'>
+      <div className='mb-6'>
+        <h2 className='font-bold text-3xl text-gray-900 mb-2'>Hotel Recommendations</h2>
+        <div className='h-1 w-20 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full'></div>
+      </div>
+
+      
+      <div className='grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4'>
         {hotels.length === 0 ? (
-          <div className='col-span-full text-center py-8 text-gray-500'>
-            No hotel recommendations available
+          <div className='col-span-full text-center py-12 bg-gray-50 rounded-2xl'>
+            <svg className='h-16 w-16 mx-auto mb-3 text-gray-300' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' />
+            </svg>
+            <p className='text-gray-500 font-medium'>No hotel recommendations available</p>
           </div>
         ) : (
           hotels.map((hotel, index) => (

@@ -1,0 +1,56 @@
+ "places": [
+    {
+      "name": "Ben Thanh Market",
+      "type": "Attraction",
+      "province": "Ho Chi Minh City",
+      "rating": 4.2,
+      "open_time": "06:00",
+      "close_time": "19:00",
+      "days_open": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],
+      "description": "Historic central market offering food, souvenirs, and local goods.",
+      "latitude": 10.7720,
+      "longitude": 106.6983
+    }
+]
+
+
+ "restaurants": [
+    {
+      "name": "Pho Hoa Pasteur",
+      "type": "Restaurant",
+      "province": "Ho Chi Minh City",
+      "rating": 4.5,
+      "open_time": "06:00",
+      "close_time": "22:00",
+      "days_open": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],
+      "description": "Legendary pho restaurant serving classic southern-style beef noodle soup.",
+      "latitude": 10.7870,
+      "longitude": 106.6934,
+      "price_range": "$$",
+      "best_for": "breakfast",
+      "signature_dish": "Phở bò"
+    }
+]
+
+"hotels": [
+    {
+      "name": "The Reverie Saigon",
+      "type": "Hotel",
+      "province": "Ho Chi Minh City",
+      "rating": 4.8,
+      "star_rating": 5,
+      "description": "Opulent 5★ luxury hotel with Italian design interiors and panoramic city views.",
+      "latitude": 10.7731,
+      "longitude": 106.7049,
+      "address": "22-36 Nguyễn Huệ & 57-69F Đồng Khởi, District 1, Ho Chi Minh City",
+      "check_in_time": "14:00",
+      "check_out_time": "12:00",
+      "days_open": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],
+      "price_range": "$$$",
+      "room_types": ["Deluxe","Premium","Suite"],
+      "amenities": ["Free Wi-Fi","Spa","Pool","Gym","Restaurant"],
+      "phone_number": "+84 28 3823 6688"
+    }
+]
+
+

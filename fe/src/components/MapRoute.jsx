@@ -1,10 +1,9 @@
-// fe/src/components/MapRoute.jsx
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Loader2, ChevronDown, ChevronUp, Settings } from 'lucide-react'
 
-// Fix Leaflet default marker icon issue
+
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -139,17 +138,17 @@ function MapRoute({ activities, locationName, onRouteCalculated }) {
       newMarkers.push(marker)
     })
 
-    // Fetch routes for each segment using OSRM
+    
     for (let i = 0; i < validActivities.length - 1; i++) {
       const startLL = getLatLng(validActivities[i])
       const endLL = getLatLng(validActivities[i + 1])
       if (!startLL || !endLL) continue
 
-      // OSRM expects [lng, lat]
+      
       const start = [startLL[1], startLL[0]]
       const end = [endLL[1], endLL[0]]
 
-      // OSRM API endpoint (free, no API key needed!)
+     
       const url = `https://router.project-osrm.org/route/v1/${profile}/${start[0]},${start[1]};${end[0]},${end[1]}?overview=full&geometries=geojson&steps=true`
 
       const response = await fetch(url)
