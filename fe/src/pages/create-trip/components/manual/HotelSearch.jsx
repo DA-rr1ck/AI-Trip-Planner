@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { AiOutlineLoading3Quarters } from 'react-icons/ai'
 import Button from '@/components/ui/Button'
 import { toast } from 'sonner'
@@ -61,6 +61,9 @@ function HotelSearch({
   savedResults = [],
   onSearchStateChange
 }) {
+  const navigate = useNavigate()
+  const currentLocation = useLocation()
+  
   // Hover preview feature (hover popup + hover-triggered price/nearby fetch)
   // Keep the implementation, but disable for now.
   const ENABLE_HOVER_PREVIEW = false
@@ -83,7 +86,6 @@ function HotelSearch({
   const [hasSearchedDefault, setHasSearchedDefault] = useState(!!confirmedHotel) // If hotel already confirmed, don't auto-search
   const initialConfirmedHotelIdRef = useRef(confirmedHotel?.id) // Track initial hotel to avoid clearing on mount
   const hasMountedRef = useRef(false) // Track if component has mounted to avoid overwriting session
-  const navigate = useNavigate()
 
   // Mark component as mounted after initial render (with delay to let all effects settle)
   useEffect(() => {
@@ -509,8 +511,18 @@ function HotelSearch({
         console.warn('Failed to fetch image for hotel:', selectedHotel.name)
       }
       
-      // Include the image URL with the hotel data
-      onHotelConfirm({ ...selectedHotel, imageUrl: hotelImageUrl })
+      // Get the price for this hotel if available
+      const hotelPrice = hotelPrices[selectedHotel.id]?.price || null
+      
+      // Include the image URL and price with the hotel data
+      onHotelConfirm({ 
+        ...selectedHotel, 
+        imageUrl: hotelImageUrl,
+        price: hotelPrice,
+        // Note: Star rating would need to come from hotel details API
+        // For now, we'll set it as null and can be added later if needed
+        rating: null
+      })
       toast.success(`Hotel "${selectedHotel.name}" added to your trip!`)
       // Clear all search state after confirming
       setHotelResults([])
@@ -547,6 +559,7 @@ function HotelSearch({
   if (confirmedHotel) {
     const openHotelDetails = () => {
       const slug = encodeURIComponent(confirmedHotel.name)
+      const returnPath = currentLocation.pathname + currentLocation.search
       navigate(`/hotel/${slug}`, {
         state: {
           hotel: {
@@ -568,7 +581,8 @@ function HotelSearch({
               adults: adults || 1,
               children: children || 0
             }
-          }
+          },
+          returnTo: returnPath
         }
       })
     }
@@ -780,6 +794,7 @@ function HotelSearch({
                           onClick={(e) => {
                             e.stopPropagation()
                             const slug = encodeURIComponent(hotel.name)
+                            const returnPath = currentLocation.pathname + currentLocation.search
                             
                             navigate(`/manual/hotel/${slug}`, { 
                               state: { 
@@ -803,7 +818,8 @@ function HotelSearch({
                                     children: children || 0,
                                     travelers: (adults || 1) + (children || 0)
                                   }
-                                }
+                                },
+                                returnTo: returnPath
                               } 
                             })
                           }}

@@ -1464,6 +1464,7 @@ export default function ManualAttractionDetailsPage() {
     const { slug } = useParams() 
     const activityFromState = location.state?.activity || null
     const tripContext = location.state?.tripContext || null
+    const returnTo = location.state?.returnTo || '/create-trip'
 
     const {
         attraction,
@@ -1504,7 +1505,7 @@ export default function ManualAttractionDetailsPage() {
             <div className='p-6 md:px-20 lg:px-40'>
                 <Button
                     variant='outline'
-                    onClick={() => navigate(-1)}
+                    onClick={() => navigate(returnTo)}
                     className='mb-4 flex items-center gap-2'
                 >
                     <ArrowLeft className='h-4 w-4' /> Back
@@ -1522,7 +1523,7 @@ export default function ManualAttractionDetailsPage() {
                 <Button
                     variant='outline'
                     size='sm'
-                    onClick={() => navigate(-1)}
+                    onClick={() => navigate(returnTo)}
                     className='mb-4 flex items-center gap-2'
                 >
                     <ArrowLeft className='h-4 w-4' /> Back to trip
@@ -1542,7 +1543,7 @@ export default function ManualAttractionDetailsPage() {
                 <Button
                     variant='outline'
                     size='sm'
-                    onClick={() => navigate(-1)}
+                    onClick={() => navigate(returnTo)}
                     className='flex items-center gap-2'
                 >
                     <ArrowLeft className='h-4 w-4' /> Back to trip

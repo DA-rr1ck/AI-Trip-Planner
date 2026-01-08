@@ -175,18 +175,10 @@ function CreateTrip() {
 
   // Load session data on mount
   useEffect(() => {
-    const wasPageReloaded = sessionStorage.getItem('createTripPageLoaded') === 'true'
-
-    if (wasPageReloaded) {
-      const navEntry = performance.getEntriesByType("navigation")[0];
-      if (navEntry && navEntry.type === 'reload') {
-        sessionStorage.removeItem('createTripSession');
-        sessionStorage.removeItem('createTripPageLoaded');
-        setIsLoaded(true);
-        return;
-      }
-    }
-
+    // Note: We used to clear session on reload, but this causes issues when navigating back
+    // from hotel details in a SPA environment where 'reload' navigation type persists.
+    // Preserving session data is generally better UX anyway.
+    
     sessionStorage.setItem('createTripPageLoaded', 'true')
 
     const savedSession = sessionStorage.getItem('createTripSession')
@@ -574,6 +566,8 @@ const onGenerateTrip = async () => {
     isHotelActivity: true,
     hotelName: hotel.name || hotel.HotelName,
     imageUrl: hotel.imageUrl || hotel.HotelImageUrl || '/placeholder.jpg',
+    hotelPrice: hotel.price || null,
+    hotelRating: hotel.rating || null,
   })
 
   // Helper: Create check-out activity for a hotel
@@ -592,6 +586,8 @@ const onGenerateTrip = async () => {
     isHotelActivity: true,
     hotelName: hotel.name || hotel.HotelName,
     imageUrl: hotel.imageUrl || hotel.HotelImageUrl || '/placeholder.jpg',
+    hotelPrice: hotel.price || null,
+    hotelRating: hotel.rating || null,
   })
 
   // Handle hotel confirmation with auto-generated check-in/check-out

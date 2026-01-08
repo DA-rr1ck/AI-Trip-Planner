@@ -125,10 +125,10 @@ function ViewTrip() {
             <InfoSection trip={trip} />
             
             {/* Recommend hotels */}
-            <Hotels trip={trip} />
+            <Hotels trip={trip} tripId={tripId} />
             
             {/* Daily plan */}
-            <PlacesToVisit trip={trip} />
+            <PlacesToVisit trip={trip} tripId={tripId} />
 
             {/* Map Section */}
             {allActivities.length > 0 && (
