@@ -1,6 +1,6 @@
 // fe/src/pages/view-trip/components/PlacesToVisit.jsx
 import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { format, parse } from 'date-fns'
 import { Clock, MapPin, DollarSign, Star, Navigation, Sparkles } from 'lucide-react'
 
@@ -34,7 +34,10 @@ async function getPlaceImage(placeName) {
 }
 
 // Component for each activity card
-function ActivityCard({ activity, location }) {
+function ActivityCard({ activity, location, userSelection, tripId }) {
+  const navigate = useNavigate()
+  const returnTo = `/view-trip/${tripId}`
+  
   // Check if activity already has a saved image URL
   const savedImageUrl = activity.PlaceImageUrl && activity.PlaceImageUrl !== '/placeholder.jpg' 
     ? activity.PlaceImageUrl 
@@ -70,8 +73,62 @@ function ActivityCard({ activity, location }) {
     Evening: 'bg-purple-50 text-purple-700 border-purple-200'
   }
 
+  const handleClick = () => {
+    const slug = encodeURIComponent(activity.PlaceName || 'attraction')
+    
+    // For manually added activities, navigate to manual attraction detail page
+    if (activity.isManuallyAdded) {
+      const lat = activity.GeoCoordinates?.Latitude || activity.lat
+      const lon = activity.GeoCoordinates?.Longitude || activity.lon
+      
+      navigate(`/manual/attraction/${slug}`, {
+        state: {
+          activity: {
+            name: activity.PlaceName,
+            address: activity.PlaceAddress || activity.PlaceDetails,
+            lat: Number.isFinite(Number(lat)) ? Number(lat) : lat,
+            lon: Number.isFinite(Number(lon)) ? Number(lon) : lon,
+            PlaceName: activity.PlaceName,
+            PlaceDetails: activity.PlaceDetails,
+            Address: activity.PlaceAddress || activity.PlaceDetails,
+            GeoCoordinates: {
+              Latitude: Number.isFinite(Number(lat)) ? Number(lat) : lat,
+              Longitude: Number.isFinite(Number(lon)) ? Number(lon) : lon
+            },
+            Rating: activity.Rating || 4.5,
+            imageUrl: activity.ImageUrl || imageUrl
+          },
+          tripContext: { userSelection },
+          returnTo,
+        },
+      })
+    } else {
+      // For AI-generated activities, use the regular attraction detail page
+      navigate(`/attraction/${slug}`, {
+        state: {
+          activity: {
+            ...activity,
+            ImageUrl: activity.ImageUrl || imageUrl
+          },
+          tripContext: { userSelection },
+          returnTo,
+        },
+      })
+    }
+  }
+
   return (
-    <div className='group relative border border-gray-200 rounded-xl overflow-hidden hover:border-blue-300 hover:shadow-lg transition-all duration-300 bg-white'>
+    <div 
+      onClick={handleClick}
+      className='group relative border border-gray-200 rounded-xl overflow-hidden hover:border-blue-300 hover:shadow-lg transition-all duration-300 bg-white cursor-pointer'
+    >
+      {/* Manually added badge */}
+      {activity.isManuallyAdded && (
+        <div className='absolute top-2 left-2 z-10 bg-green-600 text-white text-xs px-2 py-1 rounded-full'>
+          Custom
+        </div>
+      )}
+      
       {/* Subtle gradient overlay on hover */}
       <div className='absolute inset-0 bg-gradient-to-r from-blue-50/0 to-indigo-50/0 group-hover:from-blue-50/30 group-hover:to-indigo-50/30 transition-all duration-300 pointer-events-none' />
       
@@ -162,15 +219,17 @@ function ActivityCard({ activity, location }) {
 
           {/* View on Map Button */}
           <div className='mt-auto'>
-            <Link 
-              to={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(activity.PlaceName + " " + location)} 
+            <a 
+              href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(activity.PlaceName + " " + location)} 
               target='_blank'
+              rel='noopener noreferrer'
+              onClick={(e) => e.stopPropagation()}
             >
               <button className='inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all text-sm font-medium shadow-sm hover:shadow-md'>
                 <Navigation className='h-3.5 w-3.5' />
                 View on Map
               </button>
-            </Link>
+            </a>
           </div>
         </div>
       </div>
@@ -179,7 +238,7 @@ function ActivityCard({ activity, location }) {
 }
 
 // Time slot section component
-function TimeSlotSection({ title, timeRange, activities, location }) {
+function TimeSlotSection({ title, timeRange, activities, location, userSelection, tripId }) {
   const iconMap = {
     Morning: '🌅',
     Lunch: '🍽️',
@@ -231,6 +290,8 @@ function TimeSlotSection({ title, timeRange, activities, location }) {
             key={idx} 
             activity={activity} 
             location={location}
+            userSelection={userSelection}
+            tripId={tripId}
           />
         ))}
       </div>
@@ -238,9 +299,10 @@ function TimeSlotSection({ title, timeRange, activities, location }) {
   )
 }
 
-function PlacesToVisit({ trip }) {
+function PlacesToVisit({ trip, tripId }) {
   const itinerary = trip?.tripData?.Itinerary
   const location = trip?.tripData?.Location || trip?.userSelection?.location
+  const userSelection = trip?.userSelection
 
   if (!itinerary) return (
     <div className='text-center py-12 text-gray-500'>
@@ -312,6 +374,8 @@ function PlacesToVisit({ trip }) {
                         timeRange={`${dayPlan.Morning.StartTime} - ${dayPlan.Morning.EndTime}`}
                         activities={dayPlan.Morning.Activities}
                         location={location}
+                        userSelection={userSelection}
+                        tripId={tripId}
                       />
                     )}
 
@@ -321,6 +385,8 @@ function PlacesToVisit({ trip }) {
                         timeRange={`${dayPlan.Lunch.StartTime} - ${dayPlan.Lunch.EndTime}`}
                         activities={[dayPlan.Lunch.Activity]}
                         location={location}
+                        userSelection={userSelection}
+                        tripId={tripId}
                       />
                     )}
 
@@ -330,6 +396,8 @@ function PlacesToVisit({ trip }) {
                         timeRange={`${dayPlan.Afternoon.StartTime} - ${dayPlan.Afternoon.EndTime}`}
                         activities={dayPlan.Afternoon.Activities}
                         location={location}
+                        userSelection={userSelection}
+                        tripId={tripId}
                       />
                     )}
 
@@ -339,6 +407,8 @@ function PlacesToVisit({ trip }) {
                         timeRange={`${dayPlan.Evening.StartTime} - ${dayPlan.Evening.EndTime}`}
                         activities={dayPlan.Evening.Activities}
                         location={location}
+                        userSelection={userSelection}
+                        tripId={tripId}
                       />
                     )}
                   </>
@@ -349,6 +419,8 @@ function PlacesToVisit({ trip }) {
                         key={idx} 
                         activity={activity} 
                         location={location}
+                        userSelection={userSelection}
+                        tripId={tripId}
                       />
                     ))}
                   </div>

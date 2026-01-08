@@ -1,5 +1,6 @@
 import { doc, setDoc } from 'firebase/firestore'
 import { db } from '@/service/firebaseConfig'
+import { format } from 'date-fns'
 
 const TIME_SLOTS = [
   { key: 'Morning', start: '8:00 AM', end: '12:00 PM' },
@@ -21,7 +22,8 @@ function placeToActivity(place, fallbackIndex, timeSlot) {
     TicketPricing: 'Check on-site',
     TimeTravel: `Activity ${fallbackIndex + 1}`,
     TimeSlot: normalizedTimeSlot || 'N/A',
-    Rating: 'N/A'
+    Rating: 'N/A',
+    isManuallyAdded: true
   }
 }
 
@@ -108,7 +110,8 @@ export async function saveManualTrip({ formData, confirmedHotel, tripDays, user 
           Longitude: parseFloat(confirmedHotel.lon)
         },
         Rating: 'N/A',
-        Description: `${confirmedHotel.type} in ${confirmedHotel.city || formData.location}`
+        Description: `${confirmedHotel.type} in ${confirmedHotel.city || formData.location}`,
+        isManuallyAdded: true
       }
     ],
     Itinerary: itinerary
@@ -125,7 +128,9 @@ export async function saveManualTrip({ formData, confirmedHotel, tripDays, user 
       location: formData.location,
       noOfdays,
       budget,
-      traveler
+      traveler,
+      startDate: formData.startDate ? format(new Date(formData.startDate), 'yyyy-MM-dd') : null,
+      endDate: formData.endDate ? format(new Date(formData.endDate), 'yyyy-MM-dd') : null
     },
     tripData: manualTripData,
     userEmail: user?.email || '',
