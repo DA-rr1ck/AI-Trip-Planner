@@ -6,7 +6,9 @@ import { format } from "date-fns";
 import { db } from "@/service/firebaseConfig";
 import { flattenItineraryToSteps } from "@/utils/itineraryUtils";
 import { useTripTracking } from "@/hooks/useTripTracking";
+import { useTripNotifications } from "@/hooks/useTripNotifications";
 import TripMap from "@/components/tracking/TripMap";
+import { notifyLocal } from "@/service/localNotifications";
 
 const PERIODS = ["Morning", "Lunch", "Afternoon", "Evening"];
 
@@ -62,6 +64,18 @@ function formatTimeRange(step) {
     if (!start) return "";
     if (!end) return format(start, "HH:mm");
     return `${format(start, "HH:mm")} – ${format(end, "HH:mm")}`;
+}
+
+function formatDistanceFriendly(meters) {
+    if (typeof meters !== "number" || !Number.isFinite(meters)) return "";
+    const m = Math.max(0, Math.round(meters));
+
+    if (m < 1000) return `${m} m`;
+    const km = m / 1000;
+
+    if (km < 10) return `${km.toFixed(1)} km`;
+    if (km < 100) return `${Math.round(km)} km`;
+    return `${Math.round(km)} km`;
 }
 
 function formatMinutesFriendly(minutes) {
@@ -235,6 +249,37 @@ function TripTracking() {
         stopTracking,
     } = useTripTracking(trip, steps);
 
+    const startClickNotifRef = useRef(false);
+
+    const hasGpsFix =
+        !!currentPosition &&
+        typeof currentPosition.latitude === "number" &&
+        typeof currentPosition.longitude === "number";
+
+    const trackingStartAtRef = useRef(0);
+    const lastGpsUpdateAtRef = useRef(0);
+
+    useEffect(() => {
+        if (
+            currentPosition &&
+            typeof currentPosition.latitude === "number" &&
+            typeof currentPosition.longitude === "number"
+        ) {
+            lastGpsUpdateAtRef.current = Date.now();
+        }
+    }, [currentPosition?.latitude, currentPosition?.longitude]);
+
+    const hasGpsFixSinceStart =
+        hasGpsFix && lastGpsUpdateAtRef.current >= trackingStartAtRef.current;
+
+    // --- Local push notifications for tracking status changes ---
+    useTripNotifications({
+        enabled: isTracking,
+        tripId: trip?.id || tripId,
+        steps,
+        stepStatuses,
+    });
+
     const tripLocation = trip?.userSelection?.location || trip?.tripData?.Location;
     const startDateStr = trip?.userSelection?.startDate;
     const endDateStr = trip?.userSelection?.endDate;
@@ -313,6 +358,42 @@ function TripTracking() {
         fallbackStatusMessage(currentStepStatus) ||
         "Status is updating…";
 
+    const isIdleGapPeriod = /^No activity at the moment/i.test(shortStatusMessage);
+
+    // After user taps Start tracking, send a push notification
+    useEffect(() => {
+        if (!startClickNotifRef.current) return;
+
+        if (isStartingTracking) return;
+        if (!isTracking) return;
+
+        const tId = trip?.id || tripId;
+        if (!tId) return;
+
+        const msg =
+            (typeof shortStatusMessage === "string" && shortStatusMessage.trim())
+                ? shortStatusMessage.trim()
+                : "";
+
+        const isPlaceholder =
+            !msg ||
+            /calculating\s+status/i.test(msg) ||
+            /status\s+is\s+updating/i.test(msg);
+
+        if (isPlaceholder) return;
+
+        const timer = setTimeout(() => {
+            notifyLocal({
+                title: "Trip tracking",
+                body: msg,
+                extra: { tripId: tId, scenario: "start_tracking" },
+            });
+            startClickNotifRef.current = false;
+        }, 600);
+
+        return () => clearTimeout(timer);
+    }, [isStartingTracking, isTracking, shortStatusMessage, trip?.id, tripId]);
+
     const footerSummary = useMemo(() => {
         const now = new Date();
 
@@ -358,9 +439,10 @@ function TripTracking() {
             if (next) {
                 const nextTemporal = computeTemporalStatus(next, now);
                 const title = nextTemporal === "in_progress" ? "Current activity" : "Up next";
-                const subtitle = next?.placeName || next?.activityType || "Activity";
+                const name = next?.placeName || next?.activityType || "Activity";
                 const timeRange = formatTimeRange(next);
-                const meta = [timeRange, next?.activityType].filter(Boolean).join(" · ");
+                const subtitle = timeRange ? `${name} · ${timeRange}` : name;
+                const meta = "";
 
                 return { title, subtitle, meta, step: next, temporal: nextTemporal };
             }
@@ -375,16 +457,17 @@ function TripTracking() {
         }
 
         const title = temporal === "in_progress" ? "Current activity" : "Up next";
-        const subtitle = step?.placeName || step?.activityType || "Activity";
+        const name = step?.placeName || step?.activityType || "Activity";
 
         const timeRange = formatTimeRange(step);
-        const meta = [timeRange, step?.activityType].filter(Boolean).join(" · ");
+        const subtitle = timeRange ? `${name} · ${timeRange}` : name;
+        const meta = "";
 
         return { title, subtitle, meta, step, temporal };
     }, [steps, currentStep, timeBasedNextStep, sortedStepsByTime, shortStatusMessage, uiNowTick]);
 
     // Bottom Sheet (Footer)
-    const SHEET_PEEK = 160; // px visible when collapsed
+    const SHEET_PEEK = 145; // px visible when collapsed
     const [sheetHeight, setSheetHeight] = useState(0);
     const [sheetOpen, setSheetOpen] = useState(false);
     const [sheetY, setSheetY] = useState(0);
@@ -551,7 +634,7 @@ function TripTracking() {
 
             {/* TOP HEADER (fixed) */}
             <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
-                <div className="pointer-events-auto mx-3 mt-3 rounded-2xl border border-white/15 bg-black/45 px-3 py-3 text-white shadow-lg backdrop-blur">
+                <div className="pointer-events-auto mx-3 mt-3 rounded-2xl bg-black/45 px-3 py-3 text-white shadow-lg backdrop-blur-lg">
                     <div className="flex items-center justify-between gap-3">
                         <button
                             type="button"
@@ -568,7 +651,13 @@ function TripTracking() {
 
                     <div className="mt-2">
                         <p className="text-sm font-semibold truncate">
-                            {footerSummary?.step?.placeName || tripLocation || "Your trip"}
+                            {(!isTracking && !isStartingTracking)
+                                ? (tripLocation || "Your trip")
+                                : (!hasGpsFixSinceStart
+                                    ? (tripLocation || "Your trip")
+                                    : (isIdleGapPeriod
+                                        ? (tripLocation || "Your trip")
+                                        : (footerSummary?.step?.placeName || tripLocation || "Your trip")))}
                         </p>
                         <p className="mt-0.5 text-[12px] text-white/80 line-clamp-1">
                             {shortStatusMessage}
@@ -629,8 +718,12 @@ function TripTracking() {
 
                                         <p className="mt-0.5 text-[11px] text-gray-500">
                                             {lastUpdateText}
-                                            {isTracking && currentStep && typeof distanceToCurrentStep === "number" ? (
-                                                <span> · {distanceToCurrentStep} m · Geofence {geofenceRadius} m</span>
+                                            {isTracking && currentStep ? (
+                                                <span>
+                                                    {typeof distanceToCurrentStep === "number" && !isIdleGapPeriod ? (
+                                                        <> · {formatDistanceFriendly(distanceToCurrentStep)}</>
+                                                    ) : null}
+                                                </span>
                                             ) : null}
                                         </p>
 
@@ -647,8 +740,15 @@ function TripTracking() {
                                         disabled={primaryBtnDisabled}
                                         onClick={() => {
                                             if (primaryBtnDisabled) return;
-                                            if (isTracking) stopTracking();
-                                            else startTracking();
+                                            if (isTracking) {
+                                                stopTracking();
+                                                startClickNotifRef.current = false;
+                                                return;
+                                            }
+
+                                            trackingStartAtRef.current = Date.now();
+                                            startClickNotifRef.current = true;
+                                            startTracking();
                                         }}
                                         className={primaryBtnClasses}
                                     >
@@ -812,11 +912,11 @@ function TripTracking() {
                                                     )}
 
                                                     {/* Current activity info */}
-                                                    {isCurrent && currentStepStatus && (
+                                                    {isTracking && isCurrent && currentStepStatus && !isIdleGapPeriod && (
                                                         <div className="mt-3 rounded-xl bg-blue-50 px-3 py-2">
                                                             {typeof distanceToCurrentStep === "number" && (
                                                                 <p className="text-[11px] text-blue-900">
-                                                                    <span className="font-semibold">Distance:</span> {distanceToCurrentStep} m
+                                                                    <span className="font-semibold">Distance:</span> {formatDistanceFriendly(distanceToCurrentStep)}
                                                                 </p>
                                                             )}
                                                             <p className="mt-1 text-[12px] text-blue-900">

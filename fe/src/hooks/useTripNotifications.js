@@ -1,6 +1,35 @@
 import { useEffect, useMemo, useRef } from "react";
 import { notifyOnce } from "@/service/localNotifications";
 
+function toDate(value) {
+    if (!value) return null;
+    if (typeof value?.toDate === "function") return value.toDate();
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatDurationHMS(totalSeconds) {
+  if (typeof totalSeconds !== "number" || !Number.isFinite(totalSeconds)) return "";
+
+  const s = Math.max(0, Math.round(Math.abs(totalSeconds)));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+
+  // >= 1h: show hours + minutes, hide seconds
+  // < 1h: show minutes + seconds, hide hours
+  // if < 1m, just show seconds
+  if (h > 0) {
+    return `${h}h ${String(m).padStart(2, "0")}m`;
+  }
+
+  if (m > 0) {
+    return `${m}m ${String(sec).padStart(2, "0")}s`;
+  }
+
+  return `${sec}s`;
+}
+
 function formatLateEarly(status, deltaMinutes) {
     if (status === "on_time") return "On time";
     if (typeof deltaMinutes !== "number") return status;
@@ -40,9 +69,47 @@ export function useTripNotifications({
             const step = stepById.get(stepId);
 
             const placeName = step?.placeName || "activity";
+            const start = toDate(step?.scheduledStart);
+            const startMs = start ? start.getTime() : null;
+            const nowMs = Date.now();
+            const timeToStartSec = typeof startMs === "number" ? (startMs - nowMs) / 1000 : null;
 
             const prevArrived = Boolean(prev?.actualArrivalTime);
             const nextArrived = Boolean(next?.actualArrivalTime);
+
+            // 0) 15-minute reminder before the next activity
+            if (
+                next.phase === "before_start" &&
+                !nextArrived &&
+                typeof timeToStartSec === "number" &&
+                timeToStartSec > 0 &&
+                timeToStartSec <= 15 * 60
+            ) {
+                notifyOnce({
+                    key: `${tripId}:${stepId}:reminder_15m`,
+                    title: "Up next soon",
+                    body: timeToStartSec
+                        ? `${placeName} starts in ${formatDurationHMS(timeToStartSec)}.`
+                        : `Next: ${placeName}.`,
+                    extra: { tripId, stepId, scenario: "reminder_15m" },
+                });
+            }
+
+            // 0.5) Entered EN_ROUTE window before start (roughly 10 mins before)
+            if (
+                next.status === "en_route" &&
+                !nextArrived &&
+                prev?.status !== "en_route" &&
+                typeof timeToStartSec === "number" &&
+                timeToStartSec > 0
+            ) {
+                notifyOnce({
+                    key: `${tripId}:${stepId}:en_route_prestart`,
+                    title: "Time to go",
+                    body: `${placeName} starts in ${formatDurationHMS(timeToStartSec)}.`,
+                    extra: { tripId, stepId, scenario: "en_route_prestart" },
+                });
+            }
 
             // 1) Became late (not arrived yet)
             if (
@@ -53,7 +120,10 @@ export function useTripNotifications({
                 notifyOnce({
                     key: `${tripId}:${stepId}:late_not_arrived`,
                     title: "You’re running late",
-                    body: `You’re late for ${placeName}.`,
+                    body:
+                        typeof timeToStartSec === "number" && timeToStartSec < 0
+                            ? `You’re late for ${placeName} by ${formatDurationHMS(-timeToStartSec)}.`
+                            : `You’re late for ${placeName}.`,
                     extra: { tripId, stepId, scenario: "late_not_arrived" },
                 });
             }
