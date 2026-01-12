@@ -19,6 +19,7 @@ import HotelsSection from './components/HotelsSection'
 import ItinerarySection from './components/ItinerarySection'
 import TripMapSection from './components/TripMapSection'
 import UnsavedChangesDialog from './components/UnsavedChangesDialog'
+import ScrollTopButton from '@/components/custom/ScrollTopButton'
 
 function PreviewTrip() {
   const { user } = useAuth()
@@ -263,6 +264,8 @@ function PreviewTrip() {
         onDiscard={handleDiscardChanges}
         onKeepEditing={handleKeepEditing}
       />
+
+      <ScrollTopButton/>
     </>
   )
 }

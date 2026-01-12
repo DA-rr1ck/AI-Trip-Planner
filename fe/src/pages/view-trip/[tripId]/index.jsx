@@ -8,6 +8,7 @@ import Hotels from '../components/Hotels'
 import PlacesToVisit from '../components/PlacesToVisit'
 import MapRoute from '@/components/MapRoute'
 import { getTripById } from '@/service/tripService' // NEW
+import ScrollTopButton from '@/components/custom/ScrollTopButton'
 
 function ViewTrip() {
     const { tripId } = useParams()
@@ -145,6 +146,8 @@ function ViewTrip() {
                     </div>
                 </div>
             )}
+
+            <ScrollTopButton/>
         </div>
     )
 }

@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { Loader2 } from 'lucide-react'
 import { parse, differenceInDays } from 'date-fns'
 import { loadTempChanges } from '../../preview-trip/utils/localStorage'
-import { getTripById } from '@/service/tripService' // NEW
+import { getTripById } from '@/service/tripService'
 
 // Import hooks from preview-trip
 import { useTripData } from '../../preview-trip/hooks/useTripData'
@@ -20,6 +20,7 @@ import TripRegenerationSection from '../../preview-trip/components/TripRegenerat
 import HotelsSection from '../../preview-trip/components/HotelsSection'
 import ItinerarySection from '../../preview-trip/components/ItinerarySection'
 import TripMapSection from '../../preview-trip/components/TripMapSection'
+import ScrollTopButton from '@/components/custom/ScrollTopButton'
 
 function EditTrip() {
   const { tripId } = useParams()
@@ -204,6 +205,8 @@ function EditTrip() {
         itinerary={tripData.tripData.Itinerary}
         locationName={tripData.tripData.Location}
       />
+
+      <ScrollTopButton/>
     </div>
   )
 }
