@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AI Travel Planner</string>
+    <string name="title_activity_main">AI Travel Planner</string>
+    <string name="package_name">com.doantotnghiep.aitravelplanner</string>
+    <string name="custom_url_scheme">com.doantotnghiep.aitravelplanner</string>
+</resources>
